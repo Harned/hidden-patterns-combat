@@ -15,7 +15,7 @@ from hidden_patterns_combat.preprocessing.data_dictionary import DataDictionary
 logger = logging.getLogger(__name__)
 
 
-EncodingMode = str  # bitpack | count | sum | any
+EncodingMode = str  # bitpack | log_bitpack | count | sum | any
 
 
 @dataclass
@@ -27,16 +27,16 @@ class FeatureEngineeringConfig:
 
     group_encoders: dict[str, EncodingMode] = field(
         default_factory=lambda: {
-            "maneuver_right": "bitpack",
-            "maneuver_left": "bitpack",
-            "grips": "bitpack",
-            "holds": "bitpack",
-            "bodylocks": "bitpack",
-            "underhooks": "bitpack",
-            "posts": "bitpack",
-            "kfv_all": "bitpack",
-            "vup": "bitpack",
-            "outcome_actions": "bitpack",
+            "maneuver_right": "log_bitpack",
+            "maneuver_left": "log_bitpack",
+            "grips": "log_bitpack",
+            "holds": "log_bitpack",
+            "bodylocks": "log_bitpack",
+            "underhooks": "log_bitpack",
+            "posts": "log_bitpack",
+            "kfv_all": "log_bitpack",
+            "vup": "log_bitpack",
+            "outcome_actions": "log_bitpack",
             "observed_result": "sum",
             "duration": "sum",
             "pause": "sum",
@@ -104,12 +104,22 @@ def _compact_bitpack(binary_frame: pd.DataFrame) -> pd.Series:
     return pd.Series((data * bits).sum(axis=1), index=binary_frame.index)
 
 
+def _log_bitpack_from_mask(mask: pd.Series) -> pd.Series:
+    mask_float = mask.astype(float)
+    # Compact monotonic transform:
+    # mask=0 -> 0, otherwise log2(mask + 1).
+    return np.log2(mask_float + 1.0).where(mask_float > 0, 0.0)
+
+
 def _encode(binary_frame: pd.DataFrame, mode: EncodingMode) -> pd.Series:
     if binary_frame.empty:
         return pd.Series(np.zeros(len(binary_frame), dtype=float), index=binary_frame.index)
 
     if mode == "bitpack":
         return _compact_bitpack(binary_frame)
+    if mode == "log_bitpack":
+        mask = _compact_bitpack(binary_frame)
+        return _log_bitpack_from_mask(mask)
     if mode == "count":
         return binary_frame.sum(axis=1)
     if mode == "sum":
@@ -117,6 +127,13 @@ def _encode(binary_frame: pd.DataFrame, mode: EncodingMode) -> pd.Series:
     if mode == "any":
         return (binary_frame.sum(axis=1) > 0).astype(int)
     raise ValueError(f"Unsupported encoding mode: {mode}")
+
+
+def _safe_numeric(series: pd.Series | None, index: pd.Index) -> pd.Series:
+    if series is None:
+        return pd.Series(np.zeros(len(index), dtype=float), index=index)
+    numeric = pd.to_numeric(series, errors="coerce")
+    return numeric.fillna(0.0).astype(float)
 
 
 def _parse_indicator_idx(col: str) -> int | None:
@@ -210,6 +227,59 @@ class FeatureEngineer:
                     return col
         return None
 
+    @staticmethod
+    def _build_sequence_id(
+        athlete: pd.Series | None,
+        sheet: pd.Series | None,
+        episode: pd.Series | None,
+        index: pd.Index,
+    ) -> pd.Series:
+        if athlete is None and sheet is None and episode is None:
+            return pd.Series(["sequence_0"] * len(index), index=index)
+
+        athlete_s = athlete.astype(str).str.strip() if athlete is not None else pd.Series([""] * len(index), index=index)
+        sheet_s = sheet.astype(str).str.strip() if sheet is not None else pd.Series([""] * len(index), index=index)
+        episode_s = episode.astype(str).str.strip() if episode is not None else pd.Series([""] * len(index), index=index)
+
+        def _non_empty(s: pd.Series) -> pd.Series:
+            return s.astype(str).str.strip().replace({"nan": "", "None": ""})
+
+        athlete_s = _non_empty(athlete_s)
+        sheet_s = _non_empty(sheet_s)
+        episode_s = _non_empty(episode_s)
+
+        # Priority for sequence grouping:
+        # 1) sheet + athlete (recommended MVP, stable trajectory grouping)
+        # 2) athlete + episode (when sheet absent, episode helps split)
+        # 3) athlete only
+        # 4) sheet + episode
+        # 5) sheet only
+        # 6) episode only
+        has_athlete = athlete_s.ne("")
+        has_sheet = sheet_s.ne("")
+        has_episode = episode_s.ne("")
+
+        seq = pd.Series(["sequence_0"] * len(index), index=index)
+        mask = has_sheet & has_athlete
+        seq = seq.where(~mask, sheet_s + "::" + athlete_s)
+
+        mask = seq.eq("sequence_0") & has_athlete & has_episode
+        seq = seq.where(~mask, athlete_s + "::" + episode_s)
+
+        mask = seq.eq("sequence_0") & has_athlete
+        seq = seq.where(~mask, athlete_s)
+
+        mask = seq.eq("sequence_0") & has_sheet & has_episode
+        seq = seq.where(~mask, sheet_s + "::" + episode_s)
+
+        mask = seq.eq("sequence_0") & has_sheet
+        seq = seq.where(~mask, sheet_s)
+
+        mask = seq.eq("sequence_0") & has_episode
+        seq = seq.where(~mask, episode_s)
+
+        return seq.replace({"": "sequence_0"})
+
     def _validate(self, group_columns: dict[str, list[str]]) -> FeatureValidationReport:
         missing = [g for g in self.engineering_cfg.required_groups if not group_columns.get(g)]
         warnings: list[str] = []
@@ -286,7 +356,7 @@ class FeatureEngineer:
         athlete_col = self._metadata_column(df, ("metadata__athlete_name", "фио борца", "athlete_name"))
         sheet_col = self._metadata_column(df, ("metadata__sheet", "_sheet", "sheet"))
 
-        engineered["duration"] = pd.to_numeric(df[duration_col], errors="coerce").fillna(0.0) if duration_col else 0.0
+        engineered["duration"] = _safe_numeric(df[duration_col] if duration_col else None, df.index)
         trace_rows.append(
             {
                 "engineered_feature": "duration",
@@ -297,7 +367,7 @@ class FeatureEngineer:
             }
         )
 
-        engineered["pause"] = pd.to_numeric(df[pause_col], errors="coerce").fillna(0.0) if pause_col else 0.0
+        engineered["pause"] = _safe_numeric(df[pause_col] if pause_col else None, df.index)
         trace_rows.append(
             {
                 "engineered_feature": "pause",
@@ -308,7 +378,7 @@ class FeatureEngineer:
             }
         )
 
-        engineered["observed_result"] = pd.to_numeric(df[result_col], errors="coerce").fillna(0.0) if result_col else 0.0
+        engineered["observed_result"] = _safe_numeric(df[result_col] if result_col else None, df.index)
         trace_rows.append(
             {
                 "engineered_feature": "observed_result",
@@ -329,11 +399,12 @@ class FeatureEngineer:
             metadata["athlete_name"] = df[athlete_col].astype(str)
         if sheet_col:
             metadata["source_sheet"] = df[sheet_col].astype(str)
-            metadata["sequence_id"] = df[sheet_col].astype(str)
-        elif "athlete_name" in metadata.columns:
-            metadata["sequence_id"] = metadata["athlete_name"].astype(str)
-        else:
-            metadata["sequence_id"] = pd.Series(["sequence_0"] * len(df), index=df.index)
+        metadata["sequence_id"] = self._build_sequence_id(
+            athlete=df[athlete_col] if athlete_col else None,
+            sheet=df[sheet_col] if sheet_col else None,
+            episode=df[episode_col] if episode_col else None,
+            index=df.index,
+        )
 
         raw_cols = sorted(set(
             maneuver_all +

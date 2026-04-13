@@ -22,6 +22,7 @@ class AnalysisReport:
     profile_csv: str
     summary_path: str
     plots: list[str]
+    hidden_state_diagnostics_csv: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

@@ -18,6 +18,8 @@ def write_analysis_markdown(report: AnalysisReport, out_path: str | Path) -> Non
         f"- State profile: `{report.profile_csv}`",
         f"- Interpretation text: `{report.summary_path}`",
     ]
+    if report.hidden_state_diagnostics_csv:
+        lines.append(f"- Hidden-state diagnostics: `{report.hidden_state_diagnostics_csv}`")
 
     if report.plots:
         lines.append("- Plots:")

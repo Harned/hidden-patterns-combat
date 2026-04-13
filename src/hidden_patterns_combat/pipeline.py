@@ -37,16 +37,16 @@ class CombatHMMPipeline:
         return combined
 
     @staticmethod
-    def _sequence_ids(raw_df: pd.DataFrame) -> pd.Series:
-        # MVP choice: use sheet-level sequences to keep contiguous, sufficiently long trajectories.
-        if "_sheet" in raw_df.columns:
-            return raw_df["_sheet"].astype(str).fillna("")
-        return pd.Series(["sequence_0"] * len(raw_df), index=raw_df.index)
+    def _sequence_ids_from_metadata(metadata: pd.DataFrame) -> pd.Series:
+        if "sequence_id" in metadata.columns:
+            seq = metadata["sequence_id"].astype(str).replace({"": "sequence_0"}).fillna("sequence_0")
+            return seq
+        return pd.Series(["sequence_0"] * len(metadata), index=metadata.index)
 
     def train(self, excel_path: str | Path, model_out: str | Path, sheet: str | None = None) -> dict[str, object]:
         raw = self._load_all_rows(excel_path, sheet)
-        sequence_ids = self._sequence_ids(raw)
         encoded = encode_features(raw, self.cfg.features)
+        sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine(self.cfg.model)
         log_likelihood = engine.fit(encoded.features, sequence_ids=sequence_ids)
         engine.save(model_out)
@@ -76,8 +76,8 @@ class CombatHMMPipeline:
         sheet: str | None = None,
     ) -> dict[str, object]:
         raw = self._load_all_rows(excel_path, sheet)
-        sequence_ids = self._sequence_ids(raw)
         encoded = encode_features(raw, self.cfg.features)
+        sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine.load(model_path)
         prediction = engine.predict(encoded.features, sequence_ids=sequence_ids)
 
@@ -87,7 +87,16 @@ class CombatHMMPipeline:
             [
                 encoded.metadata,
                 encoded.features,
-                pd.DataFrame({"hidden_state": prediction.states, "hidden_state_name": prediction.state_names}),
+                pd.DataFrame(
+                    {
+                        "hidden_state": prediction.states,
+                        "hidden_state_name": prediction.state_names,
+                        "latent_state_message": [
+                            f"Наиболее вероятное латентное состояние: {name}"
+                            for name in prediction.state_names
+                        ],
+                    }
+                ),
                 pd.DataFrame(prediction.state_probabilities).add_prefix("p_state_"),
             ],
             axis=1,
@@ -134,6 +143,7 @@ class CombatHMMPipeline:
             profile_csv=str(output_dir / "state_profile.csv"),
             summary_path=str(output_dir / "interpretation.txt"),
             plots=plots,
+            hidden_state_diagnostics_csv=str(output_dir / "hmm_state_interpretation.csv"),
         )
         write_analysis_markdown(report, output_dir / "report.md")
         return report.to_dict()

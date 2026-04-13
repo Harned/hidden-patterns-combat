@@ -16,6 +16,7 @@ class EpisodeInsight:
     episode_id: str
     hidden_state: str
     hidden_state_id: int
+    latent_state_message: str
     key_features: dict[str, float]
 
     def to_dict(self) -> dict[str, object]:
@@ -81,6 +82,7 @@ def _extract_episode_insight(analysis_csv: Path, episode_index: int) -> EpisodeI
         episode_id=episode_id,
         hidden_state=state_name,
         hidden_state_id=state_id,
+        latent_state_message=f"Наиболее вероятное латентное состояние эпизода: {state_name}",
         key_features=key,
     )
 

@@ -26,7 +26,7 @@ class StateDefinition:
                 HiddenState(
                     state_id=i,
                     name=f"state_{i}",
-                    description="Latent tactical state inferred by HMM from observations.",
+                    description="Latent tactical state inferred by HMM.",
                 )
                 for i in range(n_states)
             ]
@@ -34,19 +34,9 @@ class StateDefinition:
 
     @classmethod
     def research_default(cls, n_states: int = 3) -> "StateDefinition":
-        defaults = [
-            HiddenState(0, "S1", "Stance and maneuvering phase"),
-            HiddenState(1, "S2", "Physical interaction contacts (KFV)"),
-            HiddenState(2, "S3", "Destabilization / VUP phase"),
-        ]
-        if n_states <= 3:
-            return cls(states=defaults[:n_states])
-
-        extra = [
-            HiddenState(i, f"S{i+1}", "Additional latent state (configurable hypothesis)")
-            for i in range(3, n_states)
-        ]
-        return cls(states=defaults + extra)
+        # Safe default for MVP:
+        # keep state labels latent and neutral at model output layer.
+        return cls.from_count(n_states)
 
     def to_dict(self) -> dict[str, object]:
         return {"states": [asdict(s) for s in self.states]}

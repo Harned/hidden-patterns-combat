@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from hidden_patterns_combat.config import FeatureConfig
 from hidden_patterns_combat.features.encoder import encode_features
@@ -19,8 +20,9 @@ def test_encode_features_compact_code_and_metadata():
     )
     batch = encode_features(df, FeatureConfig())
     assert list(batch.metadata["episode_id"]) == ["1", "2"]
-    assert batch.features["maneuver_right_code"].tolist() == [1, 2]
-    assert batch.features["kfv_code"].tolist() == [1, 1]
+    assert batch.features["maneuver_right_code"].iloc[0] == pytest.approx(1.0)
+    assert batch.features["maneuver_right_code"].iloc[1] == pytest.approx(1.5849625, rel=1e-6)
+    assert batch.features["kfv_code"].tolist() == [1.0, 1.0]
     assert batch.features["observed_result"].tolist() == [2.0, 0.0]
 
 
@@ -34,8 +36,9 @@ def test_encode_features_fallback_splits_maneuver_block():
         }
     )
     batch = encode_features(df, FeatureConfig())
-    assert batch.features["maneuver_right_code"].tolist() == [1, 2]
-    assert batch.features["maneuver_left_code"].tolist() == [1, 1]
+    assert batch.features["maneuver_right_code"].iloc[0] == pytest.approx(1.0)
+    assert batch.features["maneuver_right_code"].iloc[1] == pytest.approx(1.5849625, rel=1e-6)
+    assert batch.features["maneuver_left_code"].tolist() == [1.0, 1.0]
 
 
 def test_encode_features_with_missing_expected_columns():

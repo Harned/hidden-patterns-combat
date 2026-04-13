@@ -1,7 +1,13 @@
 import pandas as pd
+import pytest
 
 from hidden_patterns_combat.config import FeatureConfig
-from hidden_patterns_combat.features.engineering import FeatureEngineer, FeatureEngineeringConfig
+from hidden_patterns_combat.features.engineering import (
+    FeatureEngineer,
+    FeatureEngineeringConfig,
+    _compact_bitpack,
+    _log_bitpack_from_mask,
+)
 
 
 def test_feature_engineering_produces_kfv_subgroups_and_traceability():
@@ -32,6 +38,7 @@ def test_feature_engineering_produces_kfv_subgroups_and_traceability():
 
     trace = res.traceability
     assert (trace["engineered_feature"] == "grips_code").any()
+    assert set(trace["encoding_mode"].unique()) >= {"log_bitpack", "numeric_passthrough"}
     assert res.validation.is_valid is True
 
 
@@ -51,3 +58,73 @@ def test_feature_engineering_handles_incorrect_types(cleaned_like_df):
     assert engineered["observed_result"].fillna(0).ge(0).all()
     assert "athlete_name" in res.metadata.columns
     assert "sequence_id" in res.metadata.columns
+
+
+def test_log_bitpack_mask_zero_is_zero():
+    mask = pd.Series([0], dtype=float)
+    out = _log_bitpack_from_mask(mask)
+    assert out.iloc[0] == pytest.approx(0.0)
+
+
+def test_log_bitpack_single_and_multi_bits():
+    # bit masks: 1 (0001), 3 (0011), 5 (0101)
+    mask = pd.Series([1, 3, 5], dtype=float)
+    out = _log_bitpack_from_mask(mask)
+    assert out.iloc[0] == pytest.approx(1.0)  # log2(2)
+    assert out.iloc[1] == pytest.approx(2.0)  # log2(4)
+    assert out.iloc[2] == pytest.approx(2.5849625, rel=1e-6)  # log2(6)
+
+
+def test_bitpack_backward_compatibility():
+    frame = pd.DataFrame({"a": [1], "b": [0], "c": [1]})
+    mask = _compact_bitpack(frame)
+    assert int(mask.iloc[0]) == 5
+
+
+def test_sequence_id_prefers_sheet_and_athlete():
+    df = pd.DataFrame(
+        {
+            "metadata__athlete_name": ["A", "A", "B"],
+            "metadata__episode_attr_01": [1, 2, 1],
+            "metadata__sheet": ["s1", "s1", "s2"],
+            "outcomes__score": [1, 0, 0],
+            "maneuvering__indicator_01": [1, 0, 0],
+            "kfv__indicator_01": [0, 1, 0],
+            "vup__indicator_01": [0, 0, 1],
+            "outcomes__finish_action_01": [0, 1, 0],
+        }
+    )
+    res = FeatureEngineer(FeatureConfig()).transform(df)
+    assert res.metadata["sequence_id"].iloc[0] == "s1::A"
+    assert res.metadata["sequence_id"].iloc[1] == "s1::A"
+    assert res.metadata["sequence_id"].iloc[2] == "s2::B"
+
+
+def test_sequence_id_fallbacks():
+    only_athlete = pd.DataFrame({"metadata__athlete_name": ["A"], "kfv__indicator_01": [1], "vup__indicator_01": [0], "outcomes__score": [0], "maneuvering__indicator_01": [1]})
+    res1 = FeatureEngineer(FeatureConfig()).transform(only_athlete)
+    assert res1.metadata["sequence_id"].iloc[0] == "A"
+
+    only_sheet = pd.DataFrame({"metadata__sheet": ["s1"], "kfv__indicator_01": [1], "vup__indicator_01": [0], "outcomes__score": [0], "maneuvering__indicator_01": [1]})
+    res2 = FeatureEngineer(FeatureConfig()).transform(only_sheet)
+    assert res2.metadata["sequence_id"].iloc[0] == "s1"
+
+    none = pd.DataFrame({"kfv__indicator_01": [1], "vup__indicator_01": [0], "outcomes__score": [0], "maneuvering__indicator_01": [1]})
+    res3 = FeatureEngineer(FeatureConfig()).transform(none)
+    assert res3.metadata["sequence_id"].iloc[0] == "sequence_0"
+
+
+def test_sequence_id_uses_athlete_and_episode_without_sheet():
+    df = pd.DataFrame(
+        {
+            "metadata__athlete_name": ["A", "A"],
+            "metadata__episode_attr_01": [1, 2],
+            "kfv__indicator_01": [1, 0],
+            "vup__indicator_01": [0, 1],
+            "outcomes__score": [0, 1],
+            "maneuvering__indicator_01": [1, 1],
+        }
+    )
+    res = FeatureEngineer(FeatureConfig()).transform(df)
+    assert res.metadata["sequence_id"].iloc[0] == "A::1"
+    assert res.metadata["sequence_id"].iloc[1] == "A::2"

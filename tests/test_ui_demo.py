@@ -11,7 +11,7 @@ def test_extract_episode_insight_from_analysis_csv(tmp_path: Path):
         {
             "episode_id": ["e1", "e2"],
             "hidden_state": [1, 2],
-            "hidden_state_name": ["S2", "S3"],
+            "hidden_state_name": ["state_1", "state_2"],
             "maneuver_right_code": [3, 4],
             "kfv_code": [1, 2],
             "vup_code": [0, 1],
@@ -22,7 +22,7 @@ def test_extract_episode_insight_from_analysis_csv(tmp_path: Path):
 
     insight = _extract_episode_insight(csv_path, 1)
     assert insight.episode_id == "e2"
-    assert insight.hidden_state == "S3"
+    assert insight.hidden_state == "state_2"
     assert insight.hidden_state_id == 2
     assert "kfv_code" in insight.key_features
 

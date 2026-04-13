@@ -15,7 +15,7 @@ def text_summary(profile: pd.DataFrame) -> str:
     lines: list[str] = []
     for _, row in profile.iterrows():
         lines.append(
-            "State {s}: n={n}, maneuverR={mr:.2f}, maneuverL={ml:.2f}, "
+            "Latent state state_{s}: n={n}, maneuverR={mr:.2f}, maneuverL={ml:.2f}, "
             "KFV={kfv:.2f}, VUP={vup:.2f}, result={res:.2f}".format(
                 s=int(row["hidden_state"]),
                 n=int(row.get("episodes_count", 0)),
