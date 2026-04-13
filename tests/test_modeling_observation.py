@@ -21,3 +21,10 @@ def test_encode_observations_keeps_feature_order_and_lengths():
 def test_build_lengths_empty_series():
     s = pd.Series([], dtype=object)
     assert build_lengths(s) == []
+
+
+def test_build_lengths_normalizes_missing_sequence_ids():
+    s = pd.Series([None, None, "a", "a", float("nan"), "b", ""])
+    lengths = build_lengths(s)
+    assert lengths == [2, 2, 1, 1, 1]
+    assert all(x > 0 for x in lengths)

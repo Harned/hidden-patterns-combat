@@ -20,10 +20,17 @@ def build_lengths(sequence_ids: pd.Series | None) -> list[int]:
     if len(sequence_ids) == 0:
         return []
 
+    normalized = (
+        sequence_ids.fillna("sequence_0")
+        .astype(str)
+        .str.strip()
+        .replace({"": "sequence_0", "nan": "sequence_0", "None": "sequence_0"})
+    )
+
     lengths: list[int] = []
-    current = sequence_ids.iloc[0]
-    count = 0
-    for value in sequence_ids:
+    current = normalized.iloc[0]
+    count = 1
+    for value in normalized.iloc[1:]:
         if value == current:
             count += 1
         else:

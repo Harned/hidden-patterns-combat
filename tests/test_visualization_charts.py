@@ -28,3 +28,18 @@ def test_create_analysis_charts_smoke(tmp_path: Path):
 
     for _, path in outputs.items():
         assert Path(path).exists()
+
+
+def test_success_failure_plot_handles_single_class(tmp_path: Path):
+    df = pd.DataFrame(
+        {
+            "hidden_state": [0, 0, 1],
+            "hidden_state_name": ["S1", "S1", "S2"],
+            "observed_result": [0, 0, 0],  # only unsuccessful class
+            "p_state_0": [0.8, 0.7, 0.2],
+            "p_state_1": [0.2, 0.3, 0.8],
+        }
+    )
+
+    outputs = create_analysis_charts(df, tmp_path)
+    assert Path(outputs["scenario_success_frequencies"]).exists()

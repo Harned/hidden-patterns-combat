@@ -148,6 +148,7 @@ def plot_success_failure_scenarios(
         work.groupby([state_col, "success_flag"]).size().unstack(fill_value=0)
         .rename(columns={False: "unsuccessful", True: "successful"})
     )
+    freq = freq.reindex(columns=["successful", "unsuccessful"], fill_value=0)
 
     out = ensure_output_path(out_path)
     plt = get_pyplot()
