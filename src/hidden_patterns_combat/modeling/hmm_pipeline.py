@@ -10,6 +10,10 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from hidden_patterns_combat.config import ModelConfig
+from hidden_patterns_combat.modeling.decoding import HMMDecoder
+from hidden_patterns_combat.modeling.observation_encoding import encode_observations
+from hidden_patterns_combat.modeling.state_definition import StateDefinition
+from hidden_patterns_combat.modeling.training import HMMTrainer
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +31,20 @@ class HMMPrediction:
     states: np.ndarray
     state_probabilities: np.ndarray
     log_likelihood: float
+    state_names: list[str]
 
 
 class HMMEngine:
-    def __init__(self, cfg: ModelConfig):
+    """HMM modeling facade with explicit state/observation/training/decoding layers."""
+
+    def __init__(self, cfg: ModelConfig, state_definition: StateDefinition | None = None):
         if GaussianHMM is None:
             raise ImportError(
                 "hmmlearn is required for modeling. Install dependencies with `pip install -e .`"
             ) from IMPORT_ERROR
 
         self.cfg = cfg
+        self.state_definition = state_definition or StateDefinition.research_default(cfg.n_hidden_states)
         self.scaler = StandardScaler()
         self.model = GaussianHMM(
             n_components=cfg.n_hidden_states,
@@ -44,33 +52,66 @@ class HMMEngine:
             n_iter=cfg.n_iter,
             random_state=cfg.random_state,
         )
+        self.feature_columns: list[str] | None = None
 
-    def fit(self, features: pd.DataFrame) -> float:
-        x = self.scaler.fit_transform(features.to_numpy(dtype=float))
-        self.model.fit(x)
-        score = float(self.model.score(x))
-        logger.info("HMM fitted. log_likelihood=%.4f", score)
-        return score
+    def fit(self, features: pd.DataFrame, sequence_ids: pd.Series | None = None) -> float:
+        batch = encode_observations(
+            features=features,
+            scaler=self.scaler,
+            fit_scaler=True,
+            sequence_ids=sequence_ids,
+        )
+        self.feature_columns = batch.feature_columns
+        trainer = HMMTrainer(self.model)
+        result = trainer.fit(batch.values, lengths=batch.lengths)
+        logger.info(
+            "HMM fitted. log_likelihood=%.4f, n_sequences=%d",
+            result.log_likelihood,
+            len(batch.lengths) if batch.lengths else 1,
+        )
+        return result.log_likelihood
 
-    def predict(self, features: pd.DataFrame) -> HMMPrediction:
-        x = self.scaler.transform(features.to_numpy(dtype=float))
-        states = self.model.predict(x)
-        probs = self.model.predict_proba(x)
-        score = float(self.model.score(x))
-        return HMMPrediction(states=states, state_probabilities=probs, log_likelihood=score)
+    def predict(self, features: pd.DataFrame, sequence_ids: pd.Series | None = None) -> HMMPrediction:
+        batch = encode_observations(
+            features=features,
+            scaler=self.scaler,
+            fit_scaler=False,
+            sequence_ids=sequence_ids,
+        )
+        decoder = HMMDecoder(self.model)
+        result = decoder.decode(batch.values, lengths=batch.lengths)
+        return HMMPrediction(
+            states=result.states,
+            state_probabilities=result.state_probabilities,
+            log_likelihood=result.log_likelihood,
+            state_names=[self.state_definition.state_name(int(s)) for s in result.states],
+        )
 
     def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "cfg": self.cfg,
+            "scaler": self.scaler,
+            "model": self.model,
+            "state_definition": self.state_definition.to_dict(),
+            "feature_columns": self.feature_columns,
+        }
         with path.open("wb") as f:
-            pickle.dump({"cfg": self.cfg, "scaler": self.scaler, "model": self.model}, f)
+            pickle.dump(payload, f)
 
     @classmethod
     def load(cls, path: str | Path) -> "HMMEngine":
         path = Path(path)
         with path.open("rb") as f:
             payload = pickle.load(f)
-        obj = cls(payload["cfg"])
+
+        state_definition = StateDefinition.from_dict(payload.get("state_definition", {}))
+        if not state_definition.states:
+            state_definition = StateDefinition.research_default(payload["cfg"].n_hidden_states)
+
+        obj = cls(payload["cfg"], state_definition=state_definition)
         obj.scaler = payload["scaler"]
         obj.model = payload["model"]
+        obj.feature_columns = payload.get("feature_columns")
         return obj

@@ -36,3 +36,11 @@ def test_encode_features_fallback_splits_maneuver_block():
     batch = encode_features(df, FeatureConfig())
     assert batch.features["maneuver_right_code"].tolist() == [1, 2]
     assert batch.features["maneuver_left_code"].tolist() == [1, 1]
+
+
+def test_encode_features_with_missing_expected_columns():
+    df = pd.DataFrame({"metadata__athlete_name": ["A", "B"]})
+    batch = encode_features(df, FeatureConfig())
+    assert (batch.features["kfv_code"] == 0).all()
+    assert (batch.features["vup_code"] == 0).all()
+    assert list(batch.metadata["episode_id"]) == ["0", "1"]

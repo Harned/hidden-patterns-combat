@@ -25,6 +25,40 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--output-dir", required=True, help="Directory for analysis outputs")
     analyze.add_argument("--sheet", default=None, help="Optional single sheet name")
 
+    preprocess = sub.add_parser("preprocess", help="Preprocess Excel into tidy tabular format")
+    preprocess.add_argument("--excel", required=True, help="Path to Excel file")
+    preprocess.add_argument(
+        "--sheet",
+        action="append",
+        default=None,
+        help="Sheet name (repeat flag for multiple sheets). Omit to process all sheets.",
+    )
+    preprocess.add_argument("--header-depth", type=int, default=2, help="Excel header depth")
+    preprocess.add_argument(
+        "--output-dir",
+        default="data/processed/preprocessing",
+        help="Directory for raw/cleaned exports",
+    )
+    preprocess.add_argument("--save-parquet", action="store_true", help="Also export parquet files")
+
+    demo = sub.add_parser("demo", help="Run end-user MVP workflow (preprocess + analyze + insight)")
+    demo.add_argument("--excel", required=True, help="Path to Excel file")
+    demo.add_argument("--sheet", default=None, help="Optional single sheet name")
+    demo.add_argument("--model", default="artifacts/hmm_model.pkl", help="Path to model file")
+    demo.add_argument("--n-states", type=int, default=3, help="Hidden state count for training")
+    demo.add_argument("--episode-index", type=int, default=0, help="Episode index to inspect")
+    demo.add_argument("--retrain", action="store_true", help="Retrain model before analysis")
+    demo.add_argument(
+        "--preprocess-output-dir",
+        default="data/processed/preprocessing",
+        help="Directory for preprocessing artifacts",
+    )
+    demo.add_argument(
+        "--analysis-output-dir",
+        default="artifacts/analysis",
+        help="Directory for analysis artifacts",
+    )
+
     return parser
 
 
@@ -50,6 +84,37 @@ def main() -> None:
             output_dir=args.output_dir,
             sheet=args.sheet,
         )
+    elif args.command == "preprocess":
+        from hidden_patterns_combat.preprocessing import run_preprocessing
+
+        sheet_selector: str | list[str] | None
+        if args.sheet is None:
+            sheet_selector = None
+        elif len(args.sheet) == 1:
+            sheet_selector = args.sheet[0]
+        else:
+            sheet_selector = args.sheet
+
+        result = run_preprocessing(
+            excel_path=args.excel,
+            sheet_selector=sheet_selector,
+            header_depth=args.header_depth,
+            output_dir=args.output_dir,
+            save_parquet=args.save_parquet,
+        ).to_dict()
+    elif args.command == "demo":
+        from hidden_patterns_combat.ui import run_demo_workflow
+
+        result = run_demo_workflow(
+            excel_path=args.excel,
+            sheet=args.sheet,
+            model_path=args.model,
+            preprocess_output_dir=args.preprocess_output_dir,
+            analysis_output_dir=args.analysis_output_dir,
+            episode_index=args.episode_index,
+            n_states=args.n_states,
+            retrain=args.retrain,
+        ).to_dict()
     else:  # pragma: no cover
         raise ValueError(f"Unsupported command: {args.command}")
 

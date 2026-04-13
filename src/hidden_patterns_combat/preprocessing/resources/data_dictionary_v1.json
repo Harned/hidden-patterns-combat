@@ -1,0 +1,426 @@
+{
+  "version": "combat_data_dictionary_v1",
+  "description": "Base mapping for current competition Excel dataset",
+  "entries": [
+    {
+      "original_header": "фио борца",
+      "normalized_field": "metadata__athlete_name",
+      "logical_group": "metadata",
+      "description": "ФИО спортсмена, идентификация записи эпизода"
+    },
+    {
+      "original_header": "технико-тактический эпизод",
+      "normalized_field": "metadata__episode_attr_01",
+      "logical_group": "metadata",
+      "description": "Атрибут эпизода 1 (зависит от структуры листа)"
+    },
+    {
+      "original_header": "технико-тактический эпизод_2",
+      "normalized_field": "metadata__episode_attr_02",
+      "logical_group": "metadata",
+      "description": "Атрибут эпизода 2 (зависит от структуры листа)"
+    },
+    {
+      "original_header": "технико-тактический эпизод_3",
+      "normalized_field": "metadata__episode_attr_03",
+      "logical_group": "metadata",
+      "description": "Атрибут эпизода 3 (зависит от структуры листа)"
+    },
+    {
+      "original_header": "баллы",
+      "normalized_field": "outcomes__score",
+      "logical_group": "outcomes",
+      "description": "Судейская оценка/балл эпизода"
+    },
+    {
+      "original_header": "_sheet",
+      "normalized_field": "metadata__sheet",
+      "logical_group": "metadata",
+      "description": "Имя листа источника в Excel"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)",
+      "normalized_field": "maneuvering__indicator_01",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №01"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_2",
+      "normalized_field": "maneuvering__indicator_02",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №02"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_3",
+      "normalized_field": "maneuvering__indicator_03",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №03"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_4",
+      "normalized_field": "maneuvering__indicator_04",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №04"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_5",
+      "normalized_field": "maneuvering__indicator_05",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №05"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_6",
+      "normalized_field": "maneuvering__indicator_06",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №06"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_7",
+      "normalized_field": "maneuvering__indicator_07",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №07"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_8",
+      "normalized_field": "maneuvering__indicator_08",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №08"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_9",
+      "normalized_field": "maneuvering__indicator_09",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №09"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_10",
+      "normalized_field": "maneuvering__indicator_10",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №10"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_11",
+      "normalized_field": "maneuvering__indicator_11",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №11"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_12",
+      "normalized_field": "maneuvering__indicator_12",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №12"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_13",
+      "normalized_field": "maneuvering__indicator_13",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №13"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_14",
+      "normalized_field": "maneuvering__indicator_14",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №14"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_15",
+      "normalized_field": "maneuvering__indicator_15",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №15"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_16",
+      "normalized_field": "maneuvering__indicator_16",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №16"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_17",
+      "normalized_field": "maneuvering__indicator_17",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №17"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_18",
+      "normalized_field": "maneuvering__indicator_18",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №18"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_19",
+      "normalized_field": "maneuvering__indicator_19",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №19"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_20",
+      "normalized_field": "maneuvering__indicator_20",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №20"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_21",
+      "normalized_field": "maneuvering__indicator_21",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №21"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_22",
+      "normalized_field": "maneuvering__indicator_22",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №22"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_23",
+      "normalized_field": "maneuvering__indicator_23",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №23"
+    },
+    {
+      "original_header": "стойка и маневрирование самбиста (основные в эпизоде)_24",
+      "normalized_field": "maneuvering__indicator_24",
+      "logical_group": "maneuvering",
+      "description": "Бинарный индикатор маневрирования №24"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)",
+      "normalized_field": "kfv__indicator_01",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №01"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_2",
+      "normalized_field": "kfv__indicator_02",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №02"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_3",
+      "normalized_field": "kfv__indicator_03",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №03"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_4",
+      "normalized_field": "kfv__indicator_04",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №04"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_5",
+      "normalized_field": "kfv__indicator_05",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №05"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_6",
+      "normalized_field": "kfv__indicator_06",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №06"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_7",
+      "normalized_field": "kfv__indicator_07",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №07"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_8",
+      "normalized_field": "kfv__indicator_08",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №08"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_9",
+      "normalized_field": "kfv__indicator_09",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №09"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_10",
+      "normalized_field": "kfv__indicator_10",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №10"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_11",
+      "normalized_field": "kfv__indicator_11",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №11"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_12",
+      "normalized_field": "kfv__indicator_12",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №12"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_13",
+      "normalized_field": "kfv__indicator_13",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №13"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_14",
+      "normalized_field": "kfv__indicator_14",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №14"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_15",
+      "normalized_field": "kfv__indicator_15",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №15"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_16",
+      "normalized_field": "kfv__indicator_16",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №16"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_17",
+      "normalized_field": "kfv__indicator_17",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №17"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_18",
+      "normalized_field": "kfv__indicator_18",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №18"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_19",
+      "normalized_field": "kfv__indicator_19",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №19"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_20",
+      "normalized_field": "kfv__indicator_20",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №20"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_21",
+      "normalized_field": "kfv__indicator_21",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №21"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_22",
+      "normalized_field": "kfv__indicator_22",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №22"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_23",
+      "normalized_field": "kfv__indicator_23",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №23"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_24",
+      "normalized_field": "kfv__indicator_24",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №24"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_25",
+      "normalized_field": "kfv__indicator_25",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №25"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_26",
+      "normalized_field": "kfv__indicator_26",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №26"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_27",
+      "normalized_field": "kfv__indicator_27",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №27"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_28",
+      "normalized_field": "kfv__indicator_28",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №28"
+    },
+    {
+      "original_header": "контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_29",
+      "normalized_field": "kfv__indicator_29",
+      "logical_group": "kfv",
+      "description": "Бинарный индикатор КФВ №29"
+    },
+    {
+      "original_header": "выведение соперника из устойчивого положения (при выполнении n или n1)",
+      "normalized_field": "vup__indicator_01",
+      "logical_group": "vup",
+      "description": "Бинарный индикатор ВУП №01"
+    },
+    {
+      "original_header": "выведение соперника из устойчивого положения (при выполнении n или n1)_2",
+      "normalized_field": "vup__indicator_02",
+      "logical_group": "vup",
+      "description": "Бинарный индикатор ВУП №02"
+    },
+    {
+      "original_header": "выведение соперника из устойчивого положения (при выполнении n или n1)_3",
+      "normalized_field": "vup__indicator_03",
+      "logical_group": "vup",
+      "description": "Бинарный индикатор ВУП №03"
+    },
+    {
+      "original_header": "выведение соперника из устойчивого положения (при выполнении n или n1)_4",
+      "normalized_field": "vup__indicator_04",
+      "logical_group": "vup",
+      "description": "Бинарный индикатор ВУП №04"
+    },
+    {
+      "original_header": "выведение соперника из устойчивого положения (при выполнении n или n1)_5",
+      "normalized_field": "vup__indicator_05",
+      "logical_group": "vup",
+      "description": "Бинарный индикатор ВУП №05"
+    },
+    {
+      "original_header": "завершающие атаку приемы (n)",
+      "normalized_field": "outcomes__finish_action_01",
+      "logical_group": "outcomes",
+      "description": "Завершающее атакующее действие №01"
+    },
+    {
+      "original_header": "завершающие атаку приемы (n)_2",
+      "normalized_field": "outcomes__finish_action_02",
+      "logical_group": "outcomes",
+      "description": "Завершающее атакующее действие №02"
+    },
+    {
+      "original_header": "завершающие атаку приемы (n)_3",
+      "normalized_field": "outcomes__finish_action_03",
+      "logical_group": "outcomes",
+      "description": "Завершающее атакующее действие №03"
+    },
+    {
+      "original_header": "завершающие атаку приемы (n)_4",
+      "normalized_field": "outcomes__finish_action_04",
+      "logical_group": "outcomes",
+      "description": "Завершающее атакующее действие №04"
+    },
+    {
+      "original_header": "завершающие атаку приемы (n)_5",
+      "normalized_field": "outcomes__finish_action_05",
+      "logical_group": "outcomes",
+      "description": "Завершающее атакующее действие №05"
+    },
+    {
+      "original_header": "завершающие атаку приемы (n)_6",
+      "normalized_field": "outcomes__finish_action_06",
+      "logical_group": "outcomes",
+      "description": "Завершающее атакующее действие №06"
+    }
+  ]
+}
