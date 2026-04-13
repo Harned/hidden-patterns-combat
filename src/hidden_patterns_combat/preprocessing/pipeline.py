@@ -33,11 +33,13 @@ def run_preprocessing(
     output_dir: str | Path = "data/processed/preprocessing",
     save_parquet: bool = False,
     data_dictionary: DataDictionary | None = None,
+    force_matrix_parser: bool = False,
 ) -> PreprocessingReport:
     ingestion = load_excel_for_preprocessing(
         excel_path=excel_path,
         sheet_selector=sheet_selector,
         header_depth=header_depth,
+        force_matrix_parser=force_matrix_parser,
     )
 
     transform = transform_raw_to_tidy(ingestion.raw_combined, data_dictionary=data_dictionary)
@@ -54,6 +56,8 @@ def run_preprocessing(
         mapping_df=transform.mapping,
         validation=validation,
         save_parquet=save_parquet,
+        episodes_tidy_df=ingestion.episodes_tidy,
+        matrix_label_mapping_df=ingestion.matrix_label_mapping,
     )
 
     return PreprocessingReport(

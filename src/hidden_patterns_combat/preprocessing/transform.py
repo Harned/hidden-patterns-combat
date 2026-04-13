@@ -24,10 +24,11 @@ def _classify_block(col: str, dd: DataDictionary) -> str:
 def _canonical_name(col: str, block: str, position: int, dd: DataDictionary) -> str:
     found = dd.lookup(col)
     if found:
-        return found.normalized_field
+        return found.normalized_field if position == 1 else f"{found.normalized_field}_{position:02d}"
 
     if col in dd.canonical_metadata_map:
-        return dd.canonical_metadata_map[col]
+        base = dd.canonical_metadata_map[col]
+        return base if position == 1 else f"{base}_{position:02d}"
     if block == "metadata":
         if "эпизод" in col:
             return f"metadata__episode_attr_{position:02d}"

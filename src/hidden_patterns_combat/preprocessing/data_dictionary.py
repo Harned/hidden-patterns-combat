@@ -32,16 +32,39 @@ class DataDictionary:
         self._by_header = {e.original_header.lower(): e for e in entries}
         self.canonical_metadata_map: dict[str, str] = {
             "_sheet": "metadata__sheet",
+            "source_sheet": "metadata__sheet",
             "фио борца": "metadata__athlete_name",
+            "athlete_name": "metadata__athlete_name",
+            "episode_id": "metadata__episode_id",
+            "episode_order": "metadata__episode_order",
+            "episode_duration": "metadata__episode_duration",
+            "pause_duration": "metadata__pause_duration",
             "баллы": "outcomes__score",
+            "observed_result": "outcomes__score",
         }
 
         self.block_rules: tuple[BlockRule, ...] = (
-            BlockRule("metadata", ("фио", "борца", "технико-тактический эпизод", "время", "пауз", "sheet")),
-            BlockRule("maneuvering", ("стойка", "маневр")),
+            BlockRule(
+                "metadata",
+                (
+                    "фио",
+                    "борца",
+                    "athlete",
+                    "fighter",
+                    "технико-тактический эпизод",
+                    "эпизод",
+                    "episode",
+                    "время",
+                    "duration",
+                    "пауз",
+                    "pause",
+                    "sheet",
+                ),
+            ),
+            BlockRule("maneuvering", ("стойка", "маневр", "maneuver")),
             BlockRule("kfv", ("кфв", "контакты физического взаимодействия", "захват", "обхват", "прихват", "хват", "упор")),
-            BlockRule("vup", ("вуп", "выведение")),
-            BlockRule("outcomes", ("балл", "результ", "заверша", "брос", "удерж", "болев")),
+            BlockRule("vup", ("вуп", "выведение", "vup")),
+            BlockRule("outcomes", ("балл", "результ", "score", "outcome", "заверша", "брос", "удерж", "болев")),
         )
         self.required_blocks: tuple[str, ...] = ("metadata", "maneuvering", "kfv", "vup", "outcomes")
 

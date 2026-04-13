@@ -34,3 +34,47 @@ def test_choose_plot_prefers_hidden_state_sequence(tmp_path: Path):
     p1.write_bytes(b"x")
     selected = _choose_plot(tmp_path)
     assert selected == p1
+
+
+def test_extract_episode_insight_auto_selects_first_informative(tmp_path: Path):
+    csv_path = tmp_path / "episode_analysis.csv"
+    pd.DataFrame(
+        {
+            "episode_id": ["e1", "e2"],
+            "hidden_state": [0, 1],
+            "hidden_state_name": ["state_0", "state_1"],
+            "maneuver_right_code": [0, 1],
+            "maneuver_left_code": [0, 0],
+            "kfv_code": [0, 0],
+            "vup_code": [0, 0],
+            "outcome_actions_code": [0, 0],
+            "observed_result": [0, 0],
+        }
+    ).to_csv(csv_path, index=False)
+
+    insight = _extract_episode_insight(csv_path, None)
+    assert insight.episode_id == "e2"
+    assert insight.selection_reason == "auto_first_informative"
+    assert insight.is_informative is True
+
+
+def test_extract_episode_insight_auto_fallback_when_all_zero(tmp_path: Path):
+    csv_path = tmp_path / "episode_analysis.csv"
+    pd.DataFrame(
+        {
+            "episode_id": ["e1", "e2"],
+            "hidden_state": [0, 1],
+            "hidden_state_name": ["state_0", "state_1"],
+            "maneuver_right_code": [0, 0],
+            "maneuver_left_code": [0, 0],
+            "kfv_code": [0, 0],
+            "vup_code": [0, 0],
+            "outcome_actions_code": [0, 0],
+            "observed_result": [0, 0],
+        }
+    ).to_csv(csv_path, index=False)
+
+    insight = _extract_episode_insight(csv_path, None)
+    assert insight.episode_id == "e1"
+    assert insight.selection_reason == "auto_fallback_zero"
+    assert insight.is_informative is False

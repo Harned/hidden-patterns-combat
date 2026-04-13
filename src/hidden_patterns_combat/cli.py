@@ -18,12 +18,14 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--model-out", required=True, help="Where to save model (.pkl)")
     train.add_argument("--sheet", default=None, help="Optional single sheet name")
     train.add_argument("--n-states", type=int, default=3, help="Hidden state count")
+    train.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
 
     analyze = sub.add_parser("analyze", help="Decode hidden scenario")
     analyze.add_argument("--excel", required=True, help="Path to Excel file")
     analyze.add_argument("--model", required=True, help="Path to trained model")
     analyze.add_argument("--output-dir", required=True, help="Directory for analysis outputs")
     analyze.add_argument("--sheet", default=None, help="Optional single sheet name")
+    analyze.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
 
     preprocess = sub.add_parser("preprocess", help="Preprocess Excel into tidy tabular format")
     preprocess.add_argument("--excel", required=True, help="Path to Excel file")
@@ -34,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sheet name (repeat flag for multiple sheets). Omit to process all sheets.",
     )
     preprocess.add_argument("--header-depth", type=int, default=2, help="Excel header depth")
+    preprocess.add_argument(
+        "--force-matrix-parser",
+        action="store_true",
+        help="Force matrix-style parser for selected sheets.",
+    )
     preprocess.add_argument(
         "--output-dir",
         default="data/processed/preprocessing",
@@ -46,8 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--sheet", default=None, help="Optional single sheet name")
     demo.add_argument("--model", default="artifacts/hmm_model.pkl", help="Path to model file")
     demo.add_argument("--n-states", type=int, default=3, help="Hidden state count for training")
-    demo.add_argument("--episode-index", type=int, default=0, help="Episode index to inspect")
+    demo.add_argument("--episode-index", type=int, default=None, help="Episode index to inspect")
     demo.add_argument("--retrain", action="store_true", help="Retrain model before analysis")
+    demo.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
     demo.add_argument(
         "--preprocess-output-dir",
         default="data/processed/preprocessing",
@@ -76,13 +84,19 @@ def main() -> None:
     pipeline = CombatHMMPipeline(cfg)
 
     if args.command == "train":
-        result = pipeline.train(excel_path=args.excel, model_out=args.model_out, sheet=args.sheet)
+        result = pipeline.train(
+            excel_path=args.excel,
+            model_out=args.model_out,
+            sheet=args.sheet,
+            force_matrix_parser=args.force_matrix_parser,
+        )
     elif args.command == "analyze":
         result = pipeline.analyze(
             excel_path=args.excel,
             model_path=args.model,
             output_dir=args.output_dir,
             sheet=args.sheet,
+            force_matrix_parser=args.force_matrix_parser,
         )
     elif args.command == "preprocess":
         from hidden_patterns_combat.preprocessing import run_preprocessing
@@ -101,6 +115,7 @@ def main() -> None:
             header_depth=args.header_depth,
             output_dir=args.output_dir,
             save_parquet=args.save_parquet,
+            force_matrix_parser=args.force_matrix_parser,
         ).to_dict()
     elif args.command == "demo":
         from hidden_patterns_combat.ui import run_demo_workflow
@@ -114,6 +129,7 @@ def main() -> None:
             episode_index=args.episode_index,
             n_states=args.n_states,
             retrain=args.retrain,
+            force_matrix_parser=args.force_matrix_parser,
         ).to_dict()
     else:  # pragma: no cover
         raise ValueError(f"Unsupported command: {args.command}")

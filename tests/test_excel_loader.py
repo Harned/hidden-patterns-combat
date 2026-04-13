@@ -25,3 +25,9 @@ def test_read_excel_sheets_multirow_headers(demo_excel_path):
     # Check duplicate header was de-duplicated and rows were read.
     assert any(col.startswith("стойка и маневрирование самбиста") for col in df.columns)
     assert len(df) == 2
+
+
+def test_read_excel_sheets_auto_detects_matrix_parser(matrix_excel_path):
+    sheets = read_excel_sheets(matrix_excel_path, sheets=["Matrix"])
+    assert sheets[0].parser_type == "matrix"
+    assert len(sheets[0].dataframe) == 3

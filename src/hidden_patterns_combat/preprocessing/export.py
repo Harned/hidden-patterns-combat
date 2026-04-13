@@ -15,6 +15,8 @@ def export_preprocessing_outputs(
     mapping_df: pd.DataFrame,
     validation: ValidationReport,
     save_parquet: bool = False,
+    episodes_tidy_df: pd.DataFrame | None = None,
+    matrix_label_mapping_df: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -36,6 +38,16 @@ def export_preprocessing_outputs(
         "validation_json": str(validation_json),
     }
 
+    if episodes_tidy_df is not None and not episodes_tidy_df.empty:
+        episodes_tidy_csv = out / "episodes_tidy.csv"
+        episodes_tidy_df.to_csv(episodes_tidy_csv, index=False)
+        result["episodes_tidy_csv"] = str(episodes_tidy_csv)
+
+    if matrix_label_mapping_df is not None and not matrix_label_mapping_df.empty:
+        matrix_mapping_csv = out / "matrix_label_mapping.csv"
+        matrix_label_mapping_df.to_csv(matrix_mapping_csv, index=False)
+        result["matrix_label_mapping_csv"] = str(matrix_mapping_csv)
+
     if save_parquet:
         try:
             raw_parquet = out / "raw_combined.parquet"
@@ -44,6 +56,10 @@ def export_preprocessing_outputs(
             cleaned_df.to_parquet(cleaned_parquet, index=False)
             result["raw_parquet"] = str(raw_parquet)
             result["cleaned_parquet"] = str(cleaned_parquet)
+            if episodes_tidy_df is not None and not episodes_tidy_df.empty:
+                episodes_tidy_parquet = out / "episodes_tidy.parquet"
+                episodes_tidy_df.to_parquet(episodes_tidy_parquet, index=False)
+                result["episodes_tidy_parquet"] = str(episodes_tidy_parquet)
         except Exception:
             # Optional output: keep MVP robust without hard dependency on parquet engine.
             pass

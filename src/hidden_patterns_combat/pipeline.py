@@ -25,11 +25,17 @@ class CombatHMMPipeline:
     def __init__(self, cfg: PipelineConfig | None = None):
         self.cfg = cfg or PipelineConfig()
 
-    def _load_all_rows(self, excel_path: str | Path, sheet: str | None = None) -> pd.DataFrame:
+    def _load_all_rows(
+        self,
+        excel_path: str | Path,
+        sheet: str | None = None,
+        force_matrix_parser: bool = False,
+    ) -> pd.DataFrame:
         sheets = read_excel_sheets(
             excel_path=excel_path,
             sheets=[sheet] if sheet else None,
             header_depth=self.cfg.header.multirow_header_depth,
+            force_matrix_parser=force_matrix_parser,
         )
         combined = pd.concat([s.dataframe.assign(_sheet=s.name) for s in sheets], axis=0, ignore_index=True)
         combined = clean_episode_table(combined)
@@ -43,8 +49,14 @@ class CombatHMMPipeline:
             return seq
         return pd.Series(["sequence_0"] * len(metadata), index=metadata.index)
 
-    def train(self, excel_path: str | Path, model_out: str | Path, sheet: str | None = None) -> dict[str, object]:
-        raw = self._load_all_rows(excel_path, sheet)
+    def train(
+        self,
+        excel_path: str | Path,
+        model_out: str | Path,
+        sheet: str | None = None,
+        force_matrix_parser: bool = False,
+    ) -> dict[str, object]:
+        raw = self._load_all_rows(excel_path, sheet, force_matrix_parser=force_matrix_parser)
         encoded = encode_features(raw, self.cfg.features)
         sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine(self.cfg.model)
@@ -74,8 +86,9 @@ class CombatHMMPipeline:
         model_path: str | Path,
         output_dir: str | Path,
         sheet: str | None = None,
+        force_matrix_parser: bool = False,
     ) -> dict[str, object]:
-        raw = self._load_all_rows(excel_path, sheet)
+        raw = self._load_all_rows(excel_path, sheet, force_matrix_parser=force_matrix_parser)
         encoded = encode_features(raw, self.cfg.features)
         sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine.load(model_path)

@@ -77,3 +77,29 @@ def cleaned_like_df() -> pd.DataFrame:
             "metadata__sheet": ["Общее", "Общее", "48"],
         }
     )
+
+
+@pytest.fixture
+def matrix_excel_path(tmp_path: Path) -> Path:
+    path = tmp_path / "episodes_matrix.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Matrix"
+
+    ws.append(["ФИО борца", "Иванов И.И.", None, None, None])
+    ws.append(["№ эпизода", None, 1, 2, 3])
+    ws.append(["Время эпизода", None, 30, 45, 20])
+    ws.append(["Время паузы", None, 5, 3, 2])
+    ws.append(["Баллы", None, 0, 2, 0])
+    ws.append(["Правосторонняя стойка", None, 1, 0, 1])
+    ws.append(["Левосторонняя стойка", None, 0, 1, 0])
+    ws.append(["Захваты", None, 1, 1, 0])
+    ws.append(["Хваты", None, 0, 1, 0])
+    ws.append(["Обхваты", None, 0, 0, 1])
+    ws.append(["Прихваты", None, 1, 0, 0])
+    ws.append(["Упоры", None, 0, 0, 1])
+    ws.append(["ВУП", None, 0, 1, 0])
+    ws.append(["Завершающие атакующие действия", None, 0, 1, 0])
+
+    wb.save(path)
+    return path
