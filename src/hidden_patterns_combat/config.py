@@ -13,20 +13,26 @@ class HeaderConfig:
 @dataclass
 class FeatureConfig:
     episode_id_column_candidates: tuple[str, ...] = (
+        "metadata__episode_id",
         "номер эпизода",
         "episode",
         "episode_id",
     )
     duration_column_candidates: tuple[str, ...] = (
+        "metadata__episode_duration",
         "время эпизода",
         "episode_duration",
         "duration",
     )
     pause_column_candidates: tuple[str, ...] = (
+        "metadata__pause_duration",
+        "pause_duration",
         "время паузы",
         "pause",
     )
     result_column_candidates: tuple[str, ...] = (
+        "outcomes__score",
+        "observed_result",
         "баллы",
         "результат",
         "оценка",

@@ -237,12 +237,12 @@ class FeatureEngineer:
         if athlete is None and sheet is None and episode is None:
             return pd.Series(["sequence_0"] * len(index), index=index)
 
-        athlete_s = athlete.astype(str).str.strip() if athlete is not None else pd.Series([""] * len(index), index=index)
-        sheet_s = sheet.astype(str).str.strip() if sheet is not None else pd.Series([""] * len(index), index=index)
-        episode_s = episode.astype(str).str.strip() if episode is not None else pd.Series([""] * len(index), index=index)
+        athlete_s = athlete.fillna("").astype(str).str.strip() if athlete is not None else pd.Series([""] * len(index), index=index)
+        sheet_s = sheet.fillna("").astype(str).str.strip() if sheet is not None else pd.Series([""] * len(index), index=index)
+        episode_s = episode.fillna("").astype(str).str.strip() if episode is not None else pd.Series([""] * len(index), index=index)
 
         def _non_empty(s: pd.Series) -> pd.Series:
-            return s.astype(str).str.strip().replace({"nan": "", "None": ""})
+            return s.astype(str).str.strip().replace({"nan": "", "None": "", "<NA>": ""})
 
         athlete_s = _non_empty(athlete_s)
         sheet_s = _non_empty(sheet_s)
@@ -391,14 +391,14 @@ class FeatureEngineer:
 
         metadata = pd.DataFrame(index=df.index)
         metadata["episode_id"] = (
-            df[episode_col].astype(str)
+            df[episode_col].fillna("").astype(str)
             if episode_col
             else pd.Series(df.index.astype(str), index=df.index)
         )
         if athlete_col:
-            metadata["athlete_name"] = df[athlete_col].astype(str)
+            metadata["athlete_name"] = df[athlete_col].fillna("").astype(str)
         if sheet_col:
-            metadata["source_sheet"] = df[sheet_col].astype(str)
+            metadata["source_sheet"] = df[sheet_col].fillna("").astype(str)
         metadata["sequence_id"] = self._build_sequence_id(
             athlete=df[athlete_col] if athlete_col else None,
             sheet=df[sheet_col] if sheet_col else None,

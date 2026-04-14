@@ -13,7 +13,7 @@ from hidden_patterns_combat.config import ModelConfig
 from hidden_patterns_combat.modeling.decoding import HMMDecoder
 from hidden_patterns_combat.modeling.observation_encoding import encode_observations
 from hidden_patterns_combat.modeling.state_definition import StateDefinition, build_semantic_state_definition
-from hidden_patterns_combat.modeling.training import HMMTrainer
+from hidden_patterns_combat.modeling.training import HMMTrainer, TrainingResult
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ class HMMEngine:
             random_state=cfg.random_state,
         )
         self.feature_columns: list[str] | None = None
+        self.last_training_result: TrainingResult | None = None
 
     def _align_features(self, features: pd.DataFrame) -> pd.DataFrame:
         if self.feature_columns is None:
@@ -73,6 +74,7 @@ class HMMEngine:
         self.feature_columns = batch.feature_columns
         trainer = HMMTrainer(self.model, topology_mode=self.cfg.topology_mode)
         result = trainer.fit(batch.values, lengths=batch.lengths)
+        self.last_training_result = result
         train_states = self.model.predict(batch.values, lengths=batch.lengths if batch.lengths else None)
         self.state_definition = build_semantic_state_definition(
             features=features,
@@ -80,9 +82,12 @@ class HMMEngine:
             n_states=self.cfg.n_hidden_states,
         )
         logger.info(
-            "HMM fitted. log_likelihood=%.4f, n_sequences=%d",
+            "HMM fitted. log_likelihood=%.4f, n_sequences=%d, converged=%s, n_iter=%d, last_delta=%s",
             result.log_likelihood,
             len(batch.lengths) if batch.lengths else 1,
+            result.converged,
+            result.n_iterations,
+            None if result.last_delta is None else round(float(result.last_delta), 6),
         )
         return result.log_likelihood
 

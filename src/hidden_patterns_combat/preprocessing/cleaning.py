@@ -50,12 +50,29 @@ def clean_episode_table(df: pd.DataFrame) -> pd.DataFrame:
     for col in cleaned.select_dtypes(include=["object", "string"]).columns:
         cleaned[col] = cleaned[col].astype(str).str.strip()
 
+    athlete_col = _first_existing(cleaned, ("metadata__athlete_name", "фио борца", "athlete_name"))
+    sheet_col = _first_existing(cleaned, ("metadata__sheet", "_sheet", "sheet"))
+    if athlete_col:
+        cleaned[athlete_col] = (
+            cleaned[athlete_col]
+            .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
+            .ffill()
+        )
+    if sheet_col:
+        cleaned[sheet_col] = (
+            cleaned[sheet_col]
+            .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA})
+            .ffill()
+        )
+
     empty_rows_mask = cleaned.replace("", pd.NA).isna().all(axis=1)
     dropped_empty_rows = int(empty_rows_mask.sum())
     cleaned = cleaned.loc[~empty_rows_mask].copy()
 
-    athlete_col = _first_existing(cleaned, ("metadata__athlete_name", "фио борца", "athlete_name"))
-    episode_col = _first_existing(cleaned, ("номер эпизода", "episode_id", "metadata__episode_attr_01", "эпизод"))
+    episode_col = _first_existing(
+        cleaned,
+        ("metadata__episode_id", "номер эпизода", "episode_id", "metadata__episode_attr_01", "эпизод"),
+    )
     result_col = _first_existing(cleaned, ("outcomes__score", "баллы", "observed_result", "результат"))
 
     dropped_aggregate_rows = 0
@@ -67,8 +84,11 @@ def clean_episode_table(df: pd.DataFrame) -> pd.DataFrame:
 
     activity = _activity_series(cleaned)
     if episode_col:
+        episode_text = cleaned[episode_col].astype(str).str.strip()
         episode_numeric = pd.to_numeric(cleaned[episode_col], errors="coerce")
-        has_episode = episode_numeric.notna() | cleaned[episode_col].astype(str).str.strip().ne("")
+        id_like = episode_text.str.fullmatch(r"[a-zA-Zа-яА-Я]*\d+[a-zA-Zа-яА-Я]*", na=False)
+        looks_like_header = episode_text.str.lower().str.contains("эпизод|episode", regex=True, na=False)
+        has_episode = (episode_numeric.notna() | id_like) & (~looks_like_header)
     else:
         has_episode = pd.Series([False] * len(cleaned), index=cleaned.index)
 

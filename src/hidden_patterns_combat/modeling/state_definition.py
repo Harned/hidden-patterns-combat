@@ -81,6 +81,9 @@ def build_semantic_state_definition(
     features: pd.DataFrame,
     decoded_states: np.ndarray,
     n_states: int,
+    min_dominance_share: float = 0.45,
+    min_dominance_margin: float = 0.10,
+    min_block_score: float = 0.15,
 ) -> StateDefinition:
     """Derive stable semantic labels S1/S2/S3 from state feature profiles.
 
@@ -134,8 +137,32 @@ def build_semantic_state_definition(
     for block, semantic_name, semantic_description in semantic_targets:
         if not remaining:
             break
+        candidates: list[int] = []
+        for sid in sorted(remaining):
+            shares = [
+                scores[sid].get("maneuvering_share", 0.0),
+                scores[sid].get("kfv_share", 0.0),
+                scores[sid].get("vup_share", 0.0),
+            ]
+            sorted_shares = sorted(shares, reverse=True)
+            best_share = sorted_shares[0] if sorted_shares else 0.0
+            second_share = sorted_shares[1] if len(sorted_shares) > 1 else 0.0
+            margin = best_share - second_share
+            target_share = scores[sid].get(f"{block}_share", 0.0)
+            target_score = scores[sid].get(f"{block}_score", 0.0)
+            if (
+                target_share >= min_dominance_share
+                and margin >= min_dominance_margin
+                and target_score >= min_block_score
+                and np.isclose(target_share, best_share)
+            ):
+                candidates.append(sid)
+
+        if not candidates:
+            continue
+
         ordered = sorted(
-            remaining,
+            candidates,
             key=lambda sid: (
                 scores[sid].get(f"{block}_share", 0.0),
                 scores[sid].get(f"{block}_score", 0.0),
@@ -150,8 +177,16 @@ def build_semantic_state_definition(
 
     for state_id in sorted(remaining):
         fallback_name = f"state_{state_id}"
+        dom_block = max(
+            ("maneuvering", "kfv", "vup"),
+            key=lambda b: scores[state_id].get(f"{b}_share", 0.0),
+        )
+        dom_share = float(scores[state_id].get(f"{dom_block}_share", 0.0))
         name_mapping[state_id] = fallback_name
-        description_mapping[state_id] = "Дополнительное латентное состояние."
+        description_mapping[state_id] = (
+            "Нейтральное латентное состояние: уверенного соответствия S1/S2/S3 нет "
+            f"(dominant={dom_block}, share={dom_share:.3f})."
+        )
 
     return StateDefinition.from_mapping(
         n_states=n_states,

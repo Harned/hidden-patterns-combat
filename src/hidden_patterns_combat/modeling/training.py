@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TrainingResult:
     log_likelihood: float
     transition_matrix: np.ndarray
+    converged: bool
+    n_iterations: int
+    last_delta: float | None
 
 
 class HMMTrainer:
@@ -29,17 +35,43 @@ class HMMTrainer:
         return fixed
 
     def fit(self, x: np.ndarray, lengths: list[int] | None = None) -> TrainingResult:
-        if lengths:
-            self.model.fit(x, lengths=lengths)
-            self.model.transmat_ = self._repair_transmat(self.model.transmat_)
-            self._apply_topology_constraints()
-            score = float(self.model.score(x, lengths=lengths))
-        else:
-            self.model.fit(x)
-            self.model.transmat_ = self._repair_transmat(self.model.transmat_)
-            self._apply_topology_constraints()
-            score = float(self.model.score(x))
-        return TrainingResult(log_likelihood=score, transition_matrix=self.model.transmat_.copy())
+        hmm_logger = logging.getLogger("hmmlearn")
+        prev_level = hmm_logger.level
+        hmm_logger.setLevel(logging.ERROR)
+        try:
+            if lengths:
+                self.model.fit(x, lengths=lengths)
+                self.model.transmat_ = self._repair_transmat(self.model.transmat_)
+                self._apply_topology_constraints()
+                score = float(self.model.score(x, lengths=lengths))
+            else:
+                self.model.fit(x)
+                self.model.transmat_ = self._repair_transmat(self.model.transmat_)
+                self._apply_topology_constraints()
+                score = float(self.model.score(x))
+        finally:
+            hmm_logger.setLevel(prev_level)
+
+        monitor = getattr(self.model, "monitor_", None)
+        history = list(getattr(monitor, "history", [])) if monitor is not None else []
+        last_delta = None
+        if len(history) >= 2:
+            last_delta = float(history[-1] - history[-2])
+            if last_delta < 0:
+                logger.warning(
+                    "HMM finished with negative monitor delta: delta=%.6f (possible local instability).",
+                    last_delta,
+                )
+        converged = bool(getattr(monitor, "converged", True))
+        n_iterations = int(len(history))
+
+        return TrainingResult(
+            log_likelihood=score,
+            transition_matrix=self.model.transmat_.copy(),
+            converged=converged,
+            n_iterations=n_iterations,
+            last_delta=last_delta,
+        )
 
     def _apply_topology_constraints(self) -> None:
         if self.topology_mode != "left_to_right":

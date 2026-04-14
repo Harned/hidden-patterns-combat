@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from .cleaning import clean_episode_table
 from .data_dictionary import DataDictionary
 from .export import export_preprocessing_outputs
 from .ingestion import SheetSelector, load_excel_for_preprocessing
@@ -48,8 +49,9 @@ def run_preprocessing(
     )
 
     transform = transform_raw_to_tidy(ingestion.raw_combined, data_dictionary=data_dictionary)
+    cleaned_tidy = clean_episode_table(transform.cleaned)
     validation = validate_tidy_structure(
-        transform.cleaned,
+        cleaned_tidy,
         transform.mapping,
         data_dictionary=data_dictionary,
     )
@@ -57,7 +59,7 @@ def run_preprocessing(
     exports = export_preprocessing_outputs(
         output_dir=output_dir,
         raw_df=ingestion.raw_combined,
-        cleaned_df=transform.cleaned,
+        cleaned_df=cleaned_tidy,
         mapping_df=transform.mapping,
         validation=validation,
         save_parquet=save_parquet,
@@ -69,8 +71,8 @@ def run_preprocessing(
         excel_path=str(Path(excel_path)),
         sheets_loaded=ingestion.sheets_loaded,
         rows_raw=len(ingestion.raw_combined),
-        rows_cleaned=len(transform.cleaned),
-        columns_cleaned=len(transform.cleaned.columns),
+        rows_cleaned=len(cleaned_tidy),
+        columns_cleaned=len(cleaned_tidy.columns),
         validation=validation,
         exports=exports,
     )

@@ -43,7 +43,14 @@ class DataDictionary:
             "observed_result": "outcomes__score",
         }
 
+        # Order matters: tactical blocks should be checked before metadata.
+        # Real headers often include phrase "в эпизоде", which must not force
+        # maneuvering/KFV/VUP columns into metadata.
         self.block_rules: tuple[BlockRule, ...] = (
+            BlockRule("maneuvering", ("стойка", "маневр", "maneuver")),
+            BlockRule("kfv", ("кфв", "контакты физического взаимодействия", "захват", "обхват", "прихват", "хват", "упор")),
+            BlockRule("vup", ("вуп", "выведение", "vup")),
+            BlockRule("outcomes", ("балл", "результ", "score", "outcome", "заверша", "брос", "удерж", "болев")),
             BlockRule(
                 "metadata",
                 (
@@ -61,10 +68,6 @@ class DataDictionary:
                     "sheet",
                 ),
             ),
-            BlockRule("maneuvering", ("стойка", "маневр", "maneuver")),
-            BlockRule("kfv", ("кфв", "контакты физического взаимодействия", "захват", "обхват", "прихват", "хват", "упор")),
-            BlockRule("vup", ("вуп", "выведение", "vup")),
-            BlockRule("outcomes", ("балл", "результ", "score", "outcome", "заверша", "брос", "удерж", "болев")),
         )
         self.required_blocks: tuple[str, ...] = ("metadata", "maneuvering", "kfv", "vup", "outcomes")
 

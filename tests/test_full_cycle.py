@@ -117,4 +117,23 @@ def test_full_cycle_fast_reuse_mode_smoke(demo_excel_path: Path, tmp_path: Path)
     assert payload["n_rows_clean"] >= 1
     assert payload["state_summary"]
     assert payload["sample_analysis"]
+    assert str(payload["sample_analysis"].get("episode_id", "")).lower() not in {"", "nan", "none"}
+    assert str(payload["sample_analysis"].get("sequence_id", "")).lower() not in {"", "nan", "none"}
     assert Path(payload["diagnostics_path"]).exists()
+
+
+@pytest.mark.skipif(not HAS_HMMLEARN, reason="hmmlearn missing")
+def test_full_cycle_respects_explicit_sheet_selection(demo_excel_path: Path, tmp_path: Path):
+    output_dir = tmp_path / "run_sheet_selection"
+    result = run_full_cycle(
+        input_path=demo_excel_path,
+        output_dir=output_dir,
+        sheet_names=["Общее"],
+        n_states=2,
+        retrain=True,
+        save_model=False,
+        generate_plots=False,
+        verbose=False,
+    )
+    assert result.requested_sheets == ["Общее"]
+    assert result.loaded_sheets == ["Общее"]

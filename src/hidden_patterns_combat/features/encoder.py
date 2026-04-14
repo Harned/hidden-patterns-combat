@@ -36,24 +36,44 @@ DEFAULT_HMM_FEATURE_ORDER: tuple[str, ...] = (
 )
 
 
-def select_hmm_input_features(engineered_features: pd.DataFrame) -> pd.DataFrame:
+def select_hmm_input_features(
+    engineered_features: pd.DataFrame,
+    *,
+    return_info: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, list[str]]]:
     """Select HMM input features without target/outcome leakage.
 
     Outcome/result columns are intentionally excluded from model input and can be
     used only for post-hoc interpretation/diagnostics.
     """
     ordered = [c for c in DEFAULT_HMM_FEATURE_ORDER if c in engineered_features.columns]
-    if ordered:
-        return engineered_features[ordered].copy()
-
+    selected = engineered_features[ordered].copy() if ordered else engineered_features.copy()
     fallback = [
         c
-        for c in engineered_features.columns
+        for c in selected.columns
         if "outcome" not in c.lower()
         and "result" not in c.lower()
         and "score" not in c.lower()
     ]
-    return engineered_features[fallback].copy()
+    selected = selected[fallback].copy()
+
+    numeric = selected.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    variances = numeric.var(axis=0, ddof=0)
+    informative_cols = [c for c in numeric.columns if float(variances[c]) > 1e-12]
+    dropped_constant = [c for c in numeric.columns if c not in informative_cols]
+
+    if not informative_cols:
+        informative_cols = list(numeric.columns)
+        dropped_constant = []
+
+    hmm_input = numeric[informative_cols].copy()
+    info = {
+        "hmm_input_features": informative_cols,
+        "dropped_constant_features": dropped_constant,
+    }
+    if return_info:
+        return hmm_input, info
+    return hmm_input
 
 
 def encode_features(

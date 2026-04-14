@@ -30,9 +30,16 @@ def _canonical_name(col: str, block: str, position: int, dd: DataDictionary) -> 
         base = dd.canonical_metadata_map[col]
         return base if position == 1 else f"{base}_{position:02d}"
     if block == "metadata":
-        if "эпизод" in col:
+        low = col.lower()
+        if any(token in low for token in ("№ эпизода", "номер эпизода", "episode id", "episode number")):
+            return "metadata__episode_id"
+        if ("время" in low and "пауз" in low) or "pause duration" in low:
+            return "metadata__pause_duration"
+        if ("время" in low and "эпизод" in low) or "episode duration" in low:
+            return "metadata__episode_duration"
+        if "эпизод" in low:
             return f"metadata__episode_attr_{position:02d}"
-        if "время" in col:
+        if "время" in low:
             return f"metadata__time_attr_{position:02d}"
     return f"{block}__f{position:02d}"
 

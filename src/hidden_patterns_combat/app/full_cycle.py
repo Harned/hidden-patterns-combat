@@ -22,6 +22,8 @@ from hidden_patterns_combat.visualization import create_analysis_charts
 class FullCycleResult:
     input_path: str
     output_dir: str
+    requested_sheets: list[str]
+    loaded_sheets: list[str]
     cleaned_data_path: str
     features_path: str
     model_path: str | None
@@ -32,6 +34,11 @@ class FullCycleResult:
     n_rows_clean: int
     n_sequences: int
     n_features: int
+    hmm_input_features: list[str]
+    dropped_constant_hmm_features: list[str]
+    hmm_converged: bool | None
+    hmm_n_iterations: int | None
+    hmm_last_delta: float | None
     state_summary: list[dict[str, object]]
     sample_analysis: dict[str, object]
     created_artifacts: list[str]
@@ -81,15 +88,64 @@ def _resolve_input_path(input_path: str | Path) -> Path:
     return path
 
 
+def _is_present_text(value: object) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text not in {"", "nan", "none", "<na>"}
+
+
 def _build_sample_analysis(analysis_df: pd.DataFrame) -> dict[str, object]:
     if analysis_df.empty:
         return {"message": "No rows available for sample analysis."}
 
-    row = analysis_df.iloc[0]
+    key_signal_cols = [
+        c
+        for c in (
+            "maneuver_right_code",
+            "maneuver_left_code",
+            "kfv_code",
+            "vup_code",
+            "outcome_actions_code",
+            "duration",
+            "pause",
+            "observed_result",
+        )
+        if c in analysis_df.columns
+    ]
+    signal = (
+        analysis_df[key_signal_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).abs().sum(axis=1)
+        if key_signal_cols
+        else pd.Series([0.0] * len(analysis_df), index=analysis_df.index)
+    )
+    episode_valid = (
+        analysis_df["episode_id"].apply(_is_present_text)
+        if "episode_id" in analysis_df.columns
+        else pd.Series([False] * len(analysis_df), index=analysis_df.index)
+    )
+    sequence_valid = (
+        analysis_df["sequence_id"].apply(_is_present_text)
+        if "sequence_id" in analysis_df.columns
+        else pd.Series([False] * len(analysis_df), index=analysis_df.index)
+    )
+
+    strict_mask = episode_valid & sequence_valid & signal.gt(0.0)
+    soft_mask = episode_valid & sequence_valid
+    if strict_mask.any():
+        selected = analysis_df.loc[strict_mask].iloc[0]
+        warning: str | None = None
+    elif soft_mask.any():
+        selected = analysis_df.loc[soft_mask].iloc[0]
+        warning = "Sample selected without feature signal > 0; check sparsity/coverage."
+    else:
+        selected = analysis_df.iloc[0]
+        warning = "No fully valid sample row found (episode_id/sequence_id missing). Showing first row."
+
+    row = selected
     prob_cols = sorted([c for c in analysis_df.columns if c.startswith("p_state_")])
     probabilities = {c: float(row[c]) for c in prob_cols}
 
-    return {
+    payload = {
         "episode_id": str(row.get("episode_id", "0")),
         "sequence_id": str(row.get("sequence_id", "sequence_0")),
         "hidden_state": int(row.get("hidden_state", -1)),
@@ -97,6 +153,9 @@ def _build_sample_analysis(analysis_df: pd.DataFrame) -> dict[str, object]:
         "observed_result": float(row.get("observed_result", 0.0)),
         "probabilities": probabilities,
     }
+    if warning:
+        payload["warning"] = warning
+    return payload
 
 
 def _write_full_cycle_report(
@@ -109,8 +168,15 @@ def _write_full_cycle_report(
         "",
         f"- Input file: `{result.input_path}`",
         f"- Output dir: `{result.output_dir}`",
+        f"- Requested sheets: `{result.requested_sheets}`",
+        f"- Loaded sheets: `{result.loaded_sheets}`",
         f"- Rows raw/clean: {result.n_rows_raw}/{result.n_rows_clean}",
         f"- Engineered features: {result.n_features}",
+        f"- HMM input features: `{result.hmm_input_features}`",
+        f"- Dropped constant HMM features: `{result.dropped_constant_hmm_features}`",
+        f"- HMM converged: {result.hmm_converged}",
+        f"- HMM iterations: {result.hmm_n_iterations}",
+        f"- HMM last delta: {result.hmm_last_delta}",
         f"- Sequences: {result.n_sequences}",
         f"- Model states: {n_states}",
         "",
@@ -151,6 +217,7 @@ def run_full_cycle(
     output_dir: str | Path,
     mode: str | None = None,
     sheet_names: list[str] | None = None,
+    header_depth: int = 2,
     parser_mode: str = "auto",
     force_matrix_parser: bool | None = None,
     retrain: bool = True,
@@ -187,19 +254,22 @@ def run_full_cycle(
         raise ValueError("When retrain=False, set load_existing_model=True to run analysis.")
 
     dirs = _prepare_output_dirs(output_dir, reset_outputs=reset_outputs)
+    requested_sheets = list(sheet_names) if sheet_names else []
 
     def log(message: str) -> None:
         if verbose:
             print(message)
 
-    log("[1/8] Preprocessing Excel input...")
+    log(f"[1/8] Preprocessing Excel input... requested_sheets={requested_sheets or 'ALL'}")
     preprocessing = run_preprocessing(
         excel_path=input_path,
         sheet_selector=sheet_names,
+        header_depth=header_depth,
         output_dir=dirs["cleaned"],
         parser_mode=parser_mode,
         force_matrix_parser=force_matrix_parser,
     )
+    log(f"      loaded_sheets={preprocessing.sheets_loaded}")
 
     cleaned_data_path = Path(preprocessing.exports["cleaned_csv"])
     cleaned_df = pd.read_csv(cleaned_data_path)
@@ -215,7 +285,10 @@ def run_full_cycle(
     cfg.model.topology_mode = topology_mode
 
     encoded = encode_features(cleaned_df, cfg.features)
-    hmm_features = select_hmm_input_features(encoded.features)
+    hmm_features, hmm_feature_info = select_hmm_input_features(encoded.features, return_info=True)
+    dropped_constant = hmm_feature_info.get("dropped_constant_features", [])
+    if dropped_constant:
+        log(f"      dropped_constant_hmm_features={dropped_constant}")
     feature_exports = export_feature_sets(
         result=FeatureEngineeringResult(
             raw_feature_set=encoded.raw,
@@ -259,9 +332,29 @@ def run_full_cycle(
     model_file = _resolve_model_path(model_path, dirs["models"])
 
     log("[4/8] Training/loading model...")
+    training_diag: dict[str, object] = {
+        "converged": None,
+        "n_iterations": None,
+        "last_delta": None,
+    }
     if retrain:
         engine = HMMEngine(cfg.model)
         engine.fit(hmm_features, sequence_ids=sequence_ids)
+        if engine.last_training_result is not None:
+            training_diag = {
+                "converged": bool(engine.last_training_result.converged),
+                "n_iterations": int(engine.last_training_result.n_iterations),
+                "last_delta": (
+                    float(engine.last_training_result.last_delta)
+                    if engine.last_training_result.last_delta is not None
+                    else None
+                ),
+            }
+            if training_diag["last_delta"] is not None and float(training_diag["last_delta"]) < 0:
+                log(
+                    "      convergence_note=negative final monitor delta; "
+                    "model may be in a local unstable optimum."
+                )
         if save_model:
             engine.save(model_file)
     else:
@@ -336,6 +429,8 @@ def run_full_cycle(
     result = FullCycleResult(
         input_path=str(input_path),
         output_dir=str(output_dir),
+        requested_sheets=requested_sheets,
+        loaded_sheets=preprocessing.sheets_loaded,
         cleaned_data_path=str(cleaned_data_path),
         features_path=str(feature_exports["engineered_feature_set_csv"]),
         model_path=str(model_file) if model_file.exists() else None,
@@ -346,6 +441,11 @@ def run_full_cycle(
         n_rows_clean=preprocessing.rows_cleaned,
         n_sequences=n_sequences,
         n_features=n_features,
+        hmm_input_features=list(hmm_features.columns),
+        dropped_constant_hmm_features=dropped_constant,
+        hmm_converged=training_diag["converged"],
+        hmm_n_iterations=training_diag["n_iterations"],
+        hmm_last_delta=training_diag["last_delta"],
         state_summary=state_summary,
         sample_analysis=sample_analysis,
         created_artifacts=[str(p) for p in artifacts if Path(p).exists()],
@@ -372,6 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Path to Excel input")
     parser.add_argument("--output", required=True, help="Output directory for artifacts")
     parser.add_argument("--sheet-names", default=None, help="Comma-separated Excel sheet names")
+    parser.add_argument("--header-depth", type=int, default=2, help="Excel multi-row header depth for table parser.")
     parser.add_argument(
         "--parser-mode",
         choices=["auto", "table", "matrix"],
@@ -443,6 +544,7 @@ def main() -> None:
         input_path=args.input,
         output_dir=args.output,
         sheet_names=_parse_sheet_names(args.sheet_names),
+        header_depth=args.header_depth,
         parser_mode=args.parser_mode,
         force_matrix_parser=args.force_matrix_parser,
         retrain=retrain,
