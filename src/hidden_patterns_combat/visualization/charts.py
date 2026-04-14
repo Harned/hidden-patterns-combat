@@ -8,6 +8,8 @@ from .base import default_state_colors, ensure_output_path, get_pyplot
 
 
 def _state_col(df: pd.DataFrame) -> str:
+    if "canonical_state_name" in df.columns:
+        return "canonical_state_name"
     if "hidden_state_name" in df.columns:
         return "hidden_state_name"
     if "hidden_state" in df.columns:
@@ -20,6 +22,15 @@ def _sequence_col(df: pd.DataFrame) -> str | None:
         if candidate in df.columns:
             return candidate
     return None
+
+
+def _normalize_sequence_ids(seq: pd.Series) -> pd.Series:
+    return (
+        seq.fillna("sequence_0")
+        .astype(str)
+        .str.strip()
+        .replace({"": "sequence_0", "nan": "sequence_0", "None": "sequence_0"})
+    )
 
 
 def _probability_state_index(column: str, prob_prefix: str = "p_state_") -> int | None:
@@ -69,6 +80,49 @@ def _state_probability_legend_labels(
         else:
             labels[col] = col
     return labels
+
+
+def _transition_plot_rows(
+    analysis_df: pd.DataFrame,
+    *,
+    top_k: int = 12,
+    transition_summary: list[dict[str, object]] | None = None,
+) -> list[tuple[str, int]]:
+    if transition_summary:
+        rows = sorted(
+            [
+                (
+                    f"{str(row.get('from_name', 'state_?'))} -> {str(row.get('to_name', 'state_?'))}",
+                    int(row.get("count", 0)),
+                )
+                for row in transition_summary
+            ],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        return rows[:top_k]
+
+    state_col = _state_col(analysis_df)
+    seq_col = _sequence_col(analysis_df)
+    if seq_col is None:
+        seq_ids = pd.Series(["all"] * len(analysis_df), index=analysis_df.index)
+    else:
+        seq_ids = _normalize_sequence_ids(analysis_df[seq_col])
+
+    states = analysis_df[state_col].astype(str).tolist()
+    transitions: dict[str, int] = {}
+    start = 0
+    for i in range(1, len(states) + 1):
+        if i < len(states) and seq_ids.iloc[i] == seq_ids.iloc[start]:
+            continue
+        segment = states[start:i]
+        for j in range(len(segment) - 1):
+            tr = f"{segment[j]} -> {segment[j + 1]}"
+            transitions[tr] = transitions.get(tr, 0) + 1
+        start = i
+
+    rows = sorted(transitions.items(), key=lambda x: x[1], reverse=True)
+    return rows[:top_k]
 
 
 def plot_hidden_state_sequence(
@@ -244,25 +298,15 @@ def plot_transition_distribution(
     analysis_df: pd.DataFrame,
     out_path: str | Path,
     top_k: int = 12,
+    transition_summary: list[dict[str, object]] | None = None,
 ) -> Path:
-    state_col = _state_col(analysis_df)
-    seq_col = _sequence_col(analysis_df)
-
-    if seq_col is None:
-        seq_ids = pd.Series(["all"] * len(analysis_df), index=analysis_df.index)
-    else:
-        seq_ids = analysis_df[seq_col].astype(str)
-
-    transitions: dict[str, int] = {}
-    for _, group in analysis_df.assign(_seq=seq_ids).groupby("_seq", sort=False):
-        states = group[state_col].astype(str).tolist()
-        for i in range(len(states) - 1):
-            tr = f"{states[i]} -> {states[i+1]}"
-            transitions[tr] = transitions.get(tr, 0) + 1
-
-    sorted_transitions = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:top_k]
-    labels = [x[0] for x in sorted_transitions][::-1]
-    values = [x[1] for x in sorted_transitions][::-1]
+    rows = _transition_plot_rows(
+        analysis_df,
+        top_k=top_k,
+        transition_summary=transition_summary,
+    )
+    labels = [x[0] for x in rows][::-1]
+    values = [x[1] for x in rows][::-1]
 
     out = ensure_output_path(out_path)
     plt = get_pyplot()
@@ -285,6 +329,7 @@ def create_analysis_charts(
     output_dir: str | Path,
     canonical_state_mapping: dict[str, object] | None = None,
     observed_signal_label: str = "Observed signal",
+    transition_summary: list[dict[str, object]] | None = None,
 ) -> dict[str, str]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -326,7 +371,11 @@ def create_analysis_charts(
         )
     )
     outputs["transition_distribution"] = str(
-        plot_transition_distribution(analysis_df, out / "transition_distribution.png")
+        plot_transition_distribution(
+            analysis_df,
+            out / "transition_distribution.png",
+            transition_summary=transition_summary,
+        )
     )
 
     return outputs

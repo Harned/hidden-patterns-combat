@@ -4,6 +4,7 @@ import pandas as pd
 
 from hidden_patterns_combat.visualization.charts import (
     _state_probability_legend_labels,
+    _transition_plot_rows,
     create_analysis_charts,
 )
 
@@ -69,3 +70,34 @@ def test_state_probability_legend_labels_use_canonical_mapping():
         "p_state_1": "state_0",
         "p_state_2": "state_1",
     }
+
+
+def test_transition_plot_rows_use_provided_transition_summary():
+    df = pd.DataFrame(
+        {
+            "sequence_id": ["s1", "s1", "s1"],
+            "hidden_state_name": ["S1", "S1", "S1"],
+        }
+    )
+    rows = _transition_plot_rows(
+        df,
+        transition_summary=[
+            {"from_name": "S1", "to_name": "state_0", "count": 7},
+            {"from_name": "state_0", "to_name": "state_1", "count": 3},
+        ],
+        top_k=10,
+    )
+    assert rows == [("S1 -> state_0", 7), ("state_0 -> state_1", 3)]
+
+
+def test_transition_plot_rows_use_contiguous_sequence_boundaries():
+    df = pd.DataFrame(
+        {
+            "sequence_id": ["a", "a", "b", "a"],
+            "hidden_state_name": ["S1", "state_0", "state_1", "S1"],
+        }
+    )
+    rows = _transition_plot_rows(df, top_k=10)
+    as_dict = dict(rows)
+    assert as_dict.get("S1 -> state_0", 0) == 1
+    assert as_dict.get("state_0 -> state_1", 0) == 0

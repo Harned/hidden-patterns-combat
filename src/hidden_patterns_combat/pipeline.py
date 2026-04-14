@@ -111,6 +111,14 @@ class CombatHMMPipeline:
         sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine.load(model_path)
         prediction = engine.predict(hmm_features, sequence_ids=sequence_ids)
+        canonical_map = engine.canonical_state_mapping()
+        canonical_to_name = {
+            int(k): str(v) for k, v in (canonical_map.get("canonical_to_name", {}) or {}).items()
+        }
+        canonical_state_ids = pd.Series(prediction.states).astype(int)
+        canonical_state_names = canonical_state_ids.map(
+            lambda sid: canonical_to_name.get(int(sid), engine.state_definition.state_name(int(sid)))
+        )
 
         output_dir = ensure_dir(output_dir)
 
@@ -120,11 +128,13 @@ class CombatHMMPipeline:
                 encoded.features,
                 pd.DataFrame(
                     {
-                        "hidden_state": prediction.states,
-                        "hidden_state_name": prediction.state_names,
+                        "hidden_state": canonical_state_ids.values,
+                        "hidden_state_name": canonical_state_names.values,
+                        "canonical_state_id": canonical_state_ids.values,
+                        "canonical_state_name": canonical_state_names.values,
                         "latent_state_message": [
                             f"Наиболее вероятное латентное состояние: {name}"
-                            for name in prediction.state_names
+                            for name in canonical_state_names.values
                         ],
                     }
                 ),
@@ -170,7 +180,7 @@ class CombatHMMPipeline:
             plot_map = create_analysis_charts(
                 result,
                 output_dir,
-                canonical_state_mapping=engine.canonical_state_mapping(),
+                canonical_state_mapping=canonical_map,
                 observed_signal_label="Observed proxy score",
             )
             plots = list(plot_map.values())

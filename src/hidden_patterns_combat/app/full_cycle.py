@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from hidden_patterns_combat.analysis.interpreter import state_profile_table, text_summary
@@ -16,6 +18,8 @@ from hidden_patterns_combat.modeling.hmm_pipeline import HMMEngine
 from hidden_patterns_combat.modeling.interpretation import interpret_decoded_states
 from hidden_patterns_combat.preprocessing import run_preprocessing
 from hidden_patterns_combat.visualization import create_analysis_charts
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,6 +49,7 @@ class FullCycleResult:
     semantic_assignment: dict[str, int]
     semantic_confidence: dict[str, float]
     semantic_warnings: list[str]
+    consistency_warnings: list[str]
     semantic_order_matches_topology_before_reorder: bool | None
     transition_summary: list[dict[str, object]]
     transition_alignment: dict[str, float]
@@ -339,6 +344,93 @@ def _build_transition_summary(
     return summary, alignment
 
 
+def _canonicalize_analysis_states(
+    analysis_df: pd.DataFrame,
+    canonical_state_mapping: dict[str, object],
+) -> pd.DataFrame:
+    out = analysis_df.copy()
+    canonical_to_name = {
+        int(k): str(v) for k, v in (canonical_state_mapping.get("canonical_to_name", {}) or {}).items()
+    }
+    if not canonical_to_name:
+        return out
+
+    canonical_state_id = out["hidden_state"].astype(int)
+    canonical_state_name = canonical_state_id.map(
+        lambda sid: canonical_to_name.get(int(sid), f"state_{int(sid)}")
+    )
+
+    out["hidden_state"] = canonical_state_id
+    out["hidden_state_name"] = canonical_state_name
+    out["canonical_state_id"] = canonical_state_id
+    out["canonical_state_name"] = canonical_state_name
+    return out
+
+
+def _transition_summary_to_count_map(transition_summary: list[dict[str, object]]) -> dict[tuple[int, int], int]:
+    out: dict[tuple[int, int], int] = {}
+    for row in transition_summary:
+        src = int(row.get("from_state", -1))
+        dst = int(row.get("to_state", -1))
+        if src < 0 or dst < 0:
+            continue
+        out[(src, dst)] = int(row.get("count", 0))
+    return out
+
+
+def _downstream_consistency_warnings(
+    analysis_df: pd.DataFrame,
+    canonical_state_mapping: dict[str, object],
+    transition_summary: list[dict[str, object]],
+    sequence_ids: pd.Series,
+) -> list[str]:
+    warnings: list[str] = []
+    canonical_names = {str(x) for x in (canonical_state_mapping.get("canonical_state_names", []) or [])}
+    if "canonical_state_name" in analysis_df.columns:
+        observed_names = set(analysis_df["canonical_state_name"].dropna().astype(str).unique().tolist())
+    elif "hidden_state_name" in analysis_df.columns:
+        observed_names = set(analysis_df["hidden_state_name"].dropna().astype(str).unique().tolist())
+    else:
+        observed_names = set()
+
+    unexpected_names = sorted([x for x in observed_names if x not in canonical_names])
+    if unexpected_names:
+        warnings.append(
+            "Unexpected state labels in analysis/plots source (not in canonical mapping): "
+            f"{unexpected_names}"
+        )
+
+    transition_names = {
+        str(row.get("from_name", ""))
+        for row in transition_summary
+    } | {str(row.get("to_name", "")) for row in transition_summary}
+    unexpected_transition_names = sorted(
+        [x for x in transition_names if x and x not in canonical_names]
+    )
+    if unexpected_transition_names:
+        warnings.append(
+            "Transition summary contains non-canonical state labels: "
+            f"{unexpected_transition_names}"
+        )
+
+    state_name_lookup = {
+        int(k): str(v)
+        for k, v in (canonical_state_mapping.get("canonical_to_name", {}) or {}).items()
+    }
+    states = analysis_df["hidden_state"].astype(int).to_numpy()
+    recomputed, _ = _build_transition_summary(
+        states=states,
+        sequence_ids=sequence_ids,
+        state_name_lookup=state_name_lookup,
+    )
+    if _transition_summary_to_count_map(recomputed) != _transition_summary_to_count_map(transition_summary):
+        warnings.append(
+            "Transition summary differs from canonical recomputation on analysis dataframe."
+        )
+
+    return warnings
+
+
 def _write_full_cycle_report(
     report_path: Path,
     result: FullCycleResult,
@@ -417,6 +509,13 @@ def _write_full_cycle_report(
     lines.extend(["", "## Semantic Warnings"])
     if result.semantic_warnings:
         for warning in result.semantic_warnings:
+            lines.append(f"- {warning}")
+    else:
+        lines.append("- None.")
+
+    lines.extend(["", "## Consistency Warnings"])
+    if result.consistency_warnings:
+        for warning in result.consistency_warnings:
             lines.append(f"- {warning}")
     else:
         lines.append("- None.")
@@ -593,7 +692,7 @@ def run_full_cycle(
 
     log("[5/8] Decoding hidden states and running analysis...")
     prediction = engine.predict(hmm_features, sequence_ids=sequence_ids)
-    analysis_df = pd.concat(
+    raw_analysis_df = pd.concat(
         [
             encoded.metadata.reset_index(drop=True),
             encoded.features.reset_index(drop=True),
@@ -610,6 +709,10 @@ def run_full_cycle(
 
     semantic_diag = engine.last_semantic_diagnostics or {}
     canonical_state_mapping = engine.canonical_state_mapping()
+    analysis_df = _canonicalize_analysis_states(
+        raw_analysis_df,
+        canonical_state_mapping=canonical_state_mapping,
+    )
     canonical_state_indices = [
         int(i) for i in (canonical_state_mapping.get("canonical_state_ids", list(range(resolved_n_states))) or [])
     ]
@@ -639,13 +742,25 @@ def run_full_cycle(
         else semantic_diag.get("semantic_order_matches_topology_before_reorder")
     )
     state_name_lookup = {
-        idx: engine.state_definition.state_name(idx) for idx in range(resolved_n_states)
+        int(k): str(v)
+        for k, v in (
+            canonical_state_mapping.get("canonical_to_name")
+            or {idx: engine.state_definition.state_name(idx) for idx in range(resolved_n_states)}
+        ).items()
     }
     transition_summary, transition_alignment = _build_transition_summary(
         states=prediction.states,
         sequence_ids=sequence_ids,
         state_name_lookup=state_name_lookup,
     )
+    consistency_warnings = _downstream_consistency_warnings(
+        analysis_df=analysis_df,
+        canonical_state_mapping=canonical_state_mapping,
+        transition_summary=transition_summary,
+        sequence_ids=sequence_ids,
+    )
+    for warning in consistency_warnings:
+        logger.warning("Downstream consistency warning: %s", warning)
     observed_signal = _build_observed_signal_info(
         traceability=encoded.traceability,
         raw_features=encoded.raw,
@@ -689,8 +804,10 @@ def run_full_cycle(
                 ),
                 "transition_alignment": transition_alignment,
                 "top_transitions": transition_summary[:10],
+                "canonical_transition_summary": transition_summary,
                 "canonical_state_mapping": canonical_state_mapping,
                 "observed_signal": observed_signal,
+                "consistency_warnings": consistency_warnings,
             },
             ensure_ascii=False,
             indent=2,
@@ -705,6 +822,7 @@ def run_full_cycle(
             dirs["plots"],
             canonical_state_mapping=canonical_state_mapping,
             observed_signal_label=str(observed_signal.get("signal_label", "Observed signal")),
+            transition_summary=transition_summary,
         )
 
     state_summary = diagnostics_df.to_dict(orient="records")
@@ -761,6 +879,7 @@ def run_full_cycle(
         semantic_assignment=semantic_assignment,
         semantic_confidence=semantic_confidence,
         semantic_warnings=semantic_warnings,
+        consistency_warnings=consistency_warnings,
         semantic_order_matches_topology_before_reorder=(
             bool(semantic_order_matches_topology_before_reorder)
             if semantic_order_matches_topology_before_reorder is not None
