@@ -67,6 +67,20 @@ def _resolve_model_path(
     return model_dir / "hmm_model.pkl"
 
 
+def _resolve_input_path(input_path: str | Path) -> Path:
+    path = Path(input_path)
+    if path.exists():
+        return path
+    if path.is_absolute():
+        return path
+
+    repo_root = Path(__file__).resolve().parents[3]
+    candidate = repo_root / path
+    if candidate.exists():
+        return candidate
+    return path
+
+
 def _build_sample_analysis(analysis_df: pd.DataFrame) -> dict[str, object]:
     if analysis_df.empty:
         return {"message": "No rows available for sample analysis."}
@@ -150,7 +164,7 @@ def run_full_cycle(
     topology_mode: str = "left_to_right",
     verbose: bool = True,
 ) -> FullCycleResult:
-    input_path = Path(input_path)
+    input_path = _resolve_input_path(input_path)
     output_dir = Path(output_dir)
 
     if mode is not None and mode not in {"full", "fast"}:
