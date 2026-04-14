@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from hidden_patterns_combat.config import FeatureConfig
-from hidden_patterns_combat.features.encoder import encode_features
+from hidden_patterns_combat.features.encoder import encode_features, select_hmm_input_features
 
 
 def test_encode_features_compact_code_and_metadata():
@@ -47,3 +47,19 @@ def test_encode_features_with_missing_expected_columns():
     assert (batch.features["kfv_code"] == 0).all()
     assert (batch.features["vup_code"] == 0).all()
     assert list(batch.metadata["episode_id"]) == ["0", "1"]
+
+
+def test_select_hmm_input_features_excludes_outcome_columns():
+    features = pd.DataFrame(
+        {
+            "maneuver_right_code": [1.0],
+            "kfv_code": [2.0],
+            "vup_code": [0.5],
+            "outcome_actions_code": [1.0],
+            "observed_result": [3.0],
+        }
+    )
+    hmm_x = select_hmm_input_features(features)
+    assert "outcome_actions_code" not in hmm_x.columns
+    assert "observed_result" not in hmm_x.columns
+    assert set(hmm_x.columns) == {"maneuver_right_code", "kfv_code", "vup_code"}

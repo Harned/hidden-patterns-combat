@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+from typing import Literal
 from typing import Iterable
 
 import pandas as pd
@@ -17,9 +18,12 @@ logger = logging.getLogger(__name__)
 class ExcelSheet:
     name: str
     dataframe: pd.DataFrame
-    parser_type: str = "tabular"
+    parser_type: str = "table"
     label_mapping: DataFrame | None = None
     assumptions: list[str] | None = None
+
+
+ParserMode = Literal["auto", "table", "matrix"]
 
 
 def _normalize_token(value: object) -> str:
@@ -54,11 +58,17 @@ def read_excel_sheets(
     excel_path: str | Path,
     sheets: Iterable[str] | None = None,
     header_depth: int = 2,
-    force_matrix_parser: bool = False,
+    parser_mode: ParserMode = "auto",
+    force_matrix_parser: bool | None = None,
 ) -> list[ExcelSheet]:
     excel_path = Path(excel_path)
     if not excel_path.exists():
         raise FileNotFoundError(f"Excel file not found: {excel_path}")
+
+    if force_matrix_parser is True:
+        parser_mode = "matrix"
+    if parser_mode not in {"auto", "table", "matrix"}:
+        raise ValueError(f"Unsupported parser_mode={parser_mode!r}. Use one of: auto, table, matrix.")
 
     xls = pd.ExcelFile(excel_path, engine="openpyxl")
 
@@ -70,11 +80,40 @@ def read_excel_sheets(
             continue
 
         raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=None, engine="openpyxl")
-        is_matrix = force_matrix_parser or detect_matrix_episode_sheet(raw)
-        if is_matrix:
+        detected_matrix = detect_matrix_episode_sheet(raw)
+
+        if parser_mode == "matrix":
+            if not detected_matrix:
+                raise ValueError(
+                    f"Sheet '{sheet_name}' does not match matrix-style markers "
+                    "(expected '№ эпизода' axis). Use parser_mode='auto' or parser_mode='table'."
+                )
             parsed = load_matrix_episode_sheet(raw, sheet_name=sheet_name)
             df = parsed.tidy
-            logger.info("Loaded matrix-style sheet '%s' with shape %s", sheet_name, df.shape)
+            logger.info(
+                "Loaded sheet '%s' with parser=matrix (mode=matrix), shape=%s",
+                sheet_name,
+                df.shape,
+            )
+            result.append(
+                ExcelSheet(
+                    name=sheet_name,
+                    dataframe=df,
+                    parser_type="matrix",
+                    label_mapping=parsed.label_mapping,
+                    assumptions=parsed.assumptions,
+                )
+            )
+            continue
+
+        if parser_mode == "auto" and detected_matrix:
+            parsed = load_matrix_episode_sheet(raw, sheet_name=sheet_name)
+            df = parsed.tidy
+            logger.info(
+                "Loaded sheet '%s' with parser=matrix (mode=auto), shape=%s",
+                sheet_name,
+                df.shape,
+            )
             result.append(
                 ExcelSheet(
                     name=sheet_name,
@@ -91,8 +130,13 @@ def read_excel_sheets(
         df = df.copy()
         df.columns = flatten_columns(df.columns)
         df = df.dropna(axis=0, how="all").reset_index(drop=True)
-        logger.info("Loaded tabular sheet '%s' with shape %s", sheet_name, df.shape)
-        result.append(ExcelSheet(name=sheet_name, dataframe=df, parser_type="tabular"))
+        logger.info(
+            "Loaded sheet '%s' with parser=table (mode=%s), shape=%s",
+            sheet_name,
+            parser_mode,
+            df.shape,
+        )
+        result.append(ExcelSheet(name=sheet_name, dataframe=df, parser_type="table"))
 
     if not result:
         raise ValueError("No sheets loaded. Check sheet names and workbook content.")

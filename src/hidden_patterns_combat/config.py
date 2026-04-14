@@ -57,6 +57,7 @@ class ModelConfig:
     covariance_type: str = "diag"
     n_iter: int = 300
     random_state: int = 42
+    topology_mode: str = "left_to_right"  # left_to_right | ergodic
 
 
 @dataclass

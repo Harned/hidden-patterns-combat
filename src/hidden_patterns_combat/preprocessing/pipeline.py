@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 from .data_dictionary import DataDictionary
 from .export import export_preprocessing_outputs
 from .ingestion import SheetSelector, load_excel_for_preprocessing
 from .transform import transform_raw_to_tidy
 from .validation import ValidationReport, validate_tidy_structure
+
+ParserMode = Literal["auto", "table", "matrix"]
 
 
 @dataclass
@@ -33,12 +36,14 @@ def run_preprocessing(
     output_dir: str | Path = "data/processed/preprocessing",
     save_parquet: bool = False,
     data_dictionary: DataDictionary | None = None,
-    force_matrix_parser: bool = False,
+    parser_mode: ParserMode = "auto",
+    force_matrix_parser: bool | None = None,
 ) -> PreprocessingReport:
     ingestion = load_excel_for_preprocessing(
         excel_path=excel_path,
         sheet_selector=sheet_selector,
         header_depth=header_depth,
+        parser_mode=parser_mode,
         force_matrix_parser=force_matrix_parser,
     )
 

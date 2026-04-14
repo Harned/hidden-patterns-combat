@@ -18,6 +18,18 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--model-out", required=True, help="Where to save model (.pkl)")
     train.add_argument("--sheet", default=None, help="Optional single sheet name")
     train.add_argument("--n-states", type=int, default=3, help="Hidden state count")
+    train.add_argument(
+        "--topology-mode",
+        choices=["left_to_right", "ergodic"],
+        default="left_to_right",
+        help="HMM transition topology mode.",
+    )
+    train.add_argument(
+        "--parser-mode",
+        choices=["auto", "table", "matrix"],
+        default="auto",
+        help="Excel parser mode: auto/table/matrix.",
+    )
     train.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
 
     analyze = sub.add_parser("analyze", help="Decode hidden scenario")
@@ -25,6 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--model", required=True, help="Path to trained model")
     analyze.add_argument("--output-dir", required=True, help="Directory for analysis outputs")
     analyze.add_argument("--sheet", default=None, help="Optional single sheet name")
+    analyze.add_argument(
+        "--parser-mode",
+        choices=["auto", "table", "matrix"],
+        default="auto",
+        help="Excel parser mode: auto/table/matrix.",
+    )
     analyze.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
 
     preprocess = sub.add_parser("preprocess", help="Preprocess Excel into tidy tabular format")
@@ -36,6 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Sheet name (repeat flag for multiple sheets). Omit to process all sheets.",
     )
     preprocess.add_argument("--header-depth", type=int, default=2, help="Excel header depth")
+    preprocess.add_argument(
+        "--parser-mode",
+        choices=["auto", "table", "matrix"],
+        default="auto",
+        help="Excel parser mode: auto/table/matrix.",
+    )
     preprocess.add_argument(
         "--force-matrix-parser",
         action="store_true",
@@ -53,8 +77,20 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--sheet", default=None, help="Optional single sheet name")
     demo.add_argument("--model", default="artifacts/hmm_model.pkl", help="Path to model file")
     demo.add_argument("--n-states", type=int, default=3, help="Hidden state count for training")
+    demo.add_argument(
+        "--topology-mode",
+        choices=["left_to_right", "ergodic"],
+        default="left_to_right",
+        help="HMM transition topology mode.",
+    )
     demo.add_argument("--episode-index", type=int, default=None, help="Episode index to inspect")
     demo.add_argument("--retrain", action="store_true", help="Retrain model before analysis")
+    demo.add_argument(
+        "--parser-mode",
+        choices=["auto", "table", "matrix"],
+        default="auto",
+        help="Excel parser mode: auto/table/matrix.",
+    )
     demo.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
     demo.add_argument(
         "--preprocess-output-dir",
@@ -81,6 +117,7 @@ def main() -> None:
 
     cfg = PipelineConfig()
     cfg.model.n_hidden_states = getattr(args, "n_states", cfg.model.n_hidden_states)
+    cfg.model.topology_mode = getattr(args, "topology_mode", cfg.model.topology_mode)
     pipeline = CombatHMMPipeline(cfg)
 
     if args.command == "train":
@@ -88,6 +125,7 @@ def main() -> None:
             excel_path=args.excel,
             model_out=args.model_out,
             sheet=args.sheet,
+            parser_mode=args.parser_mode,
             force_matrix_parser=args.force_matrix_parser,
         )
     elif args.command == "analyze":
@@ -96,6 +134,7 @@ def main() -> None:
             model_path=args.model,
             output_dir=args.output_dir,
             sheet=args.sheet,
+            parser_mode=args.parser_mode,
             force_matrix_parser=args.force_matrix_parser,
         )
     elif args.command == "preprocess":
@@ -115,6 +154,7 @@ def main() -> None:
             header_depth=args.header_depth,
             output_dir=args.output_dir,
             save_parquet=args.save_parquet,
+            parser_mode=args.parser_mode,
             force_matrix_parser=args.force_matrix_parser,
         ).to_dict()
     elif args.command == "demo":
@@ -129,6 +169,8 @@ def main() -> None:
             episode_index=args.episode_index,
             n_states=args.n_states,
             retrain=args.retrain,
+            topology_mode=args.topology_mode,
+            parser_mode=args.parser_mode,
             force_matrix_parser=args.force_matrix_parser,
         ).to_dict()
     else:  # pragma: no cover

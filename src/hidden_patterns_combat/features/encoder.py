@@ -21,6 +21,41 @@ class EncodedBatch:
     validation: FeatureValidationReport
 
 
+DEFAULT_HMM_FEATURE_ORDER: tuple[str, ...] = (
+    "maneuver_right_code",
+    "maneuver_left_code",
+    "grips_code",
+    "holds_code",
+    "bodylocks_code",
+    "underhooks_code",
+    "posts_code",
+    "kfv_code",
+    "vup_code",
+    "duration",
+    "pause",
+)
+
+
+def select_hmm_input_features(engineered_features: pd.DataFrame) -> pd.DataFrame:
+    """Select HMM input features without target/outcome leakage.
+
+    Outcome/result columns are intentionally excluded from model input and can be
+    used only for post-hoc interpretation/diagnostics.
+    """
+    ordered = [c for c in DEFAULT_HMM_FEATURE_ORDER if c in engineered_features.columns]
+    if ordered:
+        return engineered_features[ordered].copy()
+
+    fallback = [
+        c
+        for c in engineered_features.columns
+        if "outcome" not in c.lower()
+        and "result" not in c.lower()
+        and "score" not in c.lower()
+    ]
+    return engineered_features[fallback].copy()
+
+
 def encode_features(
     df: pd.DataFrame,
     cfg: FeatureConfig,

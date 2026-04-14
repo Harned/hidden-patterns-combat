@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from hidden_patterns_combat.config import ModelConfig
 from hidden_patterns_combat.modeling.decoding import HMMDecoder
 from hidden_patterns_combat.modeling.observation_encoding import encode_observations
-from hidden_patterns_combat.modeling.state_definition import StateDefinition
+from hidden_patterns_combat.modeling.state_definition import StateDefinition, build_semantic_state_definition
 from hidden_patterns_combat.modeling.training import HMMTrainer
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,16 @@ class HMMEngine:
         )
         self.feature_columns: list[str] | None = None
 
+    def _align_features(self, features: pd.DataFrame) -> pd.DataFrame:
+        if self.feature_columns is None:
+            return features
+        missing = [c for c in self.feature_columns if c not in features.columns]
+        if missing:
+            raise ValueError(f"Missing required HMM feature columns: {missing}")
+        return features[self.feature_columns]
+
     def fit(self, features: pd.DataFrame, sequence_ids: pd.Series | None = None) -> float:
+        features = features.copy().reset_index(drop=True)
         batch = encode_observations(
             features=features,
             scaler=self.scaler,
@@ -62,8 +71,14 @@ class HMMEngine:
             sequence_ids=sequence_ids,
         )
         self.feature_columns = batch.feature_columns
-        trainer = HMMTrainer(self.model)
+        trainer = HMMTrainer(self.model, topology_mode=self.cfg.topology_mode)
         result = trainer.fit(batch.values, lengths=batch.lengths)
+        train_states = self.model.predict(batch.values, lengths=batch.lengths if batch.lengths else None)
+        self.state_definition = build_semantic_state_definition(
+            features=features,
+            decoded_states=train_states,
+            n_states=self.cfg.n_hidden_states,
+        )
         logger.info(
             "HMM fitted. log_likelihood=%.4f, n_sequences=%d",
             result.log_likelihood,
@@ -72,6 +87,7 @@ class HMMEngine:
         return result.log_likelihood
 
     def predict(self, features: pd.DataFrame, sequence_ids: pd.Series | None = None) -> HMMPrediction:
+        features = self._align_features(features)
         batch = encode_observations(
             features=features,
             scaler=self.scaler,

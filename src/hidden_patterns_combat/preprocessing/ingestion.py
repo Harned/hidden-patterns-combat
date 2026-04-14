@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from typing import Literal
 
 import pandas as pd
 
@@ -10,6 +11,7 @@ from hidden_patterns_combat.io.excel_loader import read_excel_sheets
 
 
 SheetSelector = str | Iterable[str] | None
+ParserMode = Literal["auto", "table", "matrix"]
 
 
 @dataclass
@@ -41,7 +43,8 @@ def load_excel_for_preprocessing(
     excel_path: str | Path,
     sheet_selector: SheetSelector = None,
     header_depth: int = 2,
-    force_matrix_parser: bool = False,
+    parser_mode: ParserMode = "auto",
+    force_matrix_parser: bool | None = None,
 ) -> IngestionResult:
     path = Path(excel_path)
     if not path.exists():
@@ -52,6 +55,7 @@ def load_excel_for_preprocessing(
         excel_path=path,
         sheets=selected,
         header_depth=header_depth,
+        parser_mode=parser_mode,
         force_matrix_parser=force_matrix_parser,
     )
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
@@ -9,6 +10,7 @@ from hidden_patterns_combat.config import PipelineConfig
 from hidden_patterns_combat.pipeline import CombatHMMPipeline
 from hidden_patterns_combat.preprocessing import run_preprocessing
 
+ParserMode = Literal["auto", "table", "matrix"]
 
 @dataclass
 class EpisodeInsight:
@@ -141,7 +143,9 @@ def run_demo_workflow(
     analysis_output_dir: str = "artifacts/analysis",
     episode_index: int | None = None,
     n_states: int = 3,
+    topology_mode: str = "left_to_right",
     retrain: bool = False,
+    parser_mode: ParserMode = "auto",
     force_matrix_parser: bool = False,
 ) -> DemoUIResult:
     """End-user MVP flow for CLI/notebook demo.
@@ -156,11 +160,13 @@ def run_demo_workflow(
         excel_path=excel_path,
         sheet_selector=sheet,
         output_dir=preprocess_output_dir,
+        parser_mode=parser_mode,
         force_matrix_parser=force_matrix_parser,
     ).to_dict()
 
     cfg = PipelineConfig()
     cfg.model.n_hidden_states = n_states
+    cfg.model.topology_mode = topology_mode
     pipeline = CombatHMMPipeline(cfg)
 
     model_file = Path(model_path)
@@ -169,6 +175,7 @@ def run_demo_workflow(
             excel_path=excel_path,
             model_out=model_path,
             sheet=sheet,
+            parser_mode=parser_mode,
             force_matrix_parser=force_matrix_parser,
         )
 
@@ -177,6 +184,7 @@ def run_demo_workflow(
         model_path=model_path,
         output_dir=analysis_output_dir,
         sheet=sheet,
+        parser_mode=parser_mode,
         force_matrix_parser=force_matrix_parser,
     )
 

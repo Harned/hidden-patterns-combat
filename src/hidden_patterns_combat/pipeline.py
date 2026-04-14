@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
 from hidden_patterns_combat.analysis.interpreter import state_profile_table, text_summary
 from hidden_patterns_combat.config import PipelineConfig
-from hidden_patterns_combat.features.encoder import encode_features
+from hidden_patterns_combat.features.encoder import encode_features, select_hmm_input_features
 from hidden_patterns_combat.features.engineering import FeatureEngineeringResult, export_feature_sets
 from hidden_patterns_combat.io.excel_loader import read_excel_sheets
 from hidden_patterns_combat.modeling.hmm_pipeline import HMMEngine
@@ -19,6 +20,7 @@ from hidden_patterns_combat.utils import ensure_dir
 from hidden_patterns_combat.visualization import create_analysis_charts
 
 logger = logging.getLogger(__name__)
+ParserMode = Literal["auto", "table", "matrix"]
 
 
 class CombatHMMPipeline:
@@ -29,12 +31,14 @@ class CombatHMMPipeline:
         self,
         excel_path: str | Path,
         sheet: str | None = None,
-        force_matrix_parser: bool = False,
+        parser_mode: ParserMode = "auto",
+        force_matrix_parser: bool | None = None,
     ) -> pd.DataFrame:
         sheets = read_excel_sheets(
             excel_path=excel_path,
             sheets=[sheet] if sheet else None,
             header_depth=self.cfg.header.multirow_header_depth,
+            parser_mode=parser_mode,
             force_matrix_parser=force_matrix_parser,
         )
         combined = pd.concat([s.dataframe.assign(_sheet=s.name) for s in sheets], axis=0, ignore_index=True)
@@ -54,13 +58,20 @@ class CombatHMMPipeline:
         excel_path: str | Path,
         model_out: str | Path,
         sheet: str | None = None,
-        force_matrix_parser: bool = False,
+        parser_mode: ParserMode = "auto",
+        force_matrix_parser: bool | None = None,
     ) -> dict[str, object]:
-        raw = self._load_all_rows(excel_path, sheet, force_matrix_parser=force_matrix_parser)
+        raw = self._load_all_rows(
+            excel_path,
+            sheet,
+            parser_mode=parser_mode,
+            force_matrix_parser=force_matrix_parser,
+        )
         encoded = encode_features(raw, self.cfg.features)
+        hmm_features = select_hmm_input_features(encoded.features)
         sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine(self.cfg.model)
-        log_likelihood = engine.fit(encoded.features, sequence_ids=sequence_ids)
+        log_likelihood = engine.fit(hmm_features, sequence_ids=sequence_ids)
         engine.save(model_out)
 
         intermediates_dir = ensure_dir(Path(self.cfg.data_dir) / "processed")
@@ -74,7 +85,7 @@ class CombatHMMPipeline:
 
         report = TrainingReport(
             rows=len(raw),
-            features=list(encoded.features.columns),
+            features=list(hmm_features.columns),
             log_likelihood=log_likelihood,
             model_path=str(model_out),
         )
@@ -86,13 +97,20 @@ class CombatHMMPipeline:
         model_path: str | Path,
         output_dir: str | Path,
         sheet: str | None = None,
-        force_matrix_parser: bool = False,
+        parser_mode: ParserMode = "auto",
+        force_matrix_parser: bool | None = None,
     ) -> dict[str, object]:
-        raw = self._load_all_rows(excel_path, sheet, force_matrix_parser=force_matrix_parser)
+        raw = self._load_all_rows(
+            excel_path,
+            sheet,
+            parser_mode=parser_mode,
+            force_matrix_parser=force_matrix_parser,
+        )
         encoded = encode_features(raw, self.cfg.features)
+        hmm_features = select_hmm_input_features(encoded.features)
         sequence_ids = self._sequence_ids_from_metadata(encoded.metadata)
         engine = HMMEngine.load(model_path)
-        prediction = engine.predict(encoded.features, sequence_ids=sequence_ids)
+        prediction = engine.predict(hmm_features, sequence_ids=sequence_ids)
 
         output_dir = ensure_dir(output_dir)
 
@@ -134,7 +152,7 @@ class CombatHMMPipeline:
         )
 
         state_series = pd.Series(prediction.states, name="hidden_state")
-        profile = state_profile_table(encoded.features, state_series)
+        profile = state_profile_table(encoded.features, state_series, state_definition=engine.state_definition)
         profile.to_csv(output_dir / "state_profile.csv", index=False)
         hmm_interp = interpret_decoded_states(encoded.features, state_series, engine.state_definition)
         hmm_interp.to_csv(output_dir / "hmm_state_interpretation.csv", index=False)

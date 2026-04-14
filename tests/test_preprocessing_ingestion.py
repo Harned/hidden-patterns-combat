@@ -2,14 +2,19 @@ from hidden_patterns_combat.preprocessing.ingestion import load_excel_for_prepro
 
 
 def test_ingestion_supports_single_list_and_all(demo_excel_path):
-    one = load_excel_for_preprocessing(demo_excel_path, sheet_selector="Общее", header_depth=2)
+    one = load_excel_for_preprocessing(demo_excel_path, sheet_selector="Общее", header_depth=2, parser_mode="auto")
     assert one.sheets_loaded == ["Общее"]
     assert one.raw_combined["_sheet"].nunique() == 1
 
-    many = load_excel_for_preprocessing(demo_excel_path, sheet_selector=["Общее", "48"], header_depth=2)
+    many = load_excel_for_preprocessing(
+        demo_excel_path,
+        sheet_selector=["Общее", "48"],
+        header_depth=2,
+        parser_mode="auto",
+    )
     assert many.raw_combined["_sheet"].nunique() == 2
 
-    all_sheets = load_excel_for_preprocessing(demo_excel_path, sheet_selector=None, header_depth=2)
+    all_sheets = load_excel_for_preprocessing(demo_excel_path, sheet_selector=None, header_depth=2, parser_mode="auto")
     assert set(all_sheets.sheets_loaded) == {"Общее", "48"}
 
 

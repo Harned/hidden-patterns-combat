@@ -10,7 +10,7 @@ import pandas as pd
 
 from hidden_patterns_combat.analysis.interpreter import state_profile_table, text_summary
 from hidden_patterns_combat.config import PipelineConfig
-from hidden_patterns_combat.features.encoder import encode_features
+from hidden_patterns_combat.features.encoder import encode_features, select_hmm_input_features
 from hidden_patterns_combat.features.engineering import FeatureEngineeringResult, export_feature_sets
 from hidden_patterns_combat.modeling.hmm_pipeline import HMMEngine
 from hidden_patterns_combat.modeling.interpretation import interpret_decoded_states
@@ -135,7 +135,10 @@ def _write_full_cycle_report(
 def run_full_cycle(
     input_path: str | Path,
     output_dir: str | Path,
+    mode: str | None = None,
     sheet_names: list[str] | None = None,
+    parser_mode: str = "auto",
+    force_matrix_parser: bool | None = None,
     retrain: bool = True,
     load_existing_model: bool = False,
     model_path: str | Path | None = None,
@@ -144,10 +147,24 @@ def run_full_cycle(
     reset_outputs: bool = False,
     random_state: int = 42,
     n_states: int = 3,
+    topology_mode: str = "left_to_right",
     verbose: bool = True,
 ) -> FullCycleResult:
     input_path = Path(input_path)
     output_dir = Path(output_dir)
+
+    if mode is not None and mode not in {"full", "fast"}:
+        raise ValueError(f"Unsupported mode={mode!r}. Use one of: full, fast.")
+
+    if mode == "full":
+        retrain = True
+        load_existing_model = False
+        reset_outputs = True
+        save_model = True
+    elif mode == "fast":
+        retrain = False
+        load_existing_model = True
+        reset_outputs = False
 
     if not input_path.exists():
         raise FileNotFoundError(f"Input Excel file not found: {input_path}")
@@ -166,6 +183,8 @@ def run_full_cycle(
         excel_path=input_path,
         sheet_selector=sheet_names,
         output_dir=dirs["cleaned"],
+        parser_mode=parser_mode,
+        force_matrix_parser=force_matrix_parser,
     )
 
     cleaned_data_path = Path(preprocessing.exports["cleaned_csv"])
@@ -179,8 +198,10 @@ def run_full_cycle(
     cfg = PipelineConfig()
     cfg.model.n_hidden_states = n_states
     cfg.model.random_state = random_state
+    cfg.model.topology_mode = topology_mode
 
     encoded = encode_features(cleaned_df, cfg.features)
+    hmm_features = select_hmm_input_features(encoded.features)
     feature_exports = export_feature_sets(
         result=FeatureEngineeringResult(
             raw_feature_set=encoded.raw,
@@ -199,7 +220,7 @@ def run_full_cycle(
     sequence_ids = (
         encoded.metadata["sequence_id"]
         if "sequence_id" in encoded.metadata.columns
-        else pd.Series(["sequence_0"] * len(encoded.features), index=encoded.features.index)
+        else pd.Series(["sequence_0"] * len(hmm_features), index=hmm_features.index)
     )
     sequence_ids = (
         sequence_ids.fillna("sequence_0")
@@ -208,25 +229,25 @@ def run_full_cycle(
         .replace({"": "sequence_0", "nan": "sequence_0", "None": "sequence_0"})
     )
 
-    if len(sequence_ids) != len(encoded.features):
+    if len(sequence_ids) != len(hmm_features):
         raise ValueError(
-            f"Sequence id count mismatch: sequence_ids={len(sequence_ids)} vs features={len(encoded.features)}."
+            f"Sequence id count mismatch: sequence_ids={len(sequence_ids)} vs features={len(hmm_features)}."
         )
 
-    if len(encoded.features) < n_states:
+    if len(hmm_features) < n_states:
         raise ValueError(
-            f"Not enough rows for n_states={n_states}: got {len(encoded.features)} rows after preprocessing. "
+            f"Not enough rows for n_states={n_states}: got {len(hmm_features)} rows after preprocessing. "
             "Use fewer states or provide more data."
         )
     n_sequences = int(sequence_ids.nunique(dropna=False))
-    n_features = int(encoded.features.shape[1])
+    n_features = int(hmm_features.shape[1])
 
     model_file = _resolve_model_path(model_path, dirs["models"])
 
     log("[4/8] Training/loading model...")
     if retrain:
         engine = HMMEngine(cfg.model)
-        engine.fit(encoded.features, sequence_ids=sequence_ids)
+        engine.fit(hmm_features, sequence_ids=sequence_ids)
         if save_model:
             engine.save(model_file)
     else:
@@ -238,7 +259,7 @@ def run_full_cycle(
         engine = HMMEngine.load(model_file)
 
     log("[5/8] Decoding hidden states and running analysis...")
-    prediction = engine.predict(encoded.features, sequence_ids=sequence_ids)
+    prediction = engine.predict(hmm_features, sequence_ids=sequence_ids)
     analysis_df = pd.concat(
         [
             encoded.metadata.reset_index(drop=True),
@@ -262,7 +283,7 @@ def run_full_cycle(
     analysis_df.to_csv(episode_analysis_path, index=False)
 
     state_series = pd.Series(prediction.states, name="hidden_state")
-    profile = state_profile_table(encoded.features, state_series)
+    profile = state_profile_table(encoded.features, state_series, state_definition=engine.state_definition)
     profile.to_csv(state_profile_path, index=False)
 
     diagnostics_df = interpret_decoded_states(encoded.features, state_series, engine.state_definition)
@@ -337,6 +358,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Path to Excel input")
     parser.add_argument("--output", required=True, help="Output directory for artifacts")
     parser.add_argument("--sheet-names", default=None, help="Comma-separated Excel sheet names")
+    parser.add_argument(
+        "--parser-mode",
+        choices=["auto", "table", "matrix"],
+        default="auto",
+        help="Excel parser mode.",
+    )
+    parser.add_argument("--force-matrix-parser", action="store_true", help="Backward-compatible alias for parser-mode=matrix.")
 
     parser.add_argument("--retrain", dest="retrain", action="store_true", help="Train model before analysis")
     parser.add_argument("--no-retrain", dest="retrain", action="store_false", help="Skip training and reuse model")
@@ -360,6 +388,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reset-outputs", action="store_true", help="Clear output directory before run")
     parser.add_argument("--random-state", type=int, default=42, help="Random seed for HMM")
     parser.add_argument("--n-states", type=int, default=3, help="Number of hidden HMM states")
+    parser.add_argument(
+        "--topology-mode",
+        choices=["left_to_right", "ergodic"],
+        default="left_to_right",
+        help="HMM transition topology mode.",
+    )
 
     parser.add_argument(
         "--mode",
@@ -395,6 +429,8 @@ def main() -> None:
         input_path=args.input,
         output_dir=args.output,
         sheet_names=_parse_sheet_names(args.sheet_names),
+        parser_mode=args.parser_mode,
+        force_matrix_parser=args.force_matrix_parser,
         retrain=retrain,
         load_existing_model=load_existing_model,
         model_path=args.model_path,
@@ -403,6 +439,7 @@ def main() -> None:
         reset_outputs=reset_outputs,
         random_state=args.random_state,
         n_states=args.n_states,
+        topology_mode=args.topology_mode,
         verbose=not args.quiet,
     )
 
