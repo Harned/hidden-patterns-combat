@@ -44,3 +44,21 @@ def test_ergodic_mode_keeps_transitions_unconstrained():
     assert model.transmat_[2, 0] > 0
     assert model.transmat_[2, 1] > 0
     assert np.isclose(model.transmat_.sum(axis=1), 1.0).all()
+
+
+def test_left_to_right_can_enforce_min_forward_transition():
+    model = _DummyModel()
+    model.transmat_ = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=float,
+    )
+
+    trainer = HMMTrainer(model, topology_mode="left_to_right", min_forward_transition=0.1)
+    trainer.fit(np.array([[0.0], [1.0], [2.0]]), lengths=[3])
+
+    assert model.transmat_[0, 1] > 0.0
+    assert model.transmat_[1, 2] > 0.0

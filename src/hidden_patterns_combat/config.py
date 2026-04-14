@@ -64,6 +64,18 @@ class ModelConfig:
     n_iter: int = 300
     random_state: int = 42
     topology_mode: str = "left_to_right"  # left_to_right | ergodic
+    semantic_init_enabled: bool = True
+    canonical_reorder_enabled: bool = True
+    min_forward_transition: float = 0.05
+    block_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "maneuvering": 1.0,
+            "kfv": 0.85,
+            "vup": 1.35,
+            "temporal": 0.90,
+            "other": 1.0,
+        }
+    )
 
 
 @dataclass

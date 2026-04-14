@@ -39,6 +39,16 @@ class FullCycleResult:
     hmm_converged: bool | None
     hmm_n_iterations: int | None
     hmm_last_delta: float | None
+    canonical_state_order: list[str]
+    canonical_state_indices: list[int]
+    semantic_assignment: dict[str, int]
+    semantic_confidence: dict[str, float]
+    semantic_warnings: list[str]
+    semantic_order_matches_topology_before_reorder: bool | None
+    transition_summary: list[dict[str, object]]
+    transition_alignment: dict[str, float]
+    observed_result_source_columns: list[str]
+    observed_result_warning: str | None
     state_summary: list[dict[str, object]]
     sample_analysis: dict[str, object]
     created_artifacts: list[str]
@@ -158,6 +168,106 @@ def _build_sample_analysis(analysis_df: pd.DataFrame) -> dict[str, object]:
     return payload
 
 
+def _parse_json_list(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    text = str(raw).strip()
+    if not text:
+        return []
+    try:
+        value = json.loads(text)
+    except Exception:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(v) for v in value if str(v).strip()]
+
+
+def _observed_result_diagnostics(traceability: pd.DataFrame) -> tuple[list[str], str | None]:
+    if traceability.empty or "engineered_feature" not in traceability.columns:
+        return [], "Traceability is unavailable: observed_result source cannot be verified."
+
+    rows = traceability[traceability["engineered_feature"] == "observed_result"]
+    if rows.empty:
+        return [], "observed_result traceability row is missing."
+
+    source_columns = _parse_json_list(rows.iloc[0].get("source_columns", "[]"))
+    if not source_columns:
+        return [], "observed_result has no detected source column; values may be all-zero placeholders."
+
+    warning = (
+        "observed_result is a numeric passthrough from source score/result column; "
+        "it may not be a direct proxy of observed ZAP outcome."
+    )
+    return source_columns, warning
+
+
+def _build_transition_summary(
+    states: np.ndarray,
+    sequence_ids: pd.Series,
+    state_name_lookup: dict[int, str],
+) -> tuple[list[dict[str, object]], dict[str, float]]:
+    if len(states) == 0:
+        return [], {"forward_share": 0.0, "backward_share": 0.0, "self_share": 0.0}
+
+    seq = (
+        sequence_ids.fillna("sequence_0")
+        .astype(str)
+        .str.strip()
+        .replace({"": "sequence_0", "nan": "sequence_0", "None": "sequence_0"})
+    )
+
+    transition_counts: dict[tuple[int, int], int] = {}
+    forward = 0
+    backward = 0
+    self_loops = 0
+    total = 0
+
+    start = 0
+    values = states.tolist()
+    for i in range(1, len(values) + 1):
+        if i < len(values) and seq.iloc[i] == seq.iloc[start]:
+            continue
+
+        segment = values[start:i]
+        for j in range(len(segment) - 1):
+            src = int(segment[j])
+            dst = int(segment[j + 1])
+            transition_counts[(src, dst)] = transition_counts.get((src, dst), 0) + 1
+            total += 1
+            if dst > src:
+                forward += 1
+            elif dst < src:
+                backward += 1
+            else:
+                self_loops += 1
+        start = i
+
+    if total == 0:
+        alignment = {"forward_share": 0.0, "backward_share": 0.0, "self_share": 1.0}
+        return [], alignment
+
+    summary = [
+        {
+            "from_state": src,
+            "to_state": dst,
+            "from_name": state_name_lookup.get(src, f"state_{src}"),
+            "to_name": state_name_lookup.get(dst, f"state_{dst}"),
+            "count": count,
+            "share": float(count / total),
+        }
+        for (src, dst), count in transition_counts.items()
+    ]
+    summary = sorted(summary, key=lambda row: (int(row["count"]), float(row["share"])), reverse=True)
+
+    alignment = {
+        "forward_share": float(forward / total),
+        "backward_share": float(backward / total),
+        "self_share": float(self_loops / total),
+    }
+    return summary, alignment
+
+
 def _write_full_cycle_report(
     report_path: Path,
     result: FullCycleResult,
@@ -179,6 +289,16 @@ def _write_full_cycle_report(
         f"- HMM last delta: {result.hmm_last_delta}",
         f"- Sequences: {result.n_sequences}",
         f"- Model states: {n_states}",
+        f"- Canonical state order: {result.canonical_state_order}",
+        f"- Semantic confidence: {result.semantic_confidence}",
+        f"- Semantic assignment (canonical indices): {result.semantic_assignment}",
+        (
+            "- Semantic order matched topology before reorder: "
+            f"{result.semantic_order_matches_topology_before_reorder}"
+        ),
+        f"- Transition alignment: {result.transition_alignment}",
+        f"- observed_result source columns: {result.observed_result_source_columns}",
+        f"- observed_result note: {result.observed_result_warning}",
         "",
         "## State Summary",
     ]
@@ -187,7 +307,7 @@ def _write_full_cycle_report(
         for item in result.state_summary:
             lines.append(
                 "- state={state}, name={name}, episodes={episodes}, result_mean={result_mean:.4f}".format(
-                    state=item.get("hidden_state", "?"),
+                    state=item.get("hidden_state", item.get("state_id", "?")),
                     name=item.get("state_name", "unknown"),
                     episodes=item.get("episodes_count", 0),
                     result_mean=float(item.get("observed_result", 0.0)),
@@ -195,6 +315,32 @@ def _write_full_cycle_report(
             )
     else:
         lines.append("- No state summary available.")
+
+    lines.extend(
+        [
+            "",
+            "## Transition Summary",
+        ]
+    )
+    if result.transition_summary:
+        for row in result.transition_summary[:10]:
+            lines.append(
+                "- {src} -> {dst}: count={count}, share={share:.3f}".format(
+                    src=row.get("from_name", f"state_{row.get('from_state', '?')}"),
+                    dst=row.get("to_name", f"state_{row.get('to_state', '?')}"),
+                    count=int(row.get("count", 0)),
+                    share=float(row.get("share", 0.0)),
+                )
+            )
+    else:
+        lines.append("- No transitions available.")
+
+    lines.extend(["", "## Semantic Warnings"])
+    if result.semantic_warnings:
+        for warning in result.semantic_warnings:
+            lines.append(f"- {warning}")
+    else:
+        lines.append("- None.")
 
     lines.extend(
         [
@@ -364,6 +510,7 @@ def run_full_cycle(
                 "Either provide --model-path to an existing model or run with retrain=True."
             )
         engine = HMMEngine.load(model_file)
+    resolved_n_states = int(getattr(engine.model, "n_components", n_states))
 
     log("[5/8] Decoding hidden states and running analysis...")
     prediction = engine.predict(hmm_features, sequence_ids=sequence_ids)
@@ -382,10 +529,38 @@ def run_full_cycle(
         axis=1,
     )
 
+    semantic_diag = engine.last_semantic_diagnostics or {}
+    canonical_state_indices = [
+        int(i) for i in semantic_diag.get("canonical_order", list(range(resolved_n_states)))
+    ]
+    canonical_state_order = [engine.state_definition.state_name(i) for i in canonical_state_indices]
+    semantic_assignment = {
+        str(k): int(v) for k, v in (semantic_diag.get("semantic_to_state", {}) or {}).items()
+    }
+    semantic_confidence = {
+        str(k): float(v) for k, v in (semantic_diag.get("semantic_confidence", {}) or {}).items()
+    }
+    semantic_warnings = [str(w) for w in (semantic_diag.get("warnings", []) or [])]
+    semantic_order_matches_topology_before_reorder = semantic_diag.get(
+        "semantic_order_matches_topology_before_reorder"
+    )
+    state_name_lookup = {
+        idx: engine.state_definition.state_name(idx) for idx in range(resolved_n_states)
+    }
+    transition_summary, transition_alignment = _build_transition_summary(
+        states=prediction.states,
+        sequence_ids=sequence_ids,
+        state_name_lookup=state_name_lookup,
+    )
+    observed_result_source_columns, observed_result_warning = _observed_result_diagnostics(
+        encoded.traceability
+    )
+
     episode_analysis_path = dirs["diagnostics"] / "episode_analysis.csv"
     state_profile_path = dirs["diagnostics"] / "state_profile.csv"
     diagnostics_path = dirs["diagnostics"] / "hmm_state_interpretation.csv"
     interpretation_text_path = dirs["diagnostics"] / "interpretation.txt"
+    semantic_diagnostics_path = dirs["diagnostics"] / "semantic_diagnostics.json"
 
     analysis_df.to_csv(episode_analysis_path, index=False)
 
@@ -393,10 +568,34 @@ def run_full_cycle(
     profile = state_profile_table(encoded.features, state_series, state_definition=engine.state_definition)
     profile.to_csv(state_profile_path, index=False)
 
-    diagnostics_df = interpret_decoded_states(encoded.features, state_series, engine.state_definition)
+    diagnostics_df = interpret_decoded_states(
+        encoded.features,
+        state_series,
+        engine.state_definition,
+        semantic_diagnostics=engine.last_semantic_diagnostics,
+    )
     diagnostics_df.to_csv(diagnostics_path, index=False)
 
     interpretation_text_path.write_text(text_summary(profile), encoding="utf-8")
+    semantic_diagnostics_path.write_text(
+        json.dumps(
+            {
+                "canonical_state_order": canonical_state_order,
+                "canonical_state_indices": canonical_state_indices,
+                "semantic_assignment": semantic_assignment,
+                "semantic_confidence": semantic_confidence,
+                "semantic_warnings": semantic_warnings,
+                "semantic_order_matches_topology_before_reorder": (
+                    semantic_order_matches_topology_before_reorder
+                ),
+                "transition_alignment": transition_alignment,
+                "top_transitions": transition_summary[:10],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     log("[6/8] Generating visualizations...")
     if generate_plots:
@@ -418,6 +617,7 @@ def run_full_cycle(
         state_profile_path,
         diagnostics_path,
         interpretation_text_path,
+        semantic_diagnostics_path,
     ]
 
     if save_model and model_file.exists():
@@ -446,13 +646,27 @@ def run_full_cycle(
         hmm_converged=training_diag["converged"],
         hmm_n_iterations=training_diag["n_iterations"],
         hmm_last_delta=training_diag["last_delta"],
+        canonical_state_order=canonical_state_order,
+        canonical_state_indices=canonical_state_indices,
+        semantic_assignment=semantic_assignment,
+        semantic_confidence=semantic_confidence,
+        semantic_warnings=semantic_warnings,
+        semantic_order_matches_topology_before_reorder=(
+            bool(semantic_order_matches_topology_before_reorder)
+            if semantic_order_matches_topology_before_reorder is not None
+            else None
+        ),
+        transition_summary=transition_summary,
+        transition_alignment=transition_alignment,
+        observed_result_source_columns=observed_result_source_columns,
+        observed_result_warning=observed_result_warning,
         state_summary=state_summary,
         sample_analysis=sample_analysis,
         created_artifacts=[str(p) for p in artifacts if Path(p).exists()],
     )
 
     log("[7/8] Writing summary/report...")
-    _write_full_cycle_report(Path(result.report_path), result=result, n_states=n_states)
+    _write_full_cycle_report(Path(result.report_path), result=result, n_states=resolved_n_states)
     if Path(result.report_path).exists():
         result.created_artifacts.append(result.report_path)
 

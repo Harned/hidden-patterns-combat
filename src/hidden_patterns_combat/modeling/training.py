@@ -18,9 +18,29 @@ class TrainingResult:
 
 
 class HMMTrainer:
-    def __init__(self, model, topology_mode: str = "ergodic"):
+    def __init__(
+        self,
+        model,
+        topology_mode: str = "ergodic",
+        min_forward_transition: float = 0.0,
+    ):
         self.model = model
         self.topology_mode = topology_mode
+        self.min_forward_transition = float(max(0.0, min_forward_transition))
+
+    @staticmethod
+    def left_to_right_prior(n_states: int) -> tuple[np.ndarray, np.ndarray]:
+        startprob = np.zeros(n_states, dtype=float)
+        startprob[0] = 1.0
+
+        transmat = np.zeros((n_states, n_states), dtype=float)
+        for i in range(n_states):
+            if i + 1 < n_states:
+                transmat[i, i] = 0.75
+                transmat[i, i + 1] = 0.25
+            else:
+                transmat[i, i] = 1.0
+        return startprob, transmat
 
     @staticmethod
     def _repair_transmat(transmat: np.ndarray) -> np.ndarray:
@@ -42,12 +62,12 @@ class HMMTrainer:
             if lengths:
                 self.model.fit(x, lengths=lengths)
                 self.model.transmat_ = self._repair_transmat(self.model.transmat_)
-                self._apply_topology_constraints()
+                self.apply_topology_constraints()
                 score = float(self.model.score(x, lengths=lengths))
             else:
                 self.model.fit(x)
                 self.model.transmat_ = self._repair_transmat(self.model.transmat_)
-                self._apply_topology_constraints()
+                self.apply_topology_constraints()
                 score = float(self.model.score(x))
         finally:
             hmm_logger.setLevel(prev_level)
@@ -73,7 +93,7 @@ class HMMTrainer:
             last_delta=last_delta,
         )
 
-    def _apply_topology_constraints(self) -> None:
+    def apply_topology_constraints(self) -> None:
         if self.topology_mode != "left_to_right":
             return
 
@@ -92,9 +112,13 @@ class HMMTrainer:
                 if i + 1 < n:
                     constrained[i, i + 1] = 1.0
                 row_sum = constrained[i].sum()
+
+            if i + 1 < n and self.min_forward_transition > 0.0:
+                constrained[i, i + 1] = max(constrained[i, i + 1], self.min_forward_transition)
+                constrained[i, i] = max(constrained[i, i], 1e-12)
+                row_sum = constrained[i].sum()
             constrained[i] = constrained[i] / row_sum
 
         self.model.transmat_ = constrained
-        startprob = np.zeros(n, dtype=float)
-        startprob[0] = 1.0
+        startprob, _ = self.left_to_right_prior(n)
         self.model.startprob_ = startprob

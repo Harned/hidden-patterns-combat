@@ -46,8 +46,16 @@ def encode_observations(
     scaler: StandardScaler,
     fit_scaler: bool,
     sequence_ids: pd.Series | None = None,
+    post_scale_weights: np.ndarray | None = None,
 ) -> ObservationBatch:
     x_raw = features.to_numpy(dtype=float)
     x = scaler.fit_transform(x_raw) if fit_scaler else scaler.transform(x_raw)
+    if post_scale_weights is not None:
+        if len(post_scale_weights) != x.shape[1]:
+            raise ValueError(
+                "post_scale_weights shape mismatch: "
+                f"weights={len(post_scale_weights)} features={x.shape[1]}"
+            )
+        x = x * post_scale_weights.reshape(1, -1)
     lengths = build_lengths(sequence_ids)
     return ObservationBatch(values=x, feature_columns=list(features.columns), lengths=lengths)

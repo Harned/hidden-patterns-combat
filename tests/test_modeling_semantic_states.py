@@ -9,7 +9,10 @@ import pytest
 
 from hidden_patterns_combat.config import ModelConfig, PipelineConfig
 from hidden_patterns_combat.modeling.hmm_pipeline import HMMEngine
-from hidden_patterns_combat.modeling.state_definition import build_semantic_state_definition
+from hidden_patterns_combat.modeling.state_definition import (
+    build_semantic_state_definition,
+    derive_semantic_ordering,
+)
 from hidden_patterns_combat.pipeline import CombatHMMPipeline
 
 
@@ -32,6 +35,25 @@ def test_build_semantic_state_definition_maps_s1_s2_s3():
 
     definition = build_semantic_state_definition(features, states, n_states=3)
     assert set(definition.state_names()) == {"S1", "S2", "S3"}
+
+
+def test_derive_semantic_ordering_returns_canonical_order_for_s1_s2_s3():
+    features = pd.DataFrame(
+        {
+            "maneuver_right_code": [0, 0, 0, 0, 6, 5],
+            "maneuver_left_code": [0, 0, 0, 0, 3, 2],
+            "kfv_code": [7, 6, 0, 0, 0, 0],
+            "grips_code": [2, 1, 0, 0, 0, 0],
+            "vup_code": [0, 0, 5, 6, 0, 0],
+            "duration": [1, 1, 1, 1, 1, 1],
+            "pause": [0, 0, 0, 0, 0, 0],
+        }
+    )
+    states = np.array([0, 0, 1, 1, 2, 2])
+
+    diagnostics = derive_semantic_ordering(features=features, decoded_states=states, n_states=3)
+    assert diagnostics.semantic_to_original_state == {"S1": 2, "S2": 0, "S3": 1}
+    assert diagnostics.canonical_order == [2, 0, 1]
 
 
 def test_build_semantic_state_definition_keeps_neutral_state_when_signal_is_weak():

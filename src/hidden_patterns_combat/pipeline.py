@@ -154,7 +154,12 @@ class CombatHMMPipeline:
         state_series = pd.Series(prediction.states, name="hidden_state")
         profile = state_profile_table(encoded.features, state_series, state_definition=engine.state_definition)
         profile.to_csv(output_dir / "state_profile.csv", index=False)
-        hmm_interp = interpret_decoded_states(encoded.features, state_series, engine.state_definition)
+        hmm_interp = interpret_decoded_states(
+            encoded.features,
+            state_series,
+            engine.state_definition,
+            semantic_diagnostics=engine.last_semantic_diagnostics,
+        )
         hmm_interp.to_csv(output_dir / "hmm_state_interpretation.csv", index=False)
 
         summary = text_summary(profile)
