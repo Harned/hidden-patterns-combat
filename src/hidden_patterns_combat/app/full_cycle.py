@@ -41,12 +41,14 @@ class FullCycleResult:
     hmm_last_delta: float | None
     canonical_state_order: list[str]
     canonical_state_indices: list[int]
+    canonical_state_mapping: dict[str, object]
     semantic_assignment: dict[str, int]
     semantic_confidence: dict[str, float]
     semantic_warnings: list[str]
     semantic_order_matches_topology_before_reorder: bool | None
     transition_summary: list[dict[str, object]]
     transition_alignment: dict[str, float]
+    observed_signal: dict[str, object]
     observed_result_source_columns: list[str]
     observed_result_warning: str | None
     state_summary: list[dict[str, object]]
@@ -105,7 +107,10 @@ def _is_present_text(value: object) -> bool:
     return text not in {"", "nan", "none", "<na>"}
 
 
-def _build_sample_analysis(analysis_df: pd.DataFrame) -> dict[str, object]:
+def _build_sample_analysis(
+    analysis_df: pd.DataFrame,
+    canonical_state_mapping: dict[str, object] | None = None,
+) -> dict[str, object]:
     if analysis_df.empty:
         return {"message": "No rows available for sample analysis."}
 
@@ -153,7 +158,17 @@ def _build_sample_analysis(analysis_df: pd.DataFrame) -> dict[str, object]:
 
     row = selected
     prob_cols = sorted([c for c in analysis_df.columns if c.startswith("p_state_")])
-    probabilities = {c: float(row[c]) for c in prob_cols}
+    canonical_state_mapping = canonical_state_mapping or {}
+    canonical_to_name = {
+        int(k): str(v) for k, v in (canonical_state_mapping.get("canonical_to_name", {}) or {}).items()
+    }
+    probabilities: dict[str, float] = {}
+    for c in prob_cols:
+        suffix = c.replace("p_state_", "", 1)
+        if suffix.isdigit() and int(suffix) in canonical_to_name:
+            probabilities[canonical_to_name[int(suffix)]] = float(row[c])
+        else:
+            probabilities[c] = float(row[c])
 
     payload = {
         "episode_id": str(row.get("episode_id", "0")),
@@ -183,23 +198,79 @@ def _parse_json_list(raw: object) -> list[str]:
     return [str(v) for v in value if str(v).strip()]
 
 
-def _observed_result_diagnostics(traceability: pd.DataFrame) -> tuple[list[str], str | None]:
+def _build_observed_signal_info(
+    traceability: pd.DataFrame,
+    raw_features: pd.DataFrame,
+) -> dict[str, object]:
     if traceability.empty or "engineered_feature" not in traceability.columns:
-        return [], "Traceability is unavailable: observed_result source cannot be verified."
+        return {
+            "signal_column": "observed_result",
+            "signal_label": "Observed proxy score",
+            "source_columns": [],
+            "available_outcome_columns": [],
+            "direct_zap": False,
+            "classification": "proxy",
+            "is_direct_observed_zap": False,
+            "caveat": "Traceability is unavailable: observed signal source cannot be verified.",
+        }
 
     rows = traceability[traceability["engineered_feature"] == "observed_result"]
     if rows.empty:
-        return [], "observed_result traceability row is missing."
+        return {
+            "signal_column": "observed_result",
+            "signal_label": "Observed proxy score",
+            "source_columns": [],
+            "available_outcome_columns": [],
+            "direct_zap": False,
+            "classification": "proxy",
+            "is_direct_observed_zap": False,
+            "caveat": "observed_result traceability row is missing.",
+        }
 
     source_columns = _parse_json_list(rows.iloc[0].get("source_columns", "[]"))
-    if not source_columns:
-        return [], "observed_result has no detected source column; values may be all-zero placeholders."
-
-    warning = (
-        "observed_result is a numeric passthrough from source score/result column; "
-        "it may not be a direct proxy of observed ZAP outcome."
+    available_outcomes = sorted(
+        [c for c in raw_features.columns if c.lower().startswith("outcomes__")]
     )
-    return source_columns, warning
+    direct_candidates = [
+        c for c in available_outcomes
+        if "zap" in c.lower() or c.lower() in {"outcomes__observed_zap", "outcomes__zap"}
+    ]
+
+    if direct_candidates:
+        return {
+            "signal_column": direct_candidates[0],
+            "signal_label": "Observed ZAP",
+            "source_columns": direct_candidates,
+            "available_outcome_columns": available_outcomes,
+            "direct_zap": True,
+            "classification": "direct_zap",
+            "is_direct_observed_zap": True,
+            "caveat": None,
+        }
+
+    caveat = (
+        "Current observed signal is a proxy score (numeric passthrough), not a direct observed ZAP variable. "
+        "Dataset contains outcome score/actions, but no explicit observed ZAP column and no validated "
+        "transformation rule from outcomes to direct ZAP."
+    )
+    return {
+        "signal_column": "observed_result",
+        "signal_label": "Observed proxy score",
+        "source_columns": source_columns,
+        "available_outcome_columns": available_outcomes,
+        "direct_zap": False,
+        "classification": "proxy",
+        "is_direct_observed_zap": False,
+        "caveat": caveat,
+    }
+
+
+def _observed_result_diagnostics(traceability: pd.DataFrame, raw_features: pd.DataFrame) -> tuple[list[str], str | None]:
+    observed_signal = _build_observed_signal_info(traceability=traceability, raw_features=raw_features)
+    return (
+        [str(x) for x in observed_signal.get("source_columns", [])],
+        str(observed_signal.get("caveat")) if observed_signal.get("caveat") else None,
+    )
 
 
 def _build_transition_summary(
@@ -299,6 +370,14 @@ def _write_full_cycle_report(
         f"- Transition alignment: {result.transition_alignment}",
         f"- observed_result source columns: {result.observed_result_source_columns}",
         f"- observed_result note: {result.observed_result_warning}",
+        "",
+        "## Observed Signal",
+        f"- Signal column: {result.observed_signal.get('signal_column')}",
+        f"- Signal label: {result.observed_signal.get('signal_label')}",
+        f"- Source columns: {result.observed_signal.get('source_columns')}",
+        f"- Is direct observed ZAP: {result.observed_signal.get('is_direct_observed_zap')}",
+        f"- Classification: {result.observed_signal.get('classification')}",
+        f"- Caveat: {result.observed_signal.get('caveat')}",
         "",
         "## State Summary",
     ]
@@ -530,19 +609,34 @@ def run_full_cycle(
     )
 
     semantic_diag = engine.last_semantic_diagnostics or {}
+    canonical_state_mapping = engine.canonical_state_mapping()
     canonical_state_indices = [
-        int(i) for i in semantic_diag.get("canonical_order", list(range(resolved_n_states)))
+        int(i) for i in (canonical_state_mapping.get("canonical_state_ids", list(range(resolved_n_states))) or [])
     ]
-    canonical_state_order = [engine.state_definition.state_name(i) for i in canonical_state_indices]
+    canonical_state_order = [str(x) for x in (canonical_state_mapping.get("canonical_state_names", []) or [])]
+    if not canonical_state_order:
+        canonical_state_order = [engine.state_definition.state_name(i) for i in canonical_state_indices]
     semantic_assignment = {
-        str(k): int(v) for k, v in (semantic_diag.get("semantic_to_state", {}) or {}).items()
+        str(k): int(v)
+        for k, v in (
+            canonical_state_mapping.get("semantic_assignment")
+            or semantic_diag.get("semantic_to_state", {})
+            or {}
+        ).items()
     }
     semantic_confidence = {
-        str(k): float(v) for k, v in (semantic_diag.get("semantic_confidence", {}) or {}).items()
+        str(k): float(v)
+        for k, v in (
+            canonical_state_mapping.get("semantic_confidence")
+            or semantic_diag.get("semantic_confidence", {})
+            or {}
+        ).items()
     }
     semantic_warnings = [str(w) for w in (semantic_diag.get("warnings", []) or [])]
-    semantic_order_matches_topology_before_reorder = semantic_diag.get(
-        "semantic_order_matches_topology_before_reorder"
+    semantic_order_matches_topology_before_reorder = (
+        canonical_state_mapping.get("semantic_order_matches_topology_before_reorder")
+        if canonical_state_mapping
+        else semantic_diag.get("semantic_order_matches_topology_before_reorder")
     )
     state_name_lookup = {
         idx: engine.state_definition.state_name(idx) for idx in range(resolved_n_states)
@@ -552,8 +646,13 @@ def run_full_cycle(
         sequence_ids=sequence_ids,
         state_name_lookup=state_name_lookup,
     )
+    observed_signal = _build_observed_signal_info(
+        traceability=encoded.traceability,
+        raw_features=encoded.raw,
+    )
     observed_result_source_columns, observed_result_warning = _observed_result_diagnostics(
-        encoded.traceability
+        encoded.traceability,
+        encoded.raw,
     )
 
     episode_analysis_path = dirs["diagnostics"] / "episode_analysis.csv"
@@ -590,6 +689,8 @@ def run_full_cycle(
                 ),
                 "transition_alignment": transition_alignment,
                 "top_transitions": transition_summary[:10],
+                "canonical_state_mapping": canonical_state_mapping,
+                "observed_signal": observed_signal,
             },
             ensure_ascii=False,
             indent=2,
@@ -599,10 +700,18 @@ def run_full_cycle(
 
     log("[6/8] Generating visualizations...")
     if generate_plots:
-        create_analysis_charts(analysis_df, dirs["plots"])
+        create_analysis_charts(
+            analysis_df,
+            dirs["plots"],
+            canonical_state_mapping=canonical_state_mapping,
+            observed_signal_label=str(observed_signal.get("signal_label", "Observed signal")),
+        )
 
     state_summary = diagnostics_df.to_dict(orient="records")
-    sample_analysis = _build_sample_analysis(analysis_df)
+    sample_analysis = _build_sample_analysis(
+        analysis_df,
+        canonical_state_mapping=canonical_state_mapping,
+    )
 
     artifacts = [
         Path(preprocessing.exports["raw_csv"]),
@@ -648,6 +757,7 @@ def run_full_cycle(
         hmm_last_delta=training_diag["last_delta"],
         canonical_state_order=canonical_state_order,
         canonical_state_indices=canonical_state_indices,
+        canonical_state_mapping=canonical_state_mapping,
         semantic_assignment=semantic_assignment,
         semantic_confidence=semantic_confidence,
         semantic_warnings=semantic_warnings,
@@ -658,6 +768,7 @@ def run_full_cycle(
         ),
         transition_summary=transition_summary,
         transition_alignment=transition_alignment,
+        observed_signal=observed_signal,
         observed_result_source_columns=observed_result_source_columns,
         observed_result_warning=observed_result_warning,
         state_summary=state_summary,

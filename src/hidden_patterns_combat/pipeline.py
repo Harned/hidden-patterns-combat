@@ -167,7 +167,12 @@ class CombatHMMPipeline:
 
         plots: list[str] = []
         try:
-            plot_map = create_analysis_charts(result, output_dir)
+            plot_map = create_analysis_charts(
+                result,
+                output_dir,
+                canonical_state_mapping=engine.canonical_state_mapping(),
+                observed_signal_label="Observed proxy score",
+            )
             plots = list(plot_map.values())
         except Exception as exc:  # pragma: no cover
             logger.warning("Plot generation skipped: %s", exc)

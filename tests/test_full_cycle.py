@@ -119,6 +119,9 @@ def test_full_cycle_fast_reuse_mode_smoke(demo_excel_path: Path, tmp_path: Path)
     assert payload["sample_analysis"]
     assert str(payload["sample_analysis"].get("episode_id", "")).lower() not in {"", "nan", "none"}
     assert str(payload["sample_analysis"].get("sequence_id", "")).lower() not in {"", "nan", "none"}
+    assert isinstance(payload.get("canonical_state_mapping"), dict)
+    assert isinstance(payload.get("observed_signal"), dict)
+    assert payload["observed_signal"].get("classification") in {"proxy", "direct_zap"}
     assert Path(payload["diagnostics_path"]).exists()
 
 

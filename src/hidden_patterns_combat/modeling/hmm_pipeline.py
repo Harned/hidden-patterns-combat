@@ -62,6 +62,7 @@ class HMMEngine:
         self.post_scale_weights: np.ndarray | None = None
         self.last_training_result: TrainingResult | None = None
         self.last_semantic_diagnostics: dict[str, object] | None = None
+        self.last_canonical_state_mapping: dict[str, object] | None = None
 
     def _align_features(self, features: pd.DataFrame) -> pd.DataFrame:
         if self.feature_columns is None:
@@ -247,6 +248,45 @@ class HMMEngine:
         }
         return payload
 
+    def _build_canonical_state_mapping(self) -> dict[str, object]:
+        n_states = int(getattr(self.model, "n_components", self.cfg.n_hidden_states))
+        canonical_ids = list(range(n_states))
+        canonical_to_name = {idx: self.state_definition.state_name(idx) for idx in canonical_ids}
+        canonical_names = [canonical_to_name[idx] for idx in canonical_ids]
+
+        diagnostics = self.last_semantic_diagnostics or {}
+        canonical_from_original = diagnostics.get("canonical_order_from_original", canonical_ids)
+        if not isinstance(canonical_from_original, list) or len(canonical_from_original) != n_states:
+            canonical_from_original = canonical_ids
+
+        canonical_to_original = {new: int(old) for new, old in enumerate(canonical_from_original)}
+        original_to_canonical = {int(old): new for new, old in canonical_to_original.items()}
+
+        return {
+            "n_states": n_states,
+            "canonical_state_ids": canonical_ids,
+            "canonical_state_names": canonical_names,
+            "canonical_to_name": {int(k): str(v) for k, v in canonical_to_name.items()},
+            "canonical_to_original": canonical_to_original,
+            "original_to_canonical": original_to_canonical,
+            "state_order_used_for_transitions": canonical_ids,
+            "semantic_assignment": {
+                str(k): int(v) for k, v in (diagnostics.get("semantic_to_state", {}) or {}).items()
+            },
+            "semantic_confidence": {
+                str(k): float(v) for k, v in (diagnostics.get("semantic_confidence", {}) or {}).items()
+            },
+            "semantic_order_matches_topology_before_reorder": diagnostics.get(
+                "semantic_order_matches_topology_before_reorder"
+            ),
+        }
+
+    def canonical_state_mapping(self) -> dict[str, object]:
+        if self.last_canonical_state_mapping:
+            return self.last_canonical_state_mapping
+        self.last_canonical_state_mapping = self._build_canonical_state_mapping()
+        return self.last_canonical_state_mapping
+
     def fit(self, features: pd.DataFrame, sequence_ids: pd.Series | None = None) -> float:
         features = features.copy().reset_index(drop=True)
         self.post_scale_weights = self._build_post_scale_weights(list(features.columns))
@@ -297,6 +337,7 @@ class HMMEngine:
             semantic_diag=semantic_diag,
             n_states=self.cfg.n_hidden_states,
         )
+        self.last_canonical_state_mapping = self._build_canonical_state_mapping()
 
         warning_text = "; ".join(self.last_semantic_diagnostics.get("warnings", []))
         logger.info(
@@ -341,6 +382,7 @@ class HMMEngine:
             "feature_columns": self.feature_columns,
             "post_scale_weights": self.post_scale_weights,
             "semantic_diagnostics": self.last_semantic_diagnostics,
+            "canonical_state_mapping": self.last_canonical_state_mapping,
         }
         with path.open("wb") as f:
             pickle.dump(payload, f)
@@ -361,4 +403,7 @@ class HMMEngine:
         obj.feature_columns = payload.get("feature_columns")
         obj.post_scale_weights = payload.get("post_scale_weights")
         obj.last_semantic_diagnostics = payload.get("semantic_diagnostics")
+        obj.last_canonical_state_mapping = payload.get("canonical_state_mapping")
+        if obj.last_canonical_state_mapping is None:
+            obj.last_canonical_state_mapping = obj._build_canonical_state_mapping()
         return obj

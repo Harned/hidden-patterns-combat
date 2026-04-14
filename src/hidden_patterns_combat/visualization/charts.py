@@ -22,11 +22,61 @@ def _sequence_col(df: pd.DataFrame) -> str | None:
     return None
 
 
+def _probability_state_index(column: str, prob_prefix: str = "p_state_") -> int | None:
+    if not column.startswith(prob_prefix):
+        return None
+    suffix = column[len(prob_prefix):].strip()
+    if suffix.isdigit():
+        return int(suffix)
+    return None
+
+
+def _canonical_name_map(
+    analysis_df: pd.DataFrame,
+    state_name_map: dict[int, str] | None = None,
+) -> dict[int, str]:
+    if state_name_map:
+        return {int(k): str(v) for k, v in state_name_map.items()}
+
+    if "hidden_state" not in analysis_df.columns or "hidden_state_name" not in analysis_df.columns:
+        return {}
+
+    pairs = analysis_df[["hidden_state", "hidden_state_name"]].dropna().drop_duplicates()
+    out: dict[int, str] = {}
+    for _, row in pairs.iterrows():
+        try:
+            idx = int(row["hidden_state"])
+        except Exception:
+            continue
+        out[idx] = str(row["hidden_state_name"])
+    return out
+
+
+def _state_probability_legend_labels(
+    analysis_df: pd.DataFrame,
+    prob_cols: list[str],
+    prob_prefix: str = "p_state_",
+    state_name_map: dict[int, str] | None = None,
+) -> dict[str, str]:
+    canonical = _canonical_name_map(analysis_df, state_name_map=state_name_map)
+    labels: dict[str, str] = {}
+    for col in prob_cols:
+        idx = _probability_state_index(col, prob_prefix=prob_prefix)
+        if idx is not None and idx in canonical:
+            labels[col] = canonical[idx]
+        elif idx is not None:
+            labels[col] = f"state_{idx}"
+        else:
+            labels[col] = col
+    return labels
+
+
 def plot_hidden_state_sequence(
     analysis_df: pd.DataFrame,
     out_path: str | Path,
     state_col: str | None = None,
     episode_axis_label: str = "Episode index",
+    state_order_labels: list[str] | None = None,
 ) -> Path:
     state_col = state_col or _state_col(analysis_df)
     out = ensure_output_path(out_path)
@@ -36,7 +86,12 @@ def plot_hidden_state_sequence(
     x = range(len(analysis_df))
 
     state_series = analysis_df[state_col].astype(str)
-    categories = pd.Categorical(state_series)
+    if state_order_labels:
+        unknown = [label for label in state_series.unique().tolist() if label not in state_order_labels]
+        ordered_categories = list(state_order_labels) + sorted(unknown)
+        categories = pd.Categorical(state_series, categories=ordered_categories, ordered=True)
+    else:
+        categories = pd.Categorical(state_series)
     y = categories.codes
     labels = list(categories.categories)
     colors = default_state_colors(len(labels))
@@ -58,6 +113,7 @@ def plot_state_probability_profile(
     analysis_df: pd.DataFrame,
     out_path: str | Path,
     prob_prefix: str = "p_state_",
+    state_name_map: dict[int, str] | None = None,
 ) -> Path:
     out = ensure_output_path(out_path)
     prob_cols = [c for c in analysis_df.columns if c.startswith(prob_prefix)]
@@ -67,9 +123,24 @@ def plot_state_probability_profile(
     plt = get_pyplot()
     fig, ax = plt.subplots(figsize=(13, 4))
 
-    colors = default_state_colors(len(prob_cols))
-    for i, col in enumerate(sorted(prob_cols)):
-        ax.plot(analysis_df[col].values, label=col.replace(prob_prefix, "state_"), color=colors[i], lw=1.5)
+    sorted_prob_cols = sorted(
+        prob_cols,
+        key=lambda c: (
+            _probability_state_index(c, prob_prefix=prob_prefix) is None,
+            _probability_state_index(c, prob_prefix=prob_prefix) or 10**6,
+            c,
+        ),
+    )
+    legend_labels = _state_probability_legend_labels(
+        analysis_df,
+        prob_cols=sorted_prob_cols,
+        prob_prefix=prob_prefix,
+        state_name_map=state_name_map,
+    )
+
+    colors = default_state_colors(len(sorted_prob_cols))
+    for i, col in enumerate(sorted_prob_cols):
+        ax.plot(analysis_df[col].values, label=legend_labels.get(col, col), color=colors[i], lw=1.5)
 
     ax.set_title("State Probability Profile")
     ax.set_xlabel("Episode index")
@@ -88,6 +159,7 @@ def plot_athlete_comparative_profile(
     out_path: str | Path,
     athlete_col: str = "athlete_name",
     result_col: str = "observed_result",
+    result_label: str = "Observed signal",
     top_n: int = 10,
 ) -> Path | None:
     if athlete_col not in analysis_df.columns:
@@ -112,8 +184,8 @@ def plot_athlete_comparative_profile(
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5), gridspec_kw={"width_ratios": [1, 2]})
 
     quality.sort_values().plot(kind="barh", ax=ax1, color="#1f77b4")
-    ax1.set_title("Athlete Mean Result")
-    ax1.set_xlabel("Mean observed result")
+    ax1.set_title("Athlete Mean Observed Signal")
+    ax1.set_xlabel(f"Mean {result_label.lower()}")
     ax1.set_ylabel("Athlete")
 
     state_share = state_share.loc[quality.index]
@@ -138,6 +210,7 @@ def plot_success_failure_scenarios(
     analysis_df: pd.DataFrame,
     out_path: str | Path,
     result_col: str = "observed_result",
+    result_label: str = "Observed signal",
     success_threshold: float = 0.0,
 ) -> Path:
     state_col = _state_col(analysis_df)
@@ -155,7 +228,7 @@ def plot_success_failure_scenarios(
     fig, ax = plt.subplots(figsize=(11, 4.5))
 
     freq[["successful", "unsuccessful"]].plot(kind="bar", ax=ax, color=["#2ca02c", "#d62728"])
-    ax.set_title("Successful vs Unsuccessful Scenario Frequencies")
+    ax.set_title(f"Successful vs Unsuccessful Scenarios ({result_label})")
     ax.set_xlabel("Hidden-state scenario")
     ax.set_ylabel("Episode count")
     ax.tick_params(axis="x", rotation=20)
@@ -210,28 +283,47 @@ def plot_transition_distribution(
 def create_analysis_charts(
     analysis_df: pd.DataFrame,
     output_dir: str | Path,
+    canonical_state_mapping: dict[str, object] | None = None,
+    observed_signal_label: str = "Observed signal",
 ) -> dict[str, str]:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     outputs: dict[str, str] = {}
 
+    canonical_state_mapping = canonical_state_mapping or {}
+    state_name_map = canonical_state_mapping.get("canonical_to_name", {}) or {}
+    ordered_state_names = canonical_state_mapping.get("canonical_state_names", []) or []
+
     outputs["hidden_state_sequence"] = str(
-        plot_hidden_state_sequence(analysis_df, out / "hidden_state_sequence.png")
+        plot_hidden_state_sequence(
+            analysis_df,
+            out / "hidden_state_sequence.png",
+            state_order_labels=[str(x) for x in ordered_state_names] if ordered_state_names else None,
+        )
     )
     outputs["state_probability_profile"] = str(
-        plot_state_probability_profile(analysis_df, out / "state_probability_profile.png")
+        plot_state_probability_profile(
+            analysis_df,
+            out / "state_probability_profile.png",
+            state_name_map={int(k): str(v) for k, v in state_name_map.items()} if state_name_map else None,
+        )
     )
 
     athlete_plot = plot_athlete_comparative_profile(
         analysis_df,
         out / "athlete_comparative_profile.png",
+        result_label=observed_signal_label,
     )
     if athlete_plot:
         outputs["athlete_comparative_profile"] = str(athlete_plot)
 
     outputs["scenario_success_frequencies"] = str(
-        plot_success_failure_scenarios(analysis_df, out / "scenario_success_frequencies.png")
+        plot_success_failure_scenarios(
+            analysis_df,
+            out / "scenario_success_frequencies.png",
+            result_label=observed_signal_label,
+        )
     )
     outputs["transition_distribution"] = str(
         plot_transition_distribution(analysis_df, out / "transition_distribution.png")
