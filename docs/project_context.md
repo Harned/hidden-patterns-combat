@@ -1,45 +1,40 @@
 # Project Context
 
-## Статус
+## Active modes
 
-Проект перешел от единого исследовательского MVP к архитектуре с двумя режимами:
-
-1. `research`:
+1. `research` mode:
 - HMM по инженерным признакам эпизода;
-- цель: исследование структуры скрытых состояний.
+- цель: исследовательская структурная интерпретация.
 
-2. `inverse-diagnostic`:
-- HMM обратной диагностики, где инференс идет по `observed_zap_class`;
-- цель: продуктовая диагностика эпизодной траектории и рекомендация ЛПР.
+2. `inverse-diagnostic` mode:
+- HMM обратной диагностики по `observed_zap_class`;
+- цель: продуктовая траектория скрытых состояний + quality-aware recommendation.
 
-## Формализация inverse режима
+## Inverse-diagnostic: what is observed vs hidden
 
-Скрытые состояния:
-- `S1` (маневрирование)
-- `S2` (КФВ)
-- `S3` (ВУП)
+Hidden:
+- `S1` (maneuvering)
+- `S2` (KFV)
+- `S3` (VUP)
 
-Наблюдения:
+Observed:
 - `zap_r`, `zap_n`, `zap_t`, `hold`, `arm_submission`, `leg_submission`, `no_score`, `unknown`
 
-На обучении:
-- можно использовать полные исторические данные;
-- hidden-state feature layer используется для semantic initialization и post-hoc relabeling.
+Observation quality layer:
+- `observation_resolution_type` (`direct_finish_signal`, `inferred_from_score`, `no_score_rule`, `ambiguous`, `unknown`)
+- `observation_confidence_label` (`high`, `medium`, `low`)
+- `observation_quality_flag`
 
-На инференсе:
-- используется наблюдаемая последовательность `O_t`;
-- результат: Viterbi-цепочка, posterior/confidence профиль, диагностическая интерпретация, рекомендация.
+## Sequence segmentation
 
-## Ключевые новые слои
+`canonical_episode_table` формирует `sequence_id` так:
+- сначала explicit `sequence_id/bout_id` из источника;
+- иначе детерминированный surrogate key + блочная сегментация по эпизодам;
+- качество сегментации помечается через `sequence_quality_flag`.
 
-- `preprocessing/observation_builder.py`: детерминированное построение `observed_zap_class`.
-- `preprocessing/canonical_episode_table.py`: нормализованная таблица эпизодов + traceability.
-- `features/hidden_state_features.py`: явное разделение hidden vs observed.
-- `modeling/inverse_hmm.py`: discrete inverse HMM.
-- `app/inverse_diagnostic_cycle.py`: orchestration продуктового контура.
+Низкое качество сегментации может исключать строки из train через `is_train_eligible`.
 
-## Ограничения
+## Notebook role
 
-- Нет причинной интерпретации, только вероятностная диагностика.
-- `unknown` используется явно при неоднозначном маппинге.
-- Рекомендация помечается как недостаточно уверенная при низком confidence.
+Notebook не содержит отдельной реализации логики.
+Он является frontend к `run_inverse_diagnostic_cycle(...)` и показывает артефакты inline.

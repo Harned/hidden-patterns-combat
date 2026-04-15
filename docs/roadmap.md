@@ -1,18 +1,16 @@
 # Roadmap
 
-## Done (current baseline)
+## Done in this iteration
 
-1. Разделены режимы `research` и `inverse-diagnostic` без поломки старого CLI.
-2. Добавлен строгий observation layer с config-driven mapping (`observation_mapping_v1.json`).
-3. Добавлена каноническая таблица эпизодов (`1 row = 1 episode`) с traceability и train eligibility.
-4. Реализован inverse diagnostic pipeline: observed sequence -> Viterbi -> posterior -> report.
-5. Добавлена weak supervision логика (semantic init + post-hoc relabeling S1/S2/S3).
-6. Добавлены unit/integration тесты для mapping/filtering/inverse e2e/backward compatibility.
+1. Observation layer стал quality-aware (`resolution_type`, `confidence_label`, explicit score fallback transparency).
+2. Sequence segmentation усилена: `sequence_id`, `sequence_quality_flag`, deterministic surrogate with explicit-first strategy.
+3. Inverse pipeline diagnostics/report дополнились quality summaries и transition-aware recommendation profile.
+4. Notebook frontend переведен на единый entrypoint `run_inverse_diagnostic_cycle(...)`.
+5. Добавлены логические тесты для observation/sequence/inverse pipeline/CLI-notebook consistency.
 
 ## Next
 
-1. Добавить валидацию observation mapping по версиям датасетов (v2/v3) и протокол миграции.
-2. Добавить отдельные train/infer датасеты и стабильную offline-оценку качества inverse режима.
-3. Ввести калибровку confidence и мониторинг доли `unknown` по спортсменам/весам.
-4. Добавить semi-supervised режим с разметкой экспертных эпизодов.
-5. Расширить LPR-отчет до сравнений по периодам и контекстным сценариям схватки.
+1. Добавить расширенный калибратор confidence по историческим данным.
+2. Добавить метрики качества inverse режима на train/validation split.
+3. Расширить sequence segmentation для турниров с нестандартной нумерацией эпизодов.
+4. Добавить режим semi-supervised доразметки ambiguous observations экспертом.
