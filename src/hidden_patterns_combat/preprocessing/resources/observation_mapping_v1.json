@@ -1,5 +1,5 @@
 {
-  "version": "observation_mapping_v1",
+  "version": "observation_mapping_v2",
   "score_column_candidates": [
     "outcomes__score",
     "observed_result",
@@ -10,6 +10,14 @@
     "1": "zap_r",
     "2": "zap_n",
     "4": "zap_t"
+  },
+  "finish_position_to_class": {
+    "1": "zap_r",
+    "2": "zap_n",
+    "3": "zap_t",
+    "4": "hold",
+    "5": "arm_submission",
+    "6": "leg_submission"
   },
   "finish_rules": [
     {

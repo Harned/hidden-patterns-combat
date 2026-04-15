@@ -34,6 +34,9 @@
   - `medium`
   - `low`
 - `mapping_version`
+- `finish_match_classes`
+- `finish_match_columns`
+- `score_value`, `score_rounded`, `score_supported_class`
 
 Правила mapping остаются config-driven в:
 - `src/hidden_patterns_combat/preprocessing/resources/observation_mapping_v1.json`
@@ -110,6 +113,15 @@ Notebook frontend:
 - `diagnostics/episode_analysis.csv`
 - `diagnostics/state_profile.csv`
 - `diagnostics/quality_diagnostics.json`
+- `diagnostics/observation_audit.json`
+- `diagnostics/observation_mapping_crosstab.csv`
+- `diagnostics/raw_finish_signal_summary.csv`
+- `diagnostics/unsupported_score_values.csv`
+- `diagnostics/metadata_extraction_summary.json`
+- `diagnostics/sequence_audit.json`
+- `diagnostics/sequence_length_distribution.csv`
+- `diagnostics/suspicious_sequences.csv`
+- `diagnostics/model_health_summary.json`
 - `plots/hidden_state_sequence.png`
 - `plots/state_probability_profile.png`
 - `reports/inverse_diagnostic_report.md`

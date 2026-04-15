@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import re
+from typing import Any
 
 import pandas as pd
 
@@ -24,7 +25,9 @@ class CanonicalEpisodeConfig:
     )
     opponent_candidates: tuple[str, ...] = (
         "metadata__opponent_name",
+        "metadata__opponent",
         "opponent_name",
+        "opponent",
         "соперник",
     )
     sheet_candidates: tuple[str, ...] = (
@@ -35,6 +38,7 @@ class CanonicalEpisodeConfig:
     )
     weight_class_candidates: tuple[str, ...] = (
         "metadata__weight_class",
+        "weight_category",
         "weight_class",
         "весовая категория",
         "вес",
@@ -42,12 +46,14 @@ class CanonicalEpisodeConfig:
     tournament_candidates: tuple[str, ...] = (
         "metadata__tournament",
         "metadata__event",
+        "metadata__competition",
         "tournament",
         "event",
         "турнир",
     )
     date_candidates: tuple[str, ...] = (
         "metadata__event_date",
+        "metadata__date",
         "event_date",
         "date",
         "дата",
@@ -56,25 +62,43 @@ class CanonicalEpisodeConfig:
         "metadata__sequence_id",
         "sequence_id",
         "metadata__bout_id",
+        "metadata__match_id",
+        "metadata__fight_id",
         "bout_id",
+        "bout",
         "match_id",
+        "match",
         "fight_id",
+        "fight",
+        "схватка",
+        "поединок",
     )
     episode_id_candidates: tuple[str, ...] = (
         "metadata__episode_id",
         "episode_id",
+        "metadata__episode_order",
+        "episode_order",
+        "metadata__episode_attr_01_02",
         "metadata__episode_attr_01",
         "номер эпизода",
     )
     episode_time_candidates: tuple[str, ...] = (
         "metadata__episode_duration",
         "episode_duration",
+        "metadata__episode_time",
+        "episode_time",
+        "metadata__episode_attr_02_03",
+        "metadata__time_attr_01_02",
         "duration",
         "время эпизода",
     )
     pause_time_candidates: tuple[str, ...] = (
         "metadata__pause_duration",
         "pause_duration",
+        "metadata__pause_time",
+        "pause_time",
+        "metadata__episode_attr_03_04",
+        "metadata__time_attr_02_03",
         "pause",
         "время паузы",
     )
@@ -89,6 +113,7 @@ class CanonicalEpisodeConfig:
 @dataclass
 class CanonicalEpisodeBuildResult:
     canonical_table: pd.DataFrame
+    extraction_info: dict[str, Any]
 
 
 def _first_existing(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
@@ -169,17 +194,80 @@ def _non_empty(series: pd.Series) -> pd.Series:
     return series.fillna("").astype(str).str.strip().replace({"nan": "", "None": "", "<NA>": ""})
 
 
+def _episode_attr_position(col_name: str) -> int | None:
+    match = re.search(r"metadata__episode_attr_(\d+)(?:_\d+)?", str(col_name))
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def _sorted_episode_attr_columns(frame: pd.DataFrame) -> list[str]:
+    cols = [str(col) for col in frame.columns if str(col).startswith("metadata__episode_attr_")]
+    return sorted(
+        cols,
+        key=lambda col: (_episode_attr_position(col) is None, _episode_attr_position(col) or 10**6, col),
+    )
+
+
+def _next_episode_attr_column(frame: pd.DataFrame, base_col: str | None, step: int) -> str | None:
+    if not base_col:
+        return None
+    attrs = _sorted_episode_attr_columns(frame)
+    if not attrs or base_col not in attrs:
+        return None
+    idx = attrs.index(base_col)
+    target = idx + step
+    if 0 <= target < len(attrs):
+        return attrs[target]
+    return None
+
+
+def _detect_weight_column_from_metadata(
+    frame: pd.DataFrame,
+    *,
+    excluded: set[str],
+) -> str | None:
+    candidates = [
+        str(col)
+        for col in frame.columns
+        if str(col).startswith("metadata__") and str(col) not in excluded
+    ]
+    best_col: str | None = None
+    best_score = -1.0
+    for col in candidates:
+        numeric = pd.to_numeric(frame[col], errors="coerce")
+        valid = numeric.dropna()
+        if valid.empty:
+            continue
+        unique = int(valid.round().nunique())
+        if unique <= 1:
+            continue
+        within_range = float(((valid >= 35) & (valid <= 200)).mean())
+        if within_range < 0.80:
+            continue
+        numeric_share = float(numeric.notna().mean())
+        score = numeric_share * 2.0 + within_range - min(unique / 100.0, 0.5)
+        if score > best_score and unique <= max(20, int(len(valid) * 0.10)):
+            best_col = col
+            best_score = score
+    return best_col
+
+
 def _resolve_sequence_id(
     out: pd.DataFrame,
     explicit_series: pd.Series,
     opponent_series: pd.Series,
     tournament_series: pd.Series,
     date_series: pd.Series,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
     n_rows = len(out)
     sequence_id = pd.Series([""] * n_rows, index=out.index, dtype=object)
     sequence_quality = pd.Series(["low"] * n_rows, index=out.index, dtype=object)
     sequence_resolution = pd.Series(["surrogate"] * n_rows, index=out.index, dtype=object)
+    sequence_reason = pd.Series(["unresolved"] * n_rows, index=out.index, dtype=object)
 
     explicit = _non_empty(explicit_series)
     explicit_mask = explicit.ne("")
@@ -192,10 +280,11 @@ def _resolve_sequence_id(
         sequence_id = sequence_id.where(~explicit_mask, normalized)
         sequence_quality = sequence_quality.where(~explicit_mask, "high")
         sequence_resolution = sequence_resolution.where(~explicit_mask, "explicit")
+        sequence_reason = sequence_reason.where(~explicit_mask, "explicit_sequence_id")
 
     unresolved_idx = sequence_id[sequence_id == ""].index.tolist()
     if not unresolved_idx:
-        return sequence_id, sequence_quality, sequence_resolution
+        return sequence_id, sequence_quality, sequence_resolution, sequence_reason
 
     base_df = out.loc[unresolved_idx, ["sheet_name", "athlete_id", "weight_class", "episode_id", "source_row_index"]].copy()
     base_df["opponent_name"] = _non_empty(opponent_series.loc[unresolved_idx])
@@ -245,13 +334,17 @@ def _resolve_sequence_id(
             context_count = int(row["context_count"])
             if context_count >= 2 and has_numeric:
                 quality = "high"
+                reason = "surrogate_context_and_episode_id"
             elif context_count >= 1 or has_numeric:
                 quality = "medium"
+                reason = "surrogate_episode_only" if context_count == 0 else "surrogate_partial_context"
             else:
                 quality = "low"
+                reason = "surrogate_no_context"
 
             sequence_quality.loc[row_index] = quality
             sequence_resolution.loc[row_index] = "surrogate"
+            sequence_reason.loc[row_index] = reason
 
     # Deterministic fallback if something is still empty for any reason.
     empty_mask = sequence_id.eq("")
@@ -266,8 +359,9 @@ def _resolve_sequence_id(
         sequence_id.loc[empty_mask] = fallback
         sequence_quality.loc[empty_mask] = "low"
         sequence_resolution.loc[empty_mask] = "fallback"
+        sequence_reason.loc[empty_mask] = "fallback_source_row_index"
 
-    return sequence_id, sequence_quality, sequence_resolution
+    return sequence_id, sequence_quality, sequence_resolution, sequence_reason
 
 
 def build_canonical_episode_table(
@@ -286,18 +380,78 @@ def build_canonical_episode_table(
             f"cleaned={len(frame)} observations={len(obs)}"
         )
 
+    selection_method: dict[str, str] = {}
+
     athlete_col = _first_existing(frame, cfg.athlete_name_candidates)
+    selection_method["athlete_name"] = "candidate_match" if athlete_col else "missing"
+
     athlete_id_col = _first_existing(frame, cfg.athlete_id_candidates)
+    selection_method["athlete_id"] = "candidate_match" if athlete_id_col else "surrogate_from_athlete_name"
+
     opponent_col = _first_existing(frame, cfg.opponent_candidates)
+    selection_method["opponent_name"] = "candidate_match" if opponent_col else "missing"
+
     sheet_col = _first_existing(frame, cfg.sheet_candidates)
+    selection_method["sheet_name"] = "candidate_match" if sheet_col else "missing"
+
     weight_col = _first_existing(frame, cfg.weight_class_candidates)
+    selection_method["weight_class"] = "candidate_match" if weight_col else "missing"
+
     tournament_col = _first_existing(frame, cfg.tournament_candidates)
+    selection_method["tournament_name"] = "candidate_match" if tournament_col else "missing"
+
     date_col = _first_existing(frame, cfg.date_candidates)
+    selection_method["event_date"] = "candidate_match" if date_col else "missing"
+
     explicit_sequence_col = _first_existing(frame, cfg.sequence_id_candidates)
+    selection_method["explicit_sequence_id"] = "candidate_match" if explicit_sequence_col else "missing"
+
     episode_col = _first_existing(frame, cfg.episode_id_candidates)
+    if episode_col:
+        selection_method["episode_id"] = "candidate_match"
+    else:
+        episode_attrs = _sorted_episode_attr_columns(frame)
+        if episode_attrs:
+            episode_col = episode_attrs[0]
+            selection_method["episode_id"] = "positional_episode_attr_fallback"
+        else:
+            selection_method["episode_id"] = "missing"
+
     episode_time_col = _first_existing(frame, cfg.episode_time_candidates)
+    if episode_time_col:
+        selection_method["episode_time_sec"] = "candidate_match"
+    else:
+        fallback_episode_time = _next_episode_attr_column(frame, base_col=episode_col, step=1)
+        if fallback_episode_time:
+            episode_time_col = fallback_episode_time
+            selection_method["episode_time_sec"] = "positional_after_episode_id"
+        else:
+            selection_method["episode_time_sec"] = "missing"
+
     pause_col = _first_existing(frame, cfg.pause_time_candidates)
+    if pause_col:
+        selection_method["pause_time_sec"] = "candidate_match"
+    else:
+        fallback_pause = _next_episode_attr_column(frame, base_col=episode_col, step=2)
+        if not fallback_pause and episode_time_col:
+            fallback_pause = _next_episode_attr_column(frame, base_col=episode_time_col, step=1)
+        if fallback_pause:
+            pause_col = fallback_pause
+            selection_method["pause_time_sec"] = "positional_after_episode_time"
+        else:
+            selection_method["pause_time_sec"] = "missing"
+
     score_col = _first_existing(frame, cfg.score_candidates)
+    selection_method["score"] = "candidate_match" if score_col else "missing"
+
+    if not weight_col:
+        guessed_weight = _detect_weight_column_from_metadata(
+            frame,
+            excluded={c for c in [episode_col, episode_time_col, pause_col] if c},
+        )
+        if guessed_weight:
+            weight_col = guessed_weight
+            selection_method["weight_class"] = "heuristic_metadata_numeric_range"
 
     out = pd.DataFrame(index=frame.index)
 
@@ -315,6 +469,9 @@ def build_canonical_episode_table(
 
     out["weight_class"] = _safe_text(frame[weight_col] if weight_col else None, index=frame.index)
     out["episode_id"] = _safe_text(frame[episode_col] if episode_col else None, index=frame.index)
+    out["opponent_name"] = _safe_text(frame[opponent_col] if opponent_col else None, index=frame.index)
+    out["tournament_name"] = _safe_text(frame[tournament_col] if tournament_col else None, index=frame.index)
+    out["event_date"] = _safe_text(frame[date_col] if date_col else None, index=frame.index)
     out["episode_time_sec"] = _safe_numeric(frame[episode_time_col] if episode_time_col else None, index=frame.index)
     out["pause_time_sec"] = _safe_numeric(frame[pause_col] if pause_col else None, index=frame.index)
     out["score"] = _safe_numeric(frame[score_col] if score_col else None, index=frame.index)
@@ -346,12 +503,32 @@ def build_canonical_episode_table(
         pd.Series(["low"] * len(out)),
     ).astype(str)
     out["mapping_version"] = obs.get("mapping_version", pd.Series(["unknown"] * len(out))).astype(str)
+    out["finish_match_classes"] = obs.get(
+        "finish_match_classes",
+        pd.Series(["[]"] * len(out)),
+    ).astype(str)
+    out["finish_match_columns"] = obs.get(
+        "finish_match_columns",
+        pd.Series(["[]"] * len(out)),
+    ).astype(str)
+    out["score_value"] = pd.to_numeric(
+        obs.get("score_value", pd.Series([None] * len(out))),
+        errors="coerce",
+    )
+    out["score_rounded"] = pd.to_numeric(
+        obs.get("score_rounded", pd.Series([None] * len(out))),
+        errors="coerce",
+    )
+    out["score_supported_class"] = obs.get(
+        "score_supported_class",
+        pd.Series([""] * len(out)),
+    ).astype(str)
 
     explicit_series = _safe_text(frame[explicit_sequence_col] if explicit_sequence_col else None, index=frame.index)
-    opponent_series = _safe_text(frame[opponent_col] if opponent_col else None, index=frame.index)
-    tournament_series = _safe_text(frame[tournament_col] if tournament_col else None, index=frame.index)
-    date_series = _safe_text(frame[date_col] if date_col else None, index=frame.index)
-    sequence_id, sequence_quality, sequence_resolution = _resolve_sequence_id(
+    opponent_series = out["opponent_name"].copy()
+    tournament_series = out["tournament_name"].copy()
+    date_series = out["event_date"].copy()
+    sequence_id, sequence_quality, sequence_resolution, sequence_reason = _resolve_sequence_id(
         out=out,
         explicit_series=explicit_series,
         opponent_series=opponent_series,
@@ -361,6 +538,7 @@ def build_canonical_episode_table(
     out["sequence_id"] = sequence_id.astype(str)
     out["sequence_quality_flag"] = sequence_quality.astype(str)
     out["sequence_resolution_type"] = sequence_resolution.astype(str)
+    out["sequence_quality_reason"] = sequence_reason.astype(str)
 
     total_flags: list[bool] = []
     for i in range(len(out)):
@@ -390,13 +568,20 @@ def build_canonical_episode_table(
         "athlete_id",
         "sheet_name",
         "weight_class",
+        "opponent_name",
+        "tournament_name",
+        "event_date",
         "episode_id",
         "sequence_id",
         "sequence_quality_flag",
         "sequence_resolution_type",
+        "sequence_quality_reason",
         "episode_time_sec",
         "pause_time_sec",
         "score",
+        "score_value",
+        "score_rounded",
+        "score_supported_class",
         "maneuver_right_code",
         "maneuver_left_code",
         "kfv_capture_code",
@@ -407,6 +592,8 @@ def build_canonical_episode_table(
         "vup_code",
         "observed_zap_class",
         "observed_zap_source_columns",
+        "finish_match_classes",
+        "finish_match_columns",
         "observation_quality_flag",
         "observation_resolution_type",
         "observation_confidence_label",
@@ -418,4 +605,22 @@ def build_canonical_episode_table(
     ]
     out = out[ordered_cols]
 
-    return CanonicalEpisodeBuildResult(canonical_table=out)
+    extraction_info: dict[str, Any] = {
+        "selected_columns": {
+            "athlete_name": athlete_col,
+            "athlete_id": athlete_id_col,
+            "sheet_name": sheet_col,
+            "weight_class": weight_col,
+            "opponent_name": opponent_col,
+            "tournament_name": tournament_col,
+            "event_date": date_col,
+            "explicit_sequence_id": explicit_sequence_col,
+            "episode_id": episode_col,
+            "episode_time_sec": episode_time_col,
+            "pause_time_sec": pause_col,
+            "score": score_col,
+        },
+        "selection_method": selection_method,
+    }
+
+    return CanonicalEpisodeBuildResult(canonical_table=out, extraction_info=extraction_info)

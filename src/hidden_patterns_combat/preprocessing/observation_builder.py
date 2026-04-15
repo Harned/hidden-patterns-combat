@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 
 import pandas as pd
 
@@ -44,11 +45,14 @@ class ObservationMappingConfig:
     score_column_candidates: tuple[str, ...]
     score_to_class: dict[int, str]
     finish_rules: tuple[ObservationFinishRule, ...]
+    finish_position_to_class: dict[int, str]
 
 
 @dataclass
 class ObservationBuildResult:
     observations: pd.DataFrame
+    score_column: str | None = None
+    finish_signal_columns: tuple[str, ...] = ()
 
 
 def _default_config_path() -> Path:
@@ -72,11 +76,19 @@ def load_observation_mapping_config(path: str | Path | None = None) -> Observati
         for row in (payload.get("finish_rules") or [])
     )
 
+    finish_position_to_class: dict[int, str] = {}
+    for key, value in (payload.get("finish_position_to_class") or {}).items():
+        try:
+            finish_position_to_class[int(key)] = str(value)
+        except Exception:
+            continue
+
     return ObservationMappingConfig(
         version=str(payload.get("version", "observation_mapping_v1")),
         score_column_candidates=tuple(str(x) for x in (payload.get("score_column_candidates") or [])),
         score_to_class=score_to_class,
         finish_rules=finish_rules,
+        finish_position_to_class=finish_position_to_class,
     )
 
 
@@ -146,25 +158,99 @@ def _active_rule_columns(row: pd.Series, rule: ObservationFinishRule) -> list[st
     return matched_columns
 
 
+def _finish_position_from_column(col: str) -> int | None:
+    normalized = _tokenize_column(col)
+    for pattern in (
+        r"finish_action_(\d+)",
+        r"outcome_action_indicator_(\d+)",
+        r"finish_action(\d+)",
+        r"outcome_action(\d+)",
+    ):
+        match = re.search(pattern, normalized)
+        if match:
+            try:
+                return int(match.group(1))
+            except Exception:
+                return None
+    return None
+
+
+def _column_maps_to_class_by_position(
+    col: str,
+    cfg: ObservationMappingConfig,
+    class_name: str,
+) -> bool:
+    if not cfg.finish_position_to_class:
+        return False
+    pos = _finish_position_from_column(col)
+    if pos is None:
+        return False
+    mapped = cfg.finish_position_to_class.get(pos)
+    return mapped == class_name
+
+
+def _active_rule_columns_with_position(
+    row: pd.Series,
+    rule: ObservationFinishRule,
+    cfg: ObservationMappingConfig,
+) -> list[str]:
+    matched_columns: set[str] = set(_active_rule_columns(row, rule))
+    for col in row.index:
+        if _column_maps_to_class_by_position(str(col), cfg=cfg, class_name=rule.class_name):
+            if _is_positive_value(row[col]):
+                matched_columns.add(str(col))
+    return sorted(matched_columns)
+
+
+def _supported_finish_signal_columns(frame: pd.DataFrame, cfg: ObservationMappingConfig) -> tuple[str, ...]:
+    supported: set[str] = set()
+    for col in frame.columns:
+        col_text = str(col)
+        normalized_col = _tokenize_column(col_text)
+        for rule in cfg.finish_rules:
+            all_ok = (
+                all(token in normalized_col for token in rule.match_all_tokens) if rule.match_all_tokens else False
+            )
+            any_ok = (
+                any(token in normalized_col for token in rule.match_any_tokens) if rule.match_any_tokens else False
+            )
+            token_match = False
+            if rule.match_all_tokens and rule.match_any_tokens:
+                token_match = all_ok or any_ok
+            elif rule.match_all_tokens:
+                token_match = all_ok
+            elif rule.match_any_tokens:
+                token_match = any_ok
+            positional_match = _column_maps_to_class_by_position(
+                col_text,
+                cfg=cfg,
+                class_name=rule.class_name,
+            )
+            if token_match or positional_match:
+                supported.add(col_text)
+                break
+    return tuple(sorted(supported))
+
+
 def _class_from_finish_rules(
     row: pd.Series,
     cfg: ObservationMappingConfig,
-) -> tuple[str | None, list[str], str | None]:
+) -> tuple[str | None, list[str], str | None, list[str]]:
     winners: list[tuple[str, str]] = []
     for rule in cfg.finish_rules:
-        for col in _active_rule_columns(row, rule):
+        for col in _active_rule_columns_with_position(row=row, rule=rule, cfg=cfg):
             winners.append((rule.class_name, col))
 
     if not winners:
-        return None, [], None
+        return None, [], None, []
 
     unique_classes = sorted({name for name, _ in winners})
     source_cols = sorted({col for _, col in winners})
 
     if len(unique_classes) > 1:
-        return None, source_cols, "unknown_ambiguous_finish"
+        return None, source_cols, "unknown_ambiguous_finish", unique_classes
 
-    return unique_classes[0], source_cols, None
+    return unique_classes[0], source_cols, None, unique_classes
 
 
 def _append_row(
@@ -201,19 +287,31 @@ def build_observed_zap_classes(
     quality: list[str] = []
     resolution_type: list[str] = []
     confidence_label: list[str] = []
+    finish_match_classes: list[str] = []
+    finish_match_columns: list[str] = []
+    score_values: list[float | None] = []
+    score_rounded_values: list[int | None] = []
+    score_supported_classes: list[str] = []
 
     for _, row in frame.iterrows():
-        finish_class, finish_sources, finish_error = _class_from_finish_rules(row, cfg)
+        finish_class, finish_sources, finish_error, finish_classes = _class_from_finish_rules(row, cfg)
 
         score_value = _safe_score(row.get(score_col) if score_col else None)
         score_class = None
+        score_rounded: int | None = None
         if score_value is not None:
-            rounded = int(round(score_value))
-            score_class = cfg.score_to_class.get(rounded)
+            score_rounded = int(round(score_value))
+            score_class = cfg.score_to_class.get(score_rounded)
 
         row_sources = list(finish_sources)
         if score_col:
             row_sources.append(score_col)
+
+        finish_match_classes.append(json.dumps(sorted(set(finish_classes)), ensure_ascii=False))
+        finish_match_columns.append(json.dumps(sorted(set(finish_sources)), ensure_ascii=False))
+        score_values.append(score_value)
+        score_rounded_values.append(score_rounded)
+        score_supported_classes.append(str(score_class) if score_class is not None else "")
 
         if finish_error:
             _append_row(
@@ -314,6 +412,11 @@ def build_observed_zap_classes(
     out["observation_resolution_type"] = resolution_type
     out["observation_confidence_label"] = confidence_label
     out["mapping_version"] = cfg.version
+    out["finish_match_classes"] = pd.Series(finish_match_classes, index=out.index).astype(str)
+    out["finish_match_columns"] = pd.Series(finish_match_columns, index=out.index).astype(str)
+    out["score_value"] = pd.Series(score_values, index=out.index)
+    out["score_rounded"] = pd.Series(score_rounded_values, index=out.index)
+    out["score_supported_class"] = pd.Series(score_supported_classes, index=out.index).astype(str)
 
     out["observed_zap_class"] = out["observed_zap_class"].where(
         out["observed_zap_class"].isin(CANONICAL_OBSERVED_CLASSES),
@@ -328,4 +431,8 @@ def build_observed_zap_classes(
         "low",
     )
 
-    return ObservationBuildResult(observations=out)
+    return ObservationBuildResult(
+        observations=out,
+        score_column=score_col,
+        finish_signal_columns=_supported_finish_signal_columns(frame=frame, cfg=cfg),
+    )

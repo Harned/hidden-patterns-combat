@@ -5,10 +5,21 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import shutil
+from typing import Any
 
 import pandas as pd
 
 from hidden_patterns_combat.config import PipelineConfig
+from hidden_patterns_combat.diagnostics import (
+    build_metadata_extraction_summary,
+    build_model_health_summary,
+    build_observation_audit,
+    build_sequence_audit,
+    write_metadata_audit,
+    write_model_health_summary,
+    write_observation_audit,
+    write_sequence_audit,
+)
 from hidden_patterns_combat.features import build_hidden_state_feature_layer, encode_features
 from hidden_patterns_combat.modeling import InverseDiagnosticHMM
 from hidden_patterns_combat.preprocessing import (
@@ -31,6 +42,15 @@ class InverseDiagnosticResult:
     episode_analysis_path: str
     state_profile_path: str
     quality_diagnostics_path: str
+    observation_audit_path: str
+    observation_mapping_crosstab_path: str
+    raw_finish_signal_summary_path: str
+    unsupported_score_values_path: str
+    metadata_extraction_summary_path: str
+    sequence_audit_path: str
+    sequence_length_distribution_path: str
+    suspicious_sequences_path: str
+    model_health_summary_path: str
     report_path: str
     model_path: str
     rows_total: int
@@ -41,6 +61,7 @@ class InverseDiagnosticResult:
     semantic_confidence: dict[str, float]
     observed_layer_summary: dict[str, float]
     sequence_quality_summary: dict[str, float]
+    semantic_assignment_quality: str
     recommendation_profile: str
     recommendation: str
     transitions_summary: list[dict[str, object]]
@@ -296,7 +317,7 @@ def _recommendation_profile(
     canonical_map: dict[str, object],
     observed_summary: dict[str, float],
     sequence_summary: dict[str, float],
-    transitions: list[dict[str, object]],
+    model_health_summary: dict[str, Any],
 ) -> tuple[str, str]:
     if analysis_df.empty:
         return "low-confidence profile", "Интерпретация ограничена: отсутствуют эпизоды для анализа."
@@ -315,27 +336,43 @@ def _recommendation_profile(
     consensus_count = semantic_votes.count(consensus) if semantic_votes else 0
 
     data_low_conf = (
-        observed_summary.get("ambiguous_share", 0.0) + observed_summary.get("unknown_share", 0.0) > 0.30
-        or observed_summary.get("low_conf_share", 0.0) > 0.40
-        or sequence_summary.get("low_quality_share", 0.0) > 0.35
+        observed_summary.get("direct_share", 0.0) < 0.05
+        or observed_summary.get("no_score_rule_share", 0.0) > 0.70
+        or observed_summary.get("ambiguous_share", 0.0) + observed_summary.get("unknown_share", 0.0) > 0.20
+        or sequence_summary.get("surrogate_sequence_share", 0.0) > 0.80
     )
-
-    transition_total = sum(int(row.get("count", 0)) for row in transitions)
-    self_share = (
-        sum(int(row.get("count", 0)) for row in transitions if bool(row.get("is_self_loop", False))) / transition_total
-        if transition_total > 0
-        else 0.0
+    self_share = float(model_health_summary.get("self_transition_share", 0.0))
+    semantic_quality = str(
+        model_health_summary.get(
+            "semantic_assignment_quality",
+            "failed_semantic_assignment",
+        )
     )
+    degenerate_transition_warning = bool(model_health_summary.get("degenerate_transition_warning", False))
 
     metrics_line = (
         "Метрики профиля: coverage={cov:.2f}, high_conf={hc:.2f}, mean_posterior={mp:.2f}, "
         "self_transition_share={selfs:.2f}."
     ).format(cov=cov_share, hc=hc_share, mp=mp_share, selfs=self_share)
 
+    if semantic_quality != "full_semantic_assignment":
+        return (
+            "cautious profile",
+            "State semantics did not stabilize sufficiently for confident KFV/VUP interpretation. "
+            + metrics_line,
+        )
+
+    if degenerate_transition_warning:
+        return (
+            "cautious profile",
+            "Скрытая динамика близка к вырожденной (self-loops доминируют или эффективно используется мало состояний). "
+            + metrics_line,
+        )
+
     if data_low_conf:
         return (
-            "low-confidence profile",
-            "Интерпретация ограничена качеством наблюдаемого слоя. "
+            "cautious profile",
+            "Интерпретация ограничена качеством наблюдаемого слоя/сегментации последовательностей. "
             + metrics_line,
         )
 
@@ -388,6 +425,10 @@ def _write_inverse_report(
     observed_summary: dict[str, float],
     sequence_summary: dict[str, float],
     transitions: list[dict[str, object]],
+    observation_audit_summary: dict[str, Any],
+    metadata_summary: dict[str, Any],
+    sequence_audit_summary: dict[str, Any],
+    model_health_summary: dict[str, Any],
 ) -> None:
     def _frame_to_markdown(frame: pd.DataFrame) -> str:
         try:
@@ -421,45 +462,150 @@ def _write_inverse_report(
         ]
     ].head(40)
 
-    transition_view = pd.DataFrame(transitions[:12])
+    transition_view = pd.DataFrame(transitions[:15])
+    semantic_quality = str(model_health_summary.get("semantic_assignment_quality", "failed_semantic_assignment"))
+
+    unique_observed = (
+        sorted(analysis_df["observed_zap_class"].dropna().astype(str).unique().tolist())
+        if "observed_zap_class" in analysis_df.columns
+        else []
+    )
+    direct_share = observed_summary.get("direct_share", 0.0)
+    no_score_share = observed_summary.get("no_score_rule_share", 0.0)
+    surrogate_share = sequence_summary.get("surrogate_sequence_share", 0.0)
+    explicit_share = sequence_summary.get("explicit_sequence_share", 0.0)
+
+    exec_flags: list[str] = []
+    if direct_share <= 0.01:
+        exec_flags.append("Direct observations are effectively absent.")
+    if no_score_share >= 0.70:
+        exec_flags.append("Observed layer is mostly no_score.")
+    if explicit_share <= 0.01 and surrogate_share >= 0.90:
+        exec_flags.append("Sequence segmentation is almost fully surrogate.")
+    if semantic_quality != "full_semantic_assignment":
+        exec_flags.append("State semantics are partial/failed; strong KFV/VUP claims are unsafe.")
+    if bool(model_health_summary.get("degenerate_transition_warning", False)):
+        exec_flags.append("Transition dynamics are close to degenerate (high self-loops).")
+
+    limitations: list[str] = []
+    for source_key in ("warnings",):
+        limitations.extend([str(x) for x in (observation_audit_summary.get(source_key, []) or [])])
+        limitations.extend([str(x) for x in (metadata_summary.get(source_key, []) or [])])
+        limitations.extend([str(x) for x in (sequence_audit_summary.get(source_key, []) or [])])
+        limitations.extend([str(x) for x in (model_health_summary.get(source_key, []) or [])])
+    limitations = sorted(set(x for x in limitations if x))
+
+    interpretation_line = "Интерпретация ограничена."
+    if semantic_quality == "full_semantic_assignment" and not profile_view.empty:
+        dominant = profile_view.sort_values("episodes_count", ascending=False).iloc[0]
+        interpretation_line = (
+            f"Доминирующее состояние: {dominant.get('hidden_state_name', 'unknown')} "
+            f"(key_link={dominant.get('key_link', 'unknown')}, episodes={int(dominant.get('episodes_count', 0))})."
+        )
+    elif semantic_quality == "partial_semantic_assignment":
+        interpretation_line = (
+            "Назначена только часть семантических состояний; интерпретация S2/S3 остается неопределенной."
+        )
+    elif semantic_quality == "failed_semantic_assignment":
+        interpretation_line = (
+            "Семантическое назначение состояний не удалось; KFV/VUP-интерпретация ненадежна."
+        )
+
+    next_actions: list[str] = []
+    if direct_share <= 0.01:
+        next_actions.append(
+            "Проверить исходный workbook на наличие прямых finish/action полей и зафиксировать их в observation mapping."
+        )
+    if bool(observation_audit_summary.get("unsupported_finish_columns_with_positive_values")):
+        next_actions.append("Расширить правила direct mapping для unsupported finish/action колонок из diagnostics.")
+    if not bool(metadata_summary.get("episode_time_informative", False)):
+        next_actions.append("Подтвердить источник полей времени (episode/pause) и добавить устойчивые синонимы колонок.")
+    if explicit_share <= 0.01:
+        next_actions.append("Добавить/синтезировать более надежный bout/sequence marker на уровне ingest.")
+    if bool(model_health_summary.get("degenerate_transition_warning", False)):
+        next_actions.append("Проверить разнообразие наблюдаемого слоя перед повторным обучением HMM.")
+    if semantic_quality != "full_semantic_assignment":
+        next_actions.append("Повторно оценить semantic assignment после усиления observed layer и segmentation.")
 
     lines = [
         "# Inverse Diagnostic Report",
         "",
-        "## 1) Краткое резюме",
-        f"- Всего эпизодов: {len(analysis_df)}",
-        f"- Уникальных observed_zap_class: {sorted(analysis_df['observed_zap_class'].dropna().astype(str).unique().tolist())}",
-        f"- Средняя confidence: {float(analysis_df['confidence'].mean()):.3f}",
+        "## 1) Executive summary",
+        f"- Rows analyzed: {len(analysis_df)}",
+        f"- Unique observed classes: {unique_observed}",
+        f"- Mean posterior confidence: {float(analysis_df['confidence'].mean()):.3f}" if "confidence" in analysis_df.columns else "- Mean posterior confidence: n/a",
+    ]
+    for flag in exec_flags:
+        lines.append(f"- {flag}")
+
+    lines += [
         "",
-        "## 2) Качество наблюдаемого слоя",
-        f"- direct_finish_signal share: {observed_summary.get('direct_share', 0.0):.3f}",
+        "## 2) Data quality summary",
+        f"- Detected metadata fields: {metadata_summary.get('detected_metadata_fields', [])}",
+        f"- Missing metadata fields: {metadata_summary.get('missing_metadata_fields', [])}",
+        f"- Episode time informative: {bool(metadata_summary.get('episode_time_informative', False))}",
+        f"- Weight class informative: {bool(metadata_summary.get('weight_class_informative', False))}",
+        "",
+        "## 3) Observed layer quality",
+        f"- direct_finish_signal share: {direct_share:.3f}",
         f"- inferred_from_score share: {observed_summary.get('inferred_from_score_share', 0.0):.3f}",
+        f"- no_score_rule share: {no_score_share:.3f}",
         f"- ambiguous+unknown share: {(observed_summary.get('ambiguous_share', 0.0) + observed_summary.get('unknown_share', 0.0)):.3f}",
-        f"- high/medium/low confidence shares: {observed_summary.get('high_conf_share', 0.0):.3f} / {observed_summary.get('medium_conf_share', 0.0):.3f} / {observed_summary.get('low_conf_share', 0.0):.3f}",
+        f"- direct finish columns available: {bool(observation_audit_summary.get('direct_finish_signal_columns_available', False))}",
+        f"- direct finish positive share: {float(observation_audit_summary.get('direct_finish_positive_share', 0.0)):.3f}",
         "",
-        "## 3) Качество сегментации последовательностей",
-        f"- explicit/surrogate/fallback shares: {sequence_summary.get('explicit_sequence_share', 0.0):.3f} / {sequence_summary.get('surrogate_sequence_share', 0.0):.3f} / {sequence_summary.get('fallback_sequence_share', 0.0):.3f}",
+        "## 4) Sequence segmentation quality",
+        f"- explicit/surrogate/fallback shares: {explicit_share:.3f} / {surrogate_share:.3f} / {sequence_summary.get('fallback_sequence_share', 0.0):.3f}",
         f"- high/medium/low sequence quality shares: {sequence_summary.get('high_quality_share', 0.0):.3f} / {sequence_summary.get('medium_quality_share', 0.0):.3f} / {sequence_summary.get('low_quality_share', 0.0):.3f}",
+        f"- suspicious sequences detected: {int(sequence_audit_summary.get('suspicious_long_sequences', 0)) + int(sequence_audit_summary.get('suspicious_flat_sequences', 0))}",
+        f"- explicit unavailable reasons: {sequence_audit_summary.get('explicit_unavailable_reasons', [])}",
         "",
-        "## 4) Наблюдаемая последовательность по эпизодам",
+        "## 5) Model health",
+        f"- self_transition_share: {float(model_health_summary.get('self_transition_share', 0.0)):.3f}",
+        f"- top_self_transition_share: {float(model_health_summary.get('top_self_transition_share', 0.0)):.3f}",
+        f"- effective_state_usage: {float(model_health_summary.get('effective_state_usage', 0.0)):.3f}",
+        f"- degenerate_transition_warning: {bool(model_health_summary.get('degenerate_transition_warning', False))}",
+        f"- low_information_observed_layer_warning: {bool(model_health_summary.get('low_information_observed_layer_warning', False))}",
+        "",
+        "## 6) State semantics quality",
+        f"- semantic_assignment_quality: {semantic_quality}",
+        f"- semantic_assignment: {model_health_summary.get('semantic_assignment', {})}",
+        f"- semantic_confidence: {model_health_summary.get('semantic_confidence', {})}",
+        "",
+        "## 7) Most likely hidden-state interpretation",
+        f"- {interpretation_line}",
+        "",
+        _frame_to_markdown(profile_view) if not profile_view.empty else "State profile is unavailable.",
+        "",
+        "## 8) Recommendation",
+        f"- Profile: {recommendation_profile}",
+        f"- {recommendation}",
+        "",
+        "## 9) Limitations / caveats",
+    ]
+    if limitations:
+        for item in limitations:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- No critical caveats detected.")
+
+    lines += [
+        "",
+        "## 10) Next actions",
+    ]
+    if next_actions:
+        for idx, action in enumerate(next_actions, start=1):
+            lines.append(f"{idx}. {action}")
+    else:
+        lines.append("1. Continue with targeted data collection and rerun diagnostics.")
+
+    lines += [
+        "",
+        "### Episode Preview",
         _frame_to_markdown(sample_rows),
         "",
-        "## 5) Профиль скрытых состояний",
-        _frame_to_markdown(profile_view),
-        "",
-        "## 6) Переходы состояний",
-        _frame_to_markdown(transition_view) if not transition_view.empty else "Нет переходов для отображения.",
-        "",
-        "## 7) Интерпретация",
-        "- S1: стойки и маневрирование",
-        "- S2: КФВ",
-        "- S3: ВУП",
-        "",
-        "## 8) Профиль рекомендации",
-        f"- {recommendation_profile}",
-        "",
-        "## 9) Рекомендация",
-        f"- {recommendation}",
+        "### Transition Preview",
+        _frame_to_markdown(transition_view) if not transition_view.empty else "No transitions available.",
     ]
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -517,6 +663,13 @@ def run_inverse_diagnostic_cycle(
 
     observation_cfg = load_observation_mapping_config()
     observation_result = build_observed_zap_classes(cleaned_df, config=observation_cfg)
+    observation_audit_result = build_observation_audit(
+        cleaned_df=cleaned_df,
+        observation_df=observation_result.observations,
+        cfg=observation_cfg,
+        score_column=observation_result.score_column,
+        finish_signal_columns=observation_result.finish_signal_columns,
+    )
 
     canonical_result = build_canonical_episode_table(
         cleaned_df=cleaned_df,
@@ -524,6 +677,10 @@ def run_inverse_diagnostic_cycle(
         hidden_features=encoded.features,
     )
     canonical_df = canonical_result.canonical_table
+    metadata_audit_result = build_metadata_extraction_summary(
+        canonical_df=canonical_df,
+        extraction_info=canonical_result.extraction_info,
+    )
 
     hidden_layer = build_hidden_state_feature_layer(canonical_df)
     sequence_ids = (
@@ -540,6 +697,12 @@ def run_inverse_diagnostic_cycle(
     canonical_df.to_csv(canonical_path, index=False)
     observation_result.observations.to_csv(observations_path, index=False)
     hidden_layer.hidden_state_features.to_csv(hidden_layer_path, index=False)
+
+    observation_audit_paths = write_observation_audit(observation_audit_result, diagnostics_dir=dirs["diagnostics"])
+    metadata_extraction_summary_path = write_metadata_audit(
+        metadata_audit_result,
+        diagnostics_dir=dirs["diagnostics"],
+    )
 
     model_file = Path(model_path) if model_path else (dirs["models"] / "inverse_hmm.pkl")
 
@@ -598,15 +761,37 @@ def run_inverse_diagnostic_cycle(
     analysis_df["observed_result"] = analysis_df["score"]
 
     observed_summary = _observed_layer_summary(analysis_df)
-    seq_summary = _sequence_quality_summary(analysis_df)
     transitions = _transition_summary(analysis_df)
+    sequence_audit_result = build_sequence_audit(analysis_df)
+    sequence_audit_paths = write_sequence_audit(sequence_audit_result, diagnostics_dir=dirs["diagnostics"])
+    seq_summary = {
+        "high_quality_share": float(sequence_audit_result.summary.get("high_quality_share", 0.0)),
+        "medium_quality_share": float(sequence_audit_result.summary.get("medium_quality_share", 0.0)),
+        "low_quality_share": float(sequence_audit_result.summary.get("low_quality_share", 0.0)),
+        "explicit_sequence_share": float(sequence_audit_result.summary.get("explicit_sequence_share", 0.0)),
+        "surrogate_sequence_share": float(sequence_audit_result.summary.get("surrogate_sequence_share", 0.0)),
+        "fallback_sequence_share": float(sequence_audit_result.summary.get("fallback_sequence_share", 0.0)),
+    }
+
+    state_profile = _build_state_profile(analysis_df)
+    model_health_result = build_model_health_summary(
+        analysis_df=analysis_df,
+        transitions=transitions,
+        canonical_map=canonical_map,
+        observed_summary=observed_summary,
+        state_profile=state_profile,
+    )
+    model_health_summary_path = write_model_health_summary(
+        model_health_result,
+        diagnostics_dir=dirs["diagnostics"],
+    )
 
     recommendation_profile, recommendation = _recommendation_profile(
         analysis_df=analysis_df,
         canonical_map=canonical_map,
         observed_summary=observed_summary,
         sequence_summary=seq_summary,
-        transitions=transitions,
+        model_health_summary=model_health_result.summary,
     )
 
     episode_analysis_path = dirs["diagnostics"] / "episode_analysis.csv"
@@ -616,7 +801,6 @@ def run_inverse_diagnostic_cycle(
 
     analysis_df.to_csv(episode_analysis_path, index=False)
 
-    state_profile = _build_state_profile(analysis_df)
     state_profile.to_csv(state_profile_path, index=False)
 
     quality_payload = {
@@ -624,6 +808,10 @@ def run_inverse_diagnostic_cycle(
         "sequence_quality_summary": seq_summary,
         "transitions_summary": transitions,
         "recommendation_profile": recommendation_profile,
+        "observation_audit_summary": observation_audit_result.summary,
+        "metadata_extraction_summary": metadata_audit_result.summary,
+        "sequence_audit_summary": sequence_audit_result.summary,
+        "model_health_summary": model_health_result.summary,
     }
     quality_diagnostics_path.write_text(
         json.dumps(quality_payload, ensure_ascii=False, indent=2),
@@ -640,6 +828,10 @@ def run_inverse_diagnostic_cycle(
         observed_summary=observed_summary,
         sequence_summary=seq_summary,
         transitions=transitions,
+        observation_audit_summary=observation_audit_result.summary,
+        metadata_summary=metadata_audit_result.summary,
+        sequence_audit_summary=sequence_audit_result.summary,
+        model_health_summary=model_health_result.summary,
     )
 
     if generate_plots:
@@ -668,6 +860,15 @@ def run_inverse_diagnostic_cycle(
         episode_analysis_path,
         state_profile_path,
         quality_diagnostics_path,
+        Path(observation_audit_paths["observation_audit_json"]),
+        Path(observation_audit_paths["observation_mapping_crosstab_csv"]),
+        Path(observation_audit_paths["raw_finish_signal_summary_csv"]),
+        Path(observation_audit_paths["unsupported_score_values_csv"]),
+        Path(metadata_extraction_summary_path),
+        Path(sequence_audit_paths["sequence_audit_json"]),
+        Path(sequence_audit_paths["sequence_length_distribution_csv"]),
+        Path(sequence_audit_paths["suspicious_sequences_csv"]),
+        Path(model_health_summary_path),
         report_path,
     ]
     if generate_plots:
@@ -684,6 +885,15 @@ def run_inverse_diagnostic_cycle(
         episode_analysis_path=str(episode_analysis_path),
         state_profile_path=str(state_profile_path),
         quality_diagnostics_path=str(quality_diagnostics_path),
+        observation_audit_path=str(observation_audit_paths["observation_audit_json"]),
+        observation_mapping_crosstab_path=str(observation_audit_paths["observation_mapping_crosstab_csv"]),
+        raw_finish_signal_summary_path=str(observation_audit_paths["raw_finish_signal_summary_csv"]),
+        unsupported_score_values_path=str(observation_audit_paths["unsupported_score_values_csv"]),
+        metadata_extraction_summary_path=str(metadata_extraction_summary_path),
+        sequence_audit_path=str(sequence_audit_paths["sequence_audit_json"]),
+        sequence_length_distribution_path=str(sequence_audit_paths["sequence_length_distribution_csv"]),
+        suspicious_sequences_path=str(sequence_audit_paths["suspicious_sequences_csv"]),
+        model_health_summary_path=str(model_health_summary_path),
         report_path=str(report_path),
         model_path=str(model_file),
         rows_total=len(canonical_df),
@@ -694,6 +904,9 @@ def run_inverse_diagnostic_cycle(
         semantic_confidence=semantic_confidence,
         observed_layer_summary=observed_summary,
         sequence_quality_summary=seq_summary,
+        semantic_assignment_quality=str(
+            model_health_result.summary.get("semantic_assignment_quality", "failed_semantic_assignment")
+        ),
         recommendation_profile=recommendation_profile,
         recommendation=recommendation,
         transitions_summary=transitions,

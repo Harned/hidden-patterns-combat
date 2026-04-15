@@ -73,3 +73,17 @@ def test_observation_mapping_unknown_when_missing_inputs() -> None:
     assert out.loc[0, "observed_zap_class"] == "unknown"
     assert out.loc[0, "observation_resolution_type"] == "unknown"
     assert out.loc[0, "observation_confidence_label"] == "low"
+
+
+def test_observation_mapping_supports_positional_finish_action_columns() -> None:
+    df = pd.DataFrame(
+        {
+            "outcomes__score": [0, 0, 0],
+            "outcomes__finish_action_04_05": [1, 0, 0],
+            "outcomes__finish_action_05_06": [0, 1, 0],
+            "outcomes__finish_action_06_07": [0, 0, 1],
+        }
+    )
+    out = build_observed_zap_classes(df).observations
+    assert out["observed_zap_class"].tolist() == ["hold", "arm_submission", "leg_submission"]
+    assert (out["observation_resolution_type"] == "direct_finish_signal").all()
