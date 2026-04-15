@@ -8,6 +8,11 @@ from .engineering import (
     FeatureValidationReport,
     export_feature_sets,
 )
+from .hidden_state_features import (
+    HIDDEN_STATE_FEATURE_COLUMNS,
+    HiddenStateFeatureLayer,
+    build_hidden_state_feature_layer,
+)
 
 __all__ = [
     "EncodedBatch",
@@ -17,4 +22,7 @@ __all__ = [
     "FeatureEngineeringResult",
     "FeatureValidationReport",
     "export_feature_sets",
+    "HiddenStateFeatureLayer",
+    "HIDDEN_STATE_FEATURE_COLUMNS",
+    "build_hidden_state_feature_layer",
 ]

@@ -103,6 +103,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for analysis artifacts",
     )
 
+    inverse = sub.add_parser(
+        "inverse-diagnostic",
+        help="Run product inverse-diagnostic pipeline (observed ZAP -> hidden state trajectory)",
+    )
+    inverse.add_argument("--excel", required=True, help="Path to Excel file")
+    inverse.add_argument(
+        "--output-dir",
+        default="artifacts/inverse_diagnostic",
+        help="Directory for inverse-diagnostic artifacts",
+    )
+    inverse.add_argument(
+        "--sheet",
+        action="append",
+        default=None,
+        help="Sheet name (repeat flag for multiple sheets). Omit to process all sheets.",
+    )
+    inverse.add_argument(
+        "--parser-mode",
+        choices=["auto", "table", "matrix"],
+        default="auto",
+        help="Excel parser mode: auto/table/matrix.",
+    )
+    inverse.add_argument("--force-matrix-parser", action="store_true", help="Force matrix-style parser for loading.")
+    inverse.add_argument("--n-states", type=int, default=3, help="Hidden state count")
+    inverse.add_argument(
+        "--topology-mode",
+        choices=["left_to_right", "ergodic"],
+        default="left_to_right",
+        help="HMM transition topology mode.",
+    )
+    inverse.add_argument("--model-path", default=None, help="Path to inverse model file")
+    inverse.add_argument("--no-retrain", action="store_true", help="Reuse existing inverse model")
+    inverse.add_argument("--reset-outputs", action="store_true", help="Clear output directory before run")
+    inverse.add_argument("--no-plots", action="store_true", help="Skip plot generation")
+
     return parser
 
 
@@ -173,6 +208,24 @@ def main() -> None:
             parser_mode=args.parser_mode,
             force_matrix_parser=args.force_matrix_parser,
         ).to_dict()
+    elif args.command == "inverse-diagnostic":
+        from hidden_patterns_combat.app.inverse_diagnostic_cycle import run_inverse_diagnostic_cycle
+
+        sheet_selector: list[str] | None = args.sheet if args.sheet else None
+        result = run_inverse_diagnostic_cycle(
+            input_path=args.excel,
+            output_dir=args.output_dir,
+            sheet_names=sheet_selector,
+            parser_mode=args.parser_mode,
+            force_matrix_parser=args.force_matrix_parser,
+            retrain=not args.no_retrain,
+            model_path=args.model_path,
+            reset_outputs=args.reset_outputs,
+            n_states=args.n_states,
+            topology_mode=args.topology_mode,
+            generate_plots=not args.no_plots,
+            verbose=False,
+        ).as_dict()
     else:  # pragma: no cover
         raise ValueError(f"Unsupported command: {args.command}")
 

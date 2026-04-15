@@ -2,6 +2,7 @@
 
 from .decoding import DecodingResult, HMMDecoder
 from .hmm_pipeline import HMMEngine, HMMPrediction
+from .inverse_hmm import InverseDiagnosticHMM, InverseHMMPrediction, InverseTrainingResult
 from .interpretation import interpret_decoded_states
 from .observation_encoding import ObservationBatch, build_lengths, encode_observations
 from .state_definition import HiddenState, StateDefinition, build_semantic_state_definition
@@ -21,4 +22,7 @@ __all__ = [
     "interpret_decoded_states",
     "HMMEngine",
     "HMMPrediction",
+    "InverseTrainingResult",
+    "InverseHMMPrediction",
+    "InverseDiagnosticHMM",
 ]

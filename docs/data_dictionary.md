@@ -1,35 +1,69 @@
-# Data Dictionary (Current Dataset, MVP)
+# Data Dictionary
 
-Словарь фиксирует связь:
-`original excel header -> normalized field name -> logical group -> description`.
+Документация теперь разделена на два уровня:
 
-## Где хранится машинный словарь
-- JSON: `src/hidden_patterns_combat/preprocessing/resources/data_dictionary_v1.json`
-- Python API: `hidden_patterns_combat.preprocessing.data_dictionary.DataDictionary`
+1. Нормализация исходных колонок (`raw -> cleaned`)
+2. Продуктовый слой наблюдений/эпизодов (`cleaned -> canonical_episode_table`)
 
-## Логические группы
-- `metadata` — идентификация эпизода и контекст листа.
-- `maneuvering` — бинарные индикаторы стойки/маневрирования.
-- `kfv` — бинарные индикаторы контактов физического взаимодействия.
-- `vup` — бинарные индикаторы выведения из устойчивого положения.
-- `outcomes` — баллы и завершающие атакующие действия.
-- `other` — временная зона для нераспознанных колонок.
+## 1) Raw/Cleaned mapping
 
-## Примеры mapping
-| original excel header | normalized field name | logical group | description |
-|---|---|---|---|
-| `фио борца` | `metadata__athlete_name` | `metadata` | ФИО спортсмена |
-| `технико-тактический эпизод` | `metadata__episode_attr_01` | `metadata` | Атрибут эпизода (1) |
-| `баллы` | `outcomes__score` | `outcomes` | Судейская оценка/балл эпизода |
-| `стойка и маневрирование самбиста (основные в эпизоде)` | `maneuvering__indicator_01` | `maneuvering` | Индикатор маневрирования №01 |
-| `контакты физического взаимодействия (захваты, обхваты, прихваты, хваты, упоры)_7` | `kfv__indicator_07` | `kfv` | Индикатор КФВ №07 |
-| `выведение соперника из устойчивого положения (при выполнении n или n1)_3` | `vup__indicator_03` | `vup` | Индикатор ВУП №03 |
-| `завершающие атаку приемы (n)_2` | `outcomes__finish_action_02` | `outcomes` | Завершающее действие №02 |
+Файл:
+- `src/hidden_patterns_combat/preprocessing/resources/data_dictionary_v1.json`
 
-## Полный набор текущего файла
-В `data_dictionary_v1.json` описаны 70 записей (включая `_sheet`) для текущего формата Excel (`episodes.xlsx`).
+API:
+- `hidden_patterns_combat.preprocessing.data_dictionary.DataDictionary`
 
-## Интеграция в pipeline
-1. **Preprocessing**: `transform_raw_to_tidy(...)` сначала делает exact lookup по JSON-словарю, затем fallback на token-rules.
-2. **Feature engineering**: `encode_features(...)` использует dictionary-группы для отбора `maneuvering/kfv/vup` колонок; если колонка не найдена — fallback на токены.
-3. **Валидация**: `validate_tidy_structure(...)` проверяет присутствие обязательных блоков из словаря.
+Логические группы:
+- `metadata`
+- `maneuvering`
+- `kfv`
+- `vup`
+- `outcomes`
+- `other`
+
+## 2) Observation mapping (inverse mode)
+
+Файл:
+- `src/hidden_patterns_combat/preprocessing/resources/observation_mapping_v1.json`
+
+API:
+- `hidden_patterns_combat.preprocessing.observation_builder`
+
+Канонические наблюдаемые классы:
+- `zap_r`
+- `zap_n`
+- `zap_t`
+- `hold`
+- `arm_submission`
+- `leg_submission`
+- `no_score`
+- `unknown`
+
+Служебные поля observation layer:
+- `observed_zap_source_columns`
+- `observation_quality_flag`
+- `mapping_version`
+
+Правила:
+- при `score == 0` и отсутствии завершающего действия -> `no_score`;
+- при неоднозначности/недостаточности -> `unknown`;
+- score-to-class применяется только как явное правило из mapping-конфига.
+
+## 3) Canonical episode table (product layer)
+
+Минимальные поля:
+- `athlete_name`, `athlete_id`
+- `sheet_name`, `weight_class`
+- `episode_id`, `episode_time_sec`, `pause_time_sec`
+- `score`
+- `maneuver_right_code`, `maneuver_left_code`
+- `kfv_capture_code`, `kfv_grip_code`, `kfv_wrap_code`, `kfv_hook_code`, `kfv_post_code`
+- `vup_code`
+- `observed_zap_class`, `observation_quality_flag`
+- `is_total_row`, `is_train_eligible`
+- `source_row_index`, `source_record_id` (traceability)
+
+Train eligibility:
+- total rows исключаются;
+- `unknown` исключается из train;
+- traceability сохраняется для всех строк.

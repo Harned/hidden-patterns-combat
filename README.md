@@ -1,170 +1,106 @@
 # hidden-patterns-combat
 
-Исследовательский MVP для анализа скрытых закономерностей соревновательной деятельности единоборцев на основе HMM.
+Проект теперь поддерживает **два явных режима**:
 
-## Назначение модулей
-- `io/` — ingestion/loading: чтение Excel, обработка multi-row headers, нормализация имен колонок.
-- `preprocessing/` — базовая очистка таблиц перед feature engineering.
-- `features/` — кодирование исходных бинарных признаков в компактные числовые представления.
-- `modeling/` — обучение/загрузка HMM и декодирование скрытых состояний.
-- `analysis/` — агрегированный профиль скрытых состояний и интерпретация.
-- `visualization/` — графики последовательности скрытых состояний и вероятностного профиля.
-- `reporting/` — dataclass-отчеты и генерация Markdown-отчета анализа.
-- `utils/` — инфраструктурные утилиты (файлы/директории).
-- `preprocessing/resources/data_dictionary_v1.json` — базовый machine-readable data dictionary.
-- `pipeline.py` — базовый orchestration layer (train/analyze) между всеми слоями.
-- `app/full_cycle.py` — полный orchestration layer end-to-end (ingestion -> preprocess -> features -> HMM -> analysis -> plots -> report).
-- `cli.py` — пример точки входа (команды `train`, `analyze`).
+1. `research` (обратная совместимость MVP): HMM по инженерным признакам эпизода.
+2. `inverse-diagnostic` (продуктовый режим): обратная задача HMM по наблюдаемой последовательности `observed_zap_class`.
 
-Ключевые настройки MVP:
-- Для основных групп бинарных признаков используется компактное кодирование `log_bitpack` (`mask=0 -> 0`, иначе `log2(mask+1)`).
-- Скрытые состояния HMM по умолчанию имеют нейтральные имена `state_0`, `state_1`, ...; предметная интерпретация выводится пост-хок отдельно.
+## Формальная постановка
 
-## Структура репозитория
-- `src/hidden_patterns_combat/` — основной пакет.
-- `data/raw/` — исходные Excel-файлы.
-- `data/processed/` — промежуточные таблицы (воспроизводимость и дебаг).
-- `artifacts/` — модель и аналитические результаты.
-- `tests/` — unit-тесты ключевых компонентов.
-- `docs/` — контекст, допущения, roadmap.
-- `notebooks/` — исследовательские notebook-эксперименты.
+Скрытый процесс (латентные состояния):
+- `S1` = стойки и маневрирование
+- `S2` = КФВ
+- `S3` = ВУП
 
-## Быстрый старт
+Наблюдаемый процесс (inverse mode):
+- `O = {zap_r, zap_n, zap_t, hold, arm_submission, leg_submission, no_score, unknown}`
+
+Важное разделение:
+- В обучении inverse режима используются исторические данные для оценки параметров.
+- В инференсе по новой схватке используется только наблюдаемая последовательность `O_t`.
+- Hidden-state feature layer используется для semantic init/post-hoc relabeling, но не как shortcut наблюдений.
+
+## Архитектура
+
+- `preprocessing/observation_builder.py`:
+  - строит `observed_zap_class`
+  - добавляет `observed_zap_source_columns`, `observation_quality_flag`, `mapping_version`
+  - правила вынесены в `preprocessing/resources/observation_mapping_v1.json`
+- `preprocessing/canonical_episode_table.py`:
+  - нормализованная таблица `1 строка = 1 эпизод`
+  - traceability: `source_row_index`, `source_record_id`, `sheet_name`
+  - фильтрация total rows, `is_train_eligible`
+- `features/hidden_state_features.py`:
+  - явный слой скрытых признаков (`hidden_state_features`) отдельно от наблюдаемой последовательности
+- `modeling/inverse_hmm.py`:
+  - discrete HMM для inverse задачи (Viterbi + posterior)
+  - weak supervision/semantic initialization и post-hoc relabeling S1/S2/S3
+- `app/inverse_diagnostic_cycle.py`:
+  - end-to-end продуктовый inverse pipeline и отчёт `inverse_diagnostic_report.md`
+
+Старый контур сохранен:
+- `pipeline.py` и `app/full_cycle.py` продолжают работать без изменения контрактов.
+
+## CLI
+
+### Старые команды (совместимость)
+
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m hidden_patterns_combat.cli train --excel data/raw/episodes.xlsx --model-out artifacts/hmm_model.pkl
+python -m hidden_patterns_combat.cli analyze --excel data/raw/episodes.xlsx --model artifacts/hmm_model.pkl --output-dir artifacts/analysis
+python -m hidden_patterns_combat.cli preprocess --excel data/raw/episodes.xlsx --output-dir data/processed/preprocessing
+python -m hidden_patterns_combat.cli demo --excel data/raw/episodes.xlsx
 ```
 
-Тесты:
-```bash
-pytest -q
-```
+### Новый продуктовый inverse режим
 
-## Точка входа (CLI)
-Полный end-to-end цикл:
 ```bash
-python scripts/run_full_cycle.py \
-  --input data/raw/episodes.xlsx \
-  --output artifacts/demo_run \
-  --mode full
-```
-
-Или модульный запуск:
-```bash
-python -m hidden_patterns_combat.app.full_cycle \
-  --input data/raw/episodes.xlsx \
-  --output artifacts/demo_run \
-  --mode fast \
-  --model-path artifacts/demo_run/models/hmm_model.pkl
-```
-
-Режимы:
-- `--mode full` -> `reset_outputs=True`, `retrain=True`, `save_model=True`.
-- `--mode fast` -> `reset_outputs=False`, `retrain=False`, `load_existing_model=True`.
-
-Эквивалент ручными флагами:
-```bash
-python scripts/run_full_cycle.py \
-  --input data/raw/episodes.xlsx \
-  --output artifacts/demo_run \
-  --retrain \
-  --reset-outputs \
+python -m hidden_patterns_combat.cli inverse-diagnostic \
+  --excel data/raw/episodes.xlsx \
+  --output-dir artifacts/inverse_diagnostic \
   --n-states 3 \
-  --random-state 42
+  --topology-mode left_to_right
 ```
 
-Существующие команды остаются рабочими:
-Пользовательский MVP-сценарий (preprocess + analyze + insight):
+Эквивалент через app entrypoint:
+
 ```bash
-python -m hidden_patterns_combat.cli demo \
-  --excel data/raw/episodes.xlsx \
-  --sheet Общее \
-  --episode-index 0 \
-  --analysis-output-dir artifacts/analysis
+python -m hidden_patterns_combat.app.inverse_diagnostic_cycle \
+  --input data/raw/episodes.xlsx \
+  --output artifacts/inverse_diagnostic
 ```
 
-Preprocessing:
+## Артефакты inverse режима
+
+В `output_dir` создаются:
+- `cleaned/cleaned_tidy.csv`
+- `cleaned/canonical_episode_table.csv`
+- `cleaned/observed_sequence.csv`
+- `features/hidden_state_features.csv`
+- `models/inverse_hmm.pkl`
+- `diagnostics/episode_analysis.csv`
+- `diagnostics/state_profile.csv`
+- `plots/hidden_state_sequence.png`
+- `plots/state_probability_profile.png`
+- `reports/inverse_diagnostic_report.md`
+
+В `episode_analysis.csv` присутствуют:
+- `observed_zap_class`
+- `hidden_state`, `hidden_state_name`
+- `p_state_*`
+- `confidence`
+- `observation_quality_flag`
+
+## Ограничения продукта
+
+- `unknown` означает недостаточность/неоднозначность данных маппинга, а не отдельный тактический приём.
+- `no_score` — явный класс для нерезультативных эпизодов (score=0 и нет завершающего действия).
+- Модель не делает причинных выводов; это диагностический вероятностный слой.
+- Рекомендация может быть помечена как недостаточно уверенная при низком posterior/высокой доле `unknown`.
+
+## Локальная проверка
+
 ```bash
-python -m hidden_patterns_combat.cli preprocess \
-  --excel data/raw/episodes.xlsx \
-  --sheet "Общее" \
-  --output-dir data/processed/preprocessing
+.venv/bin/pytest -q
 ```
 
-Обучение:
-```bash
-python -m hidden_patterns_combat.cli train \
-  --excel data/raw/episodes.xlsx \
-  --model-out artifacts/hmm_model.pkl \
-  --n-states 3
-```
-
-Анализ:
-```bash
-python -m hidden_patterns_combat.cli analyze \
-  --excel data/raw/episodes.xlsx \
-  --model artifacts/hmm_model.pkl \
-  --output-dir artifacts/analysis
-```
-
-Notebook demo:
-- `notebooks/mvp_ui_demo.ipynb`
-
-## Артефакты полного цикла
-`output_dir` создается со структурой:
-- `cleaned/` — raw+cleaned preprocessing outputs (`raw_combined.csv`, `cleaned_tidy.csv`, `data_dictionary.csv`, `validation.json`).
-- `features/` — feature sets (`raw_feature_set.csv`, `engineered_feature_set.csv`, `feature_traceability.csv`, `feature_validation.json`).
-- `models/` — HMM модель (`hmm_model.pkl`, если включено сохранение).
-- `diagnostics/` — `episode_analysis.csv`, `state_profile.csv`, `hmm_state_interpretation.csv`, `interpretation.txt`.
-- `plots/` — графики анализа (`hidden_state_sequence.png`, `state_probability_profile.png`, и др.).
-- `reports/` — итоговый `full_cycle_report.md`.
-
-Ключевые поля итогового результата (`FullCycleResult`):
-- пути к сохраненным артефактам;
-- `n_rows_raw`, `n_rows_clean`, `n_sequences`, `n_features`;
-- `state_summary`;
-- `sample_analysis`;
-- `created_artifacts`.
-
-Назначение графиков:
-- `hidden_state_sequence` — последовательность скрытых состояний по эпизодам.
-- `state_probability_profile` — уверенность модели по состояниям в каждом эпизоде.
-- `athlete_comparative_profile` — сравнение спортсменов по среднему результату и составу сценариев.
-- `scenario_success_frequencies` — частоты успешных/неуспешных сценариев.
-- `transition_distribution` — наиболее частые переходы между скрытыми состояниями.
-
-## Notebook demo (тонкий слой)
-`notebooks/mvp_ui_demo.ipynb` содержит:
-1. импорт `run_full_cycle`;
-2. конфиг с режимами A/B;
-3. одну ячейку запуска полного цикла;
-4. отображение `result.as_dict()`, sample analysis и сохраненных графиков.
-
-Входной Excel для notebook:
-- рекомендуемый путь: `data/raw/episodes.xlsx`;
-- можно переопределить путь через переменную окружения:
-  `HPC_INPUT_XLSX=/полный/путь/к/episodes.xlsx`;
-- notebook автоматически проверяет несколько кандидатов и выводит
-  понятную ошибку с перечнем проверенных путей, если файл не найден.
-
-## Пользовательский сценарий MVP
-1. Пользователь выбирает Excel-файл и (опционально) конкретный лист.
-2. Система запускает preprocessing и формирует clean/raw таблицы.
-3. Система строит engineered features и последовательности.
-4. Система обучает модель (или переиспользует сохраненную) и выполняет анализ эпизодов.
-5. Система сохраняет диагностику, графики и итоговый markdown report.
-4. Пользователь получает:
-   - ключевые признаки выбранного эпизода;
-   - вероятный скрытый сценарий (`hidden_state_name`);
-   - одну или несколько аналитических визуализаций;
-   - краткий интерпретируемый текстовый вывод.
-
-## Выходные артефакты preprocessing
-- `data/processed/preprocessing/raw_combined.csv`
-- `data/processed/preprocessing/cleaned_tidy.csv`
-- `data/processed/preprocessing/data_dictionary.csv`
-- `data/processed/preprocessing/validation.json`
-
-Подробности словаря: `docs/data_dictionary.md`.

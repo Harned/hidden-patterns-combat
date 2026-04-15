@@ -1,0 +1,42 @@
+{
+  "version": "observation_mapping_v1",
+  "score_column_candidates": [
+    "outcomes__score",
+    "observed_result",
+    "баллы",
+    "score"
+  ],
+  "score_to_class": {
+    "1": "zap_r",
+    "2": "zap_n",
+    "4": "zap_t"
+  },
+  "finish_rules": [
+    {
+      "class_name": "zap_r",
+      "match_any_tokens": ["зап-р", "zap_r", "zap-r", "zap r"]
+    },
+    {
+      "class_name": "zap_n",
+      "match_any_tokens": ["зап-н", "zap_n", "zap-n", "zap n"]
+    },
+    {
+      "class_name": "zap_t",
+      "match_any_tokens": ["зап-т", "zap_t", "zap-t", "zap t"]
+    },
+    {
+      "class_name": "hold",
+      "match_any_tokens": ["удерж", "hold"]
+    },
+    {
+      "class_name": "arm_submission",
+      "match_any_tokens": ["arm_submission", "arm submission", "submission_arm"],
+      "match_all_tokens": ["болев", "рук"]
+    },
+    {
+      "class_name": "leg_submission",
+      "match_any_tokens": ["leg_submission", "leg submission", "submission_leg"],
+      "match_all_tokens": ["болев", "ног"]
+    }
+  ]
+}
