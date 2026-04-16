@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+import json
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -104,6 +106,12 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert Path(result.report_path).exists()
     assert Path(result.run_manifest_path).name == "run_manifest.json"
     assert len(result.created_files) >= len(result.created_artifacts)
+    assert (Path(result.final_output_dir) / "diagnostics" / "train_composition_report.json").exists()
+    assert (Path(result.final_output_dir) / "diagnostics" / "topology_compliance_report.json").exists()
+    assert (Path(result.final_output_dir) / "diagnostics" / "state_anchor_alignment_report.json").exists()
+    assert (Path(result.final_output_dir) / "diagnostics" / "finish_proximity_report.json").exists()
+    assert (Path(result.final_output_dir) / "diagnostics" / "semantic_stability_report.json").exists()
+    assert (Path(result.final_output_dir) / "diagnostics" / "emission_summary_by_hidden_state.csv").exists()
 
     for required_dir in ["cleaned", "features", "diagnostics", "plots", "reports"]:
         assert (Path(result.final_output_dir) / required_dir).exists()
@@ -134,7 +142,26 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert "## 3) Raw finish/action signal audit" in report_text
     assert "## 4) Metadata and time extraction quality" in report_text
     assert "## 7) State semantics quality" in report_text
+    assert "Primary cause state (S2)" in report_text
+    assert "Secondary cause state (S3)" in report_text
+    assert "assignment↔anchor match share" in report_text
     assert "## 9) Limitations" in report_text
+
+    train_composition = json.loads(
+        (Path(result.final_output_dir) / "diagnostics" / "train_composition_report.json").read_text(encoding="utf-8")
+    )
+    assert "weighted_rows_used_for_training" in train_composition
+    assert "weighted_rows_candidate" in train_composition
+    assert "by_sequence_resolution" in train_composition
+
+    anchor_alignment = json.loads(
+        (Path(result.final_output_dir) / "diagnostics" / "state_anchor_alignment_report.json").read_text(encoding="utf-8")
+    )
+    assert "assignment_anchor_match_share" in anchor_alignment
+    if anchor_alignment.get("state_anchor_alignment"):
+        first = anchor_alignment["state_anchor_alignment"][0]
+        assert "assigned_semantic" in first
+        assert "assigned_semantic_matches_dominant_anchor" in first
 
 
 def test_inverse_report_is_cautious_when_semantics_are_weak(tmp_path: Path) -> None:
@@ -158,3 +185,26 @@ def test_inverse_report_is_cautious_when_semantics_are_weak(tmp_path: Path) -> N
     assert "observed layer mostly no_score: True" in report_text
     assert "direct finish observations absent in this run: True" in report_text
     assert "semantic_assignment_quality: failed" in report_text or "semantic_assignment_quality: partial" in report_text
+
+
+def test_inverse_entrypoint_signature_kept_backward_compatible() -> None:
+    sig = inspect.signature(run_inverse_diagnostic_cycle)
+    for name in [
+        "input_path",
+        "output_dir",
+        "sheet_names",
+        "header_depth",
+        "parser_mode",
+        "force_matrix_parser",
+        "retrain",
+        "model_path",
+        "reset_outputs",
+        "n_states",
+        "topology_mode",
+        "generate_plots",
+        "verbose",
+        "cleanup_mode",
+        "isolated_run",
+        "run_id",
+    ]:
+        assert name in sig.parameters

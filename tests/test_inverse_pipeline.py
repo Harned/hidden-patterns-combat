@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
+import json
 import pandas as pd
 
 from hidden_patterns_combat.app.inverse_diagnostic_cycle import run_inverse_diagnostic_cycle
@@ -83,3 +84,10 @@ def test_inverse_pipeline_end_to_end_with_quality_columns(tmp_path: Path) -> Non
     assert "## 2) Observed layer quality" in report_text
     assert "## 5) Sequence segmentation quality" in report_text
     assert "## 9) Limitations" in report_text
+
+    quality = json.loads(Path(result.quality_diagnostics_path).read_text(encoding="utf-8"))
+    assert "topology_compliance" in quality
+    assert "state_anchor_alignment" in quality
+    assert "finish_proximity" in quality
+    assert "semantic_stability" in quality
+    assert "train_composition" in quality

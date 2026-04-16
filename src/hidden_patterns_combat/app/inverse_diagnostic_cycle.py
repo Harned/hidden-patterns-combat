@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from hidden_patterns_combat.config import PipelineConfig
@@ -277,6 +278,12 @@ def _expected_artifact_files(*, generate_plots: bool) -> list[str]:
         "diagnostics/sequence_audit.json",
         "diagnostics/sequence_length_distribution.csv",
         "diagnostics/suspicious_sequences.csv",
+        "diagnostics/train_composition_report.json",
+        "diagnostics/topology_compliance_report.json",
+        "diagnostics/state_anchor_alignment_report.json",
+        "diagnostics/finish_proximity_report.json",
+        "diagnostics/semantic_stability_report.json",
+        "diagnostics/emission_summary_by_hidden_state.csv",
         "diagnostics/model_health_summary.json",
         "reports/inverse_diagnostic_report.md",
         _RUN_MANIFEST_NAME,
@@ -331,6 +338,18 @@ def _state_probability_columns(df: pd.DataFrame) -> list[str]:
 
 
 def _dominant_link_row(row: pd.Series) -> str:
+    anchor_s1 = float(row.get("anchor_s1", 0.0))
+    anchor_s2 = float(row.get("anchor_s2", 0.0))
+    anchor_s3 = float(row.get("anchor_s3", 0.0))
+    anchor_total = anchor_s1 + anchor_s2 + anchor_s3
+    if anchor_total > 0.0:
+        anchor_scores = {
+            "maneuvering": anchor_s1,
+            "kfv": anchor_s2,
+            "vup": anchor_s3,
+        }
+        return max(anchor_scores, key=anchor_scores.get)
+
     maneuvering = float(row.get("maneuver_right_code", 0.0) + row.get("maneuver_left_code", 0.0))
     kfv = float(
         row.get("kfv_capture_code", 0.0)
@@ -355,6 +374,9 @@ def _build_state_profile(analysis_df: pd.DataFrame) -> pd.DataFrame:
         "kfv_hook_code",
         "kfv_post_code",
         "vup_code",
+        "anchor_s1",
+        "anchor_s2",
+        "anchor_s3",
         "score",
         "confidence",
     ]
@@ -464,6 +486,443 @@ def _transition_summary(analysis_df: pd.DataFrame) -> list[dict[str, object]]:
 
     rows.sort(key=lambda row: int(row["count"]), reverse=True)
     return rows
+
+
+def _normalized_sequence_ids(frame: pd.DataFrame) -> pd.Series:
+    return (
+        frame.get("sequence_id", pd.Series(["sequence_0"] * len(frame), index=frame.index))
+        .fillna("sequence_0")
+        .astype(str)
+        .str.strip()
+        .replace({"": "sequence_0", "nan": "sequence_0", "None": "sequence_0"})
+    )
+
+
+def _detect_suspicious_train_sequences(canonical_df: pd.DataFrame) -> tuple[set[str], dict[str, object]]:
+    if canonical_df.empty:
+        return set(), {"long_sequence_threshold": 0, "suspicious_sequence_count": 0, "suspicious_sequence_ids": []}
+
+    frame = canonical_df.copy().reset_index(drop=True)
+    frame["sequence_id"] = _normalized_sequence_ids(frame)
+    frame["observed_zap_class"] = frame.get(
+        "observed_zap_class",
+        pd.Series(["unknown"] * len(frame), index=frame.index),
+    ).astype(str)
+
+    grouped = frame.groupby("sequence_id", dropna=False)
+    seq_table = grouped.agg(
+        sequence_length=("sequence_id", "size"),
+        no_score_share=("observed_zap_class", lambda s: float((s == "no_score").mean())),
+        unknown_share=("observed_zap_class", lambda s: float((s == "unknown").mean())),
+        observed_unique=("observed_zap_class", lambda s: int(s.nunique(dropna=True))),
+    ).reset_index()
+
+    p95 = float(seq_table["sequence_length"].quantile(0.95)) if not seq_table.empty else 0.0
+    long_threshold = max(25, int(np.ceil(p95)))
+    suspicious_mask = (
+        (
+            (seq_table["sequence_length"] >= long_threshold)
+            & (seq_table["no_score_share"] >= 0.98)
+            & (seq_table["observed_unique"] <= 2)
+        )
+        | (seq_table["unknown_share"] >= 0.40)
+    )
+    suspicious_ids = set(seq_table.loc[suspicious_mask, "sequence_id"].astype(str).tolist())
+    info = {
+        "long_sequence_threshold": int(long_threshold),
+        "suspicious_sequence_count": int(len(suspicious_ids)),
+        "suspicious_sequence_ids": sorted(list(suspicious_ids))[:100],
+    }
+    return suspicious_ids, info
+
+
+def _build_train_selection_report(
+    canonical_df: pd.DataFrame,
+    hidden_features: pd.DataFrame,
+) -> tuple[pd.Series, dict[str, object]]:
+    frame = canonical_df.copy().reset_index(drop=True)
+    weights = pd.to_numeric(
+        hidden_features.get("train_weight", pd.Series([1.0] * len(frame), index=frame.index)),
+        errors="coerce",
+    ).fillna(0.0).astype(float)
+    weights = weights.clip(lower=0.0, upper=1.0)
+
+    train_eligible = frame.get("is_train_eligible", pd.Series([False] * len(frame), index=frame.index)).fillna(False).astype(bool)
+    acceptable_quality = frame.get(
+        "sequence_quality_flag",
+        pd.Series(["low"] * len(frame), index=frame.index),
+    ).astype(str).str.lower().isin({"high", "medium", "acceptable"})
+
+    sequence_ids = _normalized_sequence_ids(frame)
+    suspicious_ids, suspicious_info = _detect_suspicious_train_sequences(frame)
+    suspicious_mask = sequence_ids.isin(suspicious_ids)
+    positive_weight = weights > 1e-8
+
+    candidate_mask = train_eligible & acceptable_quality & (~suspicious_mask)
+    train_mask = candidate_mask & positive_weight
+
+    train_df = frame.loc[train_mask].copy()
+    train_df["_train_weight"] = weights.loc[train_mask].to_numpy(dtype=float)
+    train_df["sequence_id"] = sequence_ids.loc[train_mask].astype(str)
+
+    by_observed: list[dict[str, object]] = []
+    total_weight_mass = float(train_df["_train_weight"].sum()) if len(train_df) else 0.0
+    for cls, group in train_df.groupby("observed_zap_class", dropna=False):
+        class_weight_mass = float(group["_train_weight"].sum())
+        by_observed.append(
+            {
+                "observed_zap_class": str(cls),
+                "rows": int(len(group)),
+                "share_of_train_rows": float(len(group) / max(1, len(train_df))),
+                "mean_train_weight": float(group["_train_weight"].mean()) if len(group) else 0.0,
+                "weighted_row_mass": class_weight_mass,
+                "weighted_share_of_train_mass": float(class_weight_mass / max(1e-12, total_weight_mass)),
+            }
+        )
+    by_observed.sort(key=lambda row: int(row["rows"]), reverse=True)
+
+    by_quality: list[dict[str, object]] = []
+    frame_quality = frame.copy()
+    frame_quality["_used_for_train"] = train_mask
+    frame_quality["_train_weight"] = weights
+    for quality, group in frame_quality.groupby("sequence_quality_flag", dropna=False):
+        used_group = group[group["_used_for_train"]]
+        by_quality.append(
+            {
+                "sequence_quality_flag": str(quality),
+                "rows_total": int(len(group)),
+                "rows_used_for_train": int(len(used_group)),
+                "mean_weight_used": float(used_group["_train_weight"].mean()) if len(used_group) else 0.0,
+            }
+        )
+    by_quality.sort(key=lambda row: str(row["sequence_quality_flag"]))
+
+    by_sequence_resolution: list[dict[str, object]] = []
+    frame_resolution = frame.copy()
+    frame_resolution["_used_for_train"] = train_mask
+    frame_resolution["_train_weight"] = weights
+    for resolution, group in frame_resolution.groupby("sequence_resolution_type", dropna=False):
+        used_group = group[group["_used_for_train"]]
+        by_sequence_resolution.append(
+            {
+                "sequence_resolution_type": str(resolution),
+                "rows_total": int(len(group)),
+                "rows_used_for_train": int(len(used_group)),
+                "weighted_rows_used": float(used_group["_train_weight"].sum()) if len(used_group) else 0.0,
+            }
+        )
+    by_sequence_resolution.sort(key=lambda row: str(row["sequence_resolution_type"]))
+
+    excluded_rows = {
+        "not_train_eligible_rows": int((~train_eligible).sum()),
+        "non_acceptable_quality_rows": int((~acceptable_quality).sum()),
+        "suspicious_sequence_rows": int(suspicious_mask.sum()),
+        "non_positive_weight_rows": int((~positive_weight).sum()),
+    }
+
+    used_quality_tiers = (
+        sorted(
+            {
+                str(x).strip().lower()
+                for x in frame.loc[train_mask, "sequence_quality_flag"].dropna().astype(str).tolist()
+                if str(x).strip()
+            }
+        )
+        if "sequence_quality_flag" in frame.columns
+        else []
+    )
+    weighted_train_mass = float(weights.loc[train_mask].sum()) if int(train_mask.sum()) > 0 else 0.0
+    weighted_candidate_mass = float(weights.loc[candidate_mask].sum()) if int(candidate_mask.sum()) > 0 else 0.0
+
+    report = {
+        "rows_total": int(len(frame)),
+        "rows_train_eligible": int(train_eligible.sum()),
+        "rows_train_candidate": int(candidate_mask.sum()),
+        "rows_used_for_training": int(train_mask.sum()),
+        "weighted_rows_used_for_training": weighted_train_mass,
+        "weighted_rows_candidate": weighted_candidate_mass,
+        "sequences_total": int(sequence_ids.nunique(dropna=False)),
+        "sequences_used_for_training": int(sequence_ids.loc[train_mask].nunique(dropna=False)),
+        "sequence_quality_tiers_used": used_quality_tiers,
+        "weight_stats": {
+            "mean_train_weight": float(weights.loc[train_mask].mean()) if int(train_mask.sum()) > 0 else 0.0,
+            "min_train_weight": float(weights.loc[train_mask].min()) if int(train_mask.sum()) > 0 else 0.0,
+            "max_train_weight": float(weights.loc[train_mask].max()) if int(train_mask.sum()) > 0 else 0.0,
+            "p90_train_weight": float(weights.loc[train_mask].quantile(0.90)) if int(train_mask.sum()) > 0 else 0.0,
+        },
+        "excluded_rows": excluded_rows,
+        "suspicious_sequence_policy": suspicious_info,
+        "by_observed_class": by_observed,
+        "by_sequence_quality": by_quality,
+        "by_sequence_resolution": by_sequence_resolution,
+    }
+    return train_mask, report
+
+
+def _topology_compliance_report(
+    transitions: list[dict[str, object]],
+    canonical_map: dict[str, object],
+) -> dict[str, object]:
+    semantic_assignment = canonical_map.get("semantic_assignment", {}) or {}
+    state_to_semantic = {int(v): str(k) for k, v in semantic_assignment.items()}
+    allowed = {
+        "S1": {"S1", "S2"},
+        "S2": {"S2", "S3"},
+        "S3": {"S3"},
+    }
+
+    total_transitions = int(sum(int(row.get("count", 0)) for row in transitions))
+    semantic_known = 0
+    compliant = 0
+    violations: list[dict[str, object]] = []
+
+    for row in transitions:
+        src = int(row.get("from_state", -1))
+        dst = int(row.get("to_state", -1))
+        count = int(row.get("count", 0))
+        from_sem = state_to_semantic.get(src, "")
+        to_sem = state_to_semantic.get(dst, "")
+        if not from_sem or not to_sem:
+            continue
+        semantic_known += count
+        if to_sem in allowed.get(from_sem, set()):
+            compliant += count
+        else:
+            violations.append(
+                {
+                    "from_state": src,
+                    "to_state": dst,
+                    "from_semantic": from_sem,
+                    "to_semantic": to_sem,
+                    "count": count,
+                    "share_of_total_transitions": float(count / max(1, total_transitions)),
+                }
+            )
+
+    violations = sorted(violations, key=lambda row: int(row["count"]), reverse=True)
+    return {
+        "total_transitions": total_transitions,
+        "semantic_known_transitions": int(semantic_known),
+        "compliant_transitions": int(compliant),
+        "topology_compliance_share": float(compliant / max(1, semantic_known)),
+        "topology_compliance_share_overall": float(compliant / max(1, total_transitions)),
+        "violations": violations,
+    }
+
+
+def _state_anchor_alignment_report(
+    analysis_df: pd.DataFrame,
+    canonical_map: dict[str, object] | None = None,
+) -> dict[str, object]:
+    if analysis_df.empty:
+        return {
+            "rows_total": 0,
+            "state_anchor_alignment": [],
+            "maneuvering_only_alignment_warning": False,
+            "assignment_anchor_match_share": 0.0,
+        }
+
+    frame = analysis_df.copy().reset_index(drop=True)
+    anchor_s1 = pd.to_numeric(frame.get("anchor_s1"), errors="coerce").fillna(0.0)
+    anchor_s2 = pd.to_numeric(frame.get("anchor_s2"), errors="coerce").fillna(0.0)
+    anchor_s3 = pd.to_numeric(frame.get("anchor_s3"), errors="coerce").fillna(0.0)
+
+    if float(anchor_s1.abs().sum() + anchor_s2.abs().sum() + anchor_s3.abs().sum()) <= 0.0:
+        maneuver = pd.to_numeric(frame.get("maneuver_right_code"), errors="coerce").fillna(0.0) + pd.to_numeric(
+            frame.get("maneuver_left_code"), errors="coerce"
+        ).fillna(0.0)
+        kfv = (
+            pd.to_numeric(frame.get("kfv_capture_code"), errors="coerce").fillna(0.0)
+            + pd.to_numeric(frame.get("kfv_grip_code"), errors="coerce").fillna(0.0)
+            + pd.to_numeric(frame.get("kfv_wrap_code"), errors="coerce").fillna(0.0)
+            + pd.to_numeric(frame.get("kfv_hook_code"), errors="coerce").fillna(0.0)
+            + pd.to_numeric(frame.get("kfv_post_code"), errors="coerce").fillna(0.0)
+        )
+        vup = pd.to_numeric(frame.get("vup_code"), errors="coerce").fillna(0.0)
+        anchor_s1 = maneuver
+        anchor_s2 = kfv
+        anchor_s3 = vup
+
+    frame["_anchor_s1"] = anchor_s1
+    frame["_anchor_s2"] = anchor_s2
+    frame["_anchor_s3"] = anchor_s3
+    frame["_duration_bin"] = pd.to_numeric(frame.get("duration_bin"), errors="coerce").fillna(0.0)
+    semantic_assignment = (canonical_map or {}).get("semantic_assignment", {}) or {}
+    state_to_assigned_semantic = {int(v): str(k) for k, v in semantic_assignment.items()}
+
+    rows: list[dict[str, object]] = []
+    match_rows = 0
+    total_rows_with_assignment = 0
+    for state_id, group in frame.groupby("hidden_state", dropna=False):
+        s1_mean = float(group["_anchor_s1"].mean())
+        s2_mean = float(group["_anchor_s2"].mean())
+        s3_mean = float(group["_anchor_s3"].mean())
+        ranking = sorted([("S1", s1_mean), ("S2", s2_mean), ("S3", s3_mean)], key=lambda x: float(x[1]), reverse=True)
+        margin = float(ranking[0][1] - ranking[1][1]) if len(ranking) > 1 else float(ranking[0][1])
+        assigned_semantic = state_to_assigned_semantic.get(int(state_id), "")
+        anchor_match = bool(assigned_semantic and assigned_semantic == str(ranking[0][0]))
+        if assigned_semantic:
+            total_rows_with_assignment += int(len(group))
+            if anchor_match:
+                match_rows += int(len(group))
+        rows.append(
+            {
+                "state_id": int(state_id),
+                "state_name": str(group.get("hidden_state_name", pd.Series([f"state_{int(state_id)}"])).iloc[0]),
+                "rows": int(len(group)),
+                "coverage_share": float(len(group) / max(1, len(frame))),
+                "anchor_s1_mean": s1_mean,
+                "anchor_s2_mean": s2_mean,
+                "anchor_s3_mean": s3_mean,
+                "dominant_anchor": str(ranking[0][0]),
+                "dominance_margin": margin,
+                "duration_bin_mean": float(group["_duration_bin"].mean()),
+                "assigned_semantic": assigned_semantic,
+                "assigned_semantic_matches_dominant_anchor": anchor_match,
+            }
+        )
+
+    rows = sorted(rows, key=lambda row: int(row["state_id"]))
+    dominant_set = {str(row["dominant_anchor"]) for row in rows}
+    return {
+        "rows_total": int(len(frame)),
+        "state_anchor_alignment": rows,
+        "maneuvering_only_alignment_warning": bool(dominant_set == {"S1"} and len(rows) > 1),
+        "assignment_anchor_match_share": float(match_rows / max(1, total_rows_with_assignment)),
+    }
+
+
+def _finish_proximity_report(
+    analysis_df: pd.DataFrame,
+    canonical_map: dict[str, object],
+) -> dict[str, object]:
+    if analysis_df.empty:
+        return {"finish_like_observed_classes": [], "state_finish_proximity": [], "s3_is_closest_to_finish": False}
+
+    frame = analysis_df.copy().reset_index(drop=True)
+    frame["sequence_id"] = _normalized_sequence_ids(frame)
+    frame["observed_zap_class"] = frame.get(
+        "observed_zap_class",
+        pd.Series(["unknown"] * len(frame), index=frame.index),
+    ).astype(str)
+    frame["_is_finish_like"] = frame["observed_zap_class"].isin(["zap_t", "hold", "arm_submission", "leg_submission"])
+
+    distance = np.ones(len(frame), dtype=float)
+    for _, group in frame.groupby("sequence_id", dropna=False, sort=False):
+        idx = group.index.to_numpy(dtype=int)
+        finish_local = np.where(group["_is_finish_like"].to_numpy(dtype=bool))[0]
+        if len(finish_local) == 0:
+            distance[idx] = 1.0
+            continue
+        denom = float(max(1, len(group) - 1))
+        local_distance = np.ones(len(group), dtype=float)
+        for i in range(len(group)):
+            nearest = min(abs(i - int(fj)) for fj in finish_local)
+            local_distance[i] = float(nearest / denom)
+        distance[idx] = local_distance
+    frame["_finish_distance"] = distance
+
+    by_state: list[dict[str, object]] = []
+    for state_id, group in frame.groupby("hidden_state", dropna=False):
+        by_state.append(
+            {
+                "state_id": int(state_id),
+                "state_name": str(group.get("hidden_state_name", pd.Series([f"state_{int(state_id)}"])).iloc[0]),
+                "rows": int(len(group)),
+                "mean_finish_distance": float(group["_finish_distance"].mean()),
+                "finish_like_observation_share": float(group["_is_finish_like"].mean()),
+            }
+        )
+    by_state = sorted(by_state, key=lambda row: float(row["mean_finish_distance"]))
+
+    s3_state = None
+    try:
+        s3_state = int((canonical_map.get("semantic_assignment", {}) or {}).get("S3"))
+    except Exception:
+        s3_state = None
+    closest_state = int(by_state[0]["state_id"]) if by_state else None
+    return {
+        "finish_like_observed_classes": ["zap_t", "hold", "arm_submission", "leg_submission"],
+        "state_finish_proximity": by_state,
+        "closest_state_to_finish": closest_state,
+        "semantic_s3_state": s3_state,
+        "s3_is_closest_to_finish": bool(s3_state is not None and closest_state is not None and s3_state == closest_state),
+    }
+
+
+def _semantic_stability_report(canonical_map: dict[str, object]) -> dict[str, object]:
+    assignment = canonical_map.get("semantic_assignment", {}) or {}
+    confidence = canonical_map.get("semantic_confidence", {}) or {}
+
+    states = {}
+    for semantic_name in ("S1", "S2", "S3"):
+        value = assignment.get(semantic_name)
+        if value is None:
+            continue
+        try:
+            states[semantic_name] = int(value)
+        except Exception:
+            continue
+
+    conf_values = [float(confidence.get(k, 0.0)) for k in ("S1", "S2", "S3")]
+    conf_min = float(min(conf_values)) if conf_values else 0.0
+    conf_mean = float(np.mean(conf_values)) if conf_values else 0.0
+    complete = set(states.keys()) == {"S1", "S2", "S3"}
+    unique = len(set(states.values())) == len(states.values())
+    order_ok = bool(
+        complete
+        and states.get("S1", 10**6) <= states.get("S2", 10**6) <= states.get("S3", 10**6)
+    )
+
+    label = "fragile"
+    if complete and unique and order_ok and conf_min >= 0.45:
+        label = "stable"
+    elif complete and unique and conf_min >= 0.25:
+        label = "moderate"
+
+    warnings: list[str] = []
+    if not complete:
+        warnings.append("S1/S2/S3 assignment is incomplete.")
+    if complete and not unique:
+        warnings.append("S1/S2/S3 assignment is not one-to-one.")
+    if complete and unique and not order_ok:
+        warnings.append("Assigned S1/S2/S3 order conflicts with left-to-right progression.")
+    if complete and conf_min < 0.35:
+        warnings.append("At least one semantic confidence score is low.")
+
+    return {
+        "semantic_assignment": {k: int(v) for k, v in states.items()},
+        "semantic_confidence": {k: float(confidence.get(k, 0.0)) for k in ("S1", "S2", "S3")},
+        "assignment_complete": bool(complete),
+        "assignment_unique": bool(unique),
+        "order_consistent_with_topology": bool(order_ok),
+        "confidence_min": conf_min,
+        "confidence_mean": conf_mean,
+        "stability_label": label,
+        "warnings": warnings,
+    }
+
+
+def _emission_summary_by_state(model: InverseDiagnosticHMM, canonical_map: dict[str, object]) -> pd.DataFrame:
+    emission = getattr(model, "emissionprob_", None)
+    if emission is None:
+        return pd.DataFrame()
+    assignment = canonical_map.get("semantic_assignment", {}) or {}
+    state_to_semantic = {int(v): str(k) for k, v in assignment.items()}
+    rows: list[dict[str, object]] = []
+    for state_id in range(emission.shape[0]):
+        row = {
+            "hidden_state": int(state_id),
+            "hidden_state_name": str(canonical_map.get("canonical_to_name", {}).get(state_id, f"state_{state_id}")),
+            "semantic_label": state_to_semantic.get(int(state_id), ""),
+        }
+        for obs_idx, obs_name in enumerate(model.observation_classes):
+            row[f"p_{obs_name}"] = float(emission[state_id, obs_idx])
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values("hidden_state").reset_index(drop=True)
+    return out
 
 
 def _semantic_label_for_state(state_id: int, canonical_map: dict[str, object]) -> str:
@@ -669,6 +1128,7 @@ def _write_inverse_report(
     metadata_summary: dict[str, Any],
     sequence_audit_summary: dict[str, Any],
     model_health_summary: dict[str, Any],
+    inverse_diagnostics: dict[str, Any] | None = None,
     run_provenance: dict[str, Any] | None = None,
 ) -> None:
     def _frame_to_markdown(frame: pd.DataFrame) -> str:
@@ -740,6 +1200,44 @@ def _write_inverse_report(
     critical_field_quality = metadata_summary.get("critical_field_quality", {}) or {}
     degenerate_transition_warning = bool(model_health_summary.get("degenerate_transition_warning", False))
     maneuvering_only_warning = bool(model_health_summary.get("maneuvering_only_state_profile_warning", False))
+    inverse_diag = inverse_diagnostics or {}
+    topology_compliance = inverse_diag.get("topology_compliance", {}) or {}
+    anchor_alignment = inverse_diag.get("state_anchor_alignment", {}) or {}
+    finish_proximity = inverse_diag.get("finish_proximity", {}) or {}
+    semantic_stability = inverse_diag.get("semantic_stability", {}) or {}
+    train_composition = inverse_diag.get("train_composition", {}) or {}
+
+    topology_share = float(topology_compliance.get("topology_compliance_share", 0.0))
+    s3_is_closest = bool(finish_proximity.get("s3_is_closest_to_finish", False))
+    stability_label = str(semantic_stability.get("stability_label", "fragile"))
+
+    semantic_assignment = model_health_summary.get("semantic_assignment", {}) or {}
+    primary_cause_state = semantic_assignment.get("S2")
+    secondary_cause_state = semantic_assignment.get("S3")
+
+    state_name_lookup = {}
+    if not profile_view.empty and "hidden_state" in profile_view.columns:
+        for _, row in profile_view.iterrows():
+            try:
+                state_name_lookup[int(row.get("hidden_state"))] = str(row.get("hidden_state_name", ""))
+            except Exception:
+                continue
+
+    def _semantic_state_text(state_id: object) -> str:
+        if state_id is None:
+            return "n/a"
+        text = str(state_id)
+        if text.lstrip("-").isdigit():
+            sid = int(text)
+            return f"{sid} ({state_name_lookup.get(sid, f'state_{sid}')})"
+        return text
+
+    primary_cause_text = _semantic_state_text(primary_cause_state)
+    secondary_cause_text = _semantic_state_text(secondary_cause_state)
+    semantically_usable = bool(
+        stability_label in {"stable", "moderate"}
+        and topology_share >= 0.70
+    )
 
     exec_flags: list[str] = []
     if not direct_finish_available:
@@ -760,6 +1258,10 @@ def _write_inverse_report(
         exec_flags.append("Hidden transition dynamics are close to degenerate (self-loops dominate).")
     if maneuvering_only_warning:
         exec_flags.append("All hidden states are maneuvering-like; semantic contrast is weak.")
+    if topology_share < 0.70:
+        exec_flags.append("Topological compliance with S1→S2→S3 is low.")
+    if not s3_is_closest:
+        exec_flags.append("S3 is not the closest state to finish-like observations.")
 
     limitations: list[str] = []
     for source_key in ("warnings",):
@@ -865,6 +1367,10 @@ def _write_inverse_report(
         next_actions.append("Перед повторным обучением увеличить информативность observed layer и разнообразие последовательностей.")
     if semantic_quality in {"partial", "failed"}:
         next_actions.append("Повторно оценить semantic assignment после усиления observed/metadata/segmentation слоев.")
+    if topology_share < 0.80:
+        next_actions.append("Проверить constrained transitions и train weighting: модель недостаточно соблюдает логику S1→S2→S3.")
+    if not s3_is_closest:
+        next_actions.append("Проверить роль ВУП: состояние S3 должно быть ближе к результативным наблюдениям.")
 
     lines = [
         "# Inverse Diagnostic Report",
@@ -958,6 +1464,12 @@ def _write_inverse_report(
         f"- degenerate_transition_warning: {bool(model_health_summary.get('degenerate_transition_warning', False))}",
         f"- low_information_observed_layer_warning: {bool(model_health_summary.get('low_information_observed_layer_warning', False))}",
         f"- maneuvering_only_state_profile_warning: {bool(model_health_summary.get('maneuvering_only_state_profile_warning', False))}",
+        f"- topology_compliance_share (S1→S2→S3): {topology_share:.3f}",
+        f"- S3 closest to finish-like observations: {s3_is_closest}",
+        f"- assignment↔anchor match share: {float(anchor_alignment.get('assignment_anchor_match_share', 0.0)):.3f}",
+        f"- semantic_stability_label: {stability_label}",
+        f"- train rows used / candidate: {int(train_composition.get('rows_used_for_training', 0))} / {int(train_composition.get('rows_train_candidate', 0))}",
+        f"- weighted train rows used / candidate: {float(train_composition.get('weighted_rows_used_for_training', 0.0)):.3f} / {float(train_composition.get('weighted_rows_candidate', 0.0)):.3f}",
     ]
 
     lines += [
@@ -969,10 +1481,58 @@ def _write_inverse_report(
         f"- confirmed states: {confirmed_states}",
         f"- assigned but unconfirmed states: {unconfirmed_states}",
         f"- all assigned states: {assigned_states}",
+        f"- Semantically usable for inverse diagnosis: {semantically_usable}",
+        f"- Primary cause state (S2): {primary_cause_text}",
+        f"- Secondary cause state (S3): {secondary_cause_text}",
         f"- {interpretation_line}",
         "",
         _frame_to_markdown(profile_view) if not profile_view.empty else "State profile is unavailable.",
     ]
+
+    anchor_rows = pd.DataFrame(anchor_alignment.get("state_anchor_alignment", []) or [])
+    if not anchor_rows.empty:
+        anchor_preview = anchor_rows[
+            [
+                c
+                for c in [
+                    "state_id",
+                    "state_name",
+                    "assigned_semantic",
+                    "assigned_semantic_matches_dominant_anchor",
+                    "dominant_anchor",
+                    "dominance_margin",
+                    "anchor_s1_mean",
+                    "anchor_s2_mean",
+                    "anchor_s3_mean",
+                ]
+                if c in anchor_rows.columns
+            ]
+        ].copy()
+        lines += [
+            "",
+            "### Anchor Alignment",
+            _frame_to_markdown(anchor_preview),
+        ]
+
+    finish_rows = pd.DataFrame(finish_proximity.get("state_finish_proximity", []) or [])
+    if not finish_rows.empty:
+        finish_preview = finish_rows[
+            [
+                c
+                for c in [
+                    "state_id",
+                    "state_name",
+                    "mean_finish_distance",
+                    "finish_like_observation_share",
+                ]
+                if c in finish_rows.columns
+            ]
+        ].copy()
+        lines += [
+            "",
+            "### Finish Proximity",
+            _frame_to_markdown(finish_preview),
+        ]
 
     lines += [
         "",
@@ -1198,6 +1758,9 @@ def run_inverse_diagnostic_cycle(
         )
 
         hidden_layer = build_hidden_state_feature_layer(canonical_df)
+        for col in ("duration_bin", "pause_bin", "anchor_s1", "anchor_s2", "anchor_s3", "train_weight"):
+            if col in hidden_layer.hidden_state_features.columns:
+                canonical_df[col] = hidden_layer.hidden_state_features[col].to_numpy()
         sequence_ids = (
             canonical_df.get("sequence_id", pd.Series(["sequence_0"] * len(canonical_df), index=canonical_df.index))
             .fillna("sequence_0")
@@ -1221,8 +1784,16 @@ def run_inverse_diagnostic_cycle(
         metadata_field_coverage_path = dirs["diagnostics"] / "metadata_field_coverage.csv"
 
         model_file = Path(model_path) if model_path else (dirs["models"] / "inverse_hmm.pkl")
-
-        train_mask = canonical_df["is_train_eligible"].fillna(False).astype(bool)
+        train_mask, train_composition_report = _build_train_selection_report(
+            canonical_df=canonical_df,
+            hidden_features=hidden_layer.hidden_state_features,
+        )
+        train_composition_path = dirs["diagnostics"] / "train_composition_report.json"
+        train_composition_path.write_text(
+            json.dumps(train_composition_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        rows_train_eligible_total = int(train_composition_report.get("rows_train_eligible", 0))
         rows_train = int(train_mask.sum())
         if rows_train == 0:
             raise ValueError(
@@ -1302,6 +1873,56 @@ def run_inverse_diagnostic_cycle(
             observed_summary=observed_summary,
             state_profile=state_profile,
         )
+
+        topology_compliance_report = _topology_compliance_report(transitions=transitions, canonical_map=canonical_map)
+        state_anchor_alignment_report = _state_anchor_alignment_report(
+            analysis_df=analysis_df,
+            canonical_map=canonical_map,
+        )
+        finish_proximity_report = _finish_proximity_report(analysis_df=analysis_df, canonical_map=canonical_map)
+        semantic_stability_report = _semantic_stability_report(canonical_map=canonical_map)
+        emission_summary = _emission_summary_by_state(model=model, canonical_map=canonical_map)
+
+        topology_compliance_path = dirs["diagnostics"] / "topology_compliance_report.json"
+        state_anchor_alignment_path = dirs["diagnostics"] / "state_anchor_alignment_report.json"
+        finish_proximity_path = dirs["diagnostics"] / "finish_proximity_report.json"
+        semantic_stability_path = dirs["diagnostics"] / "semantic_stability_report.json"
+        emission_summary_path = dirs["diagnostics"] / "emission_summary_by_hidden_state.csv"
+
+        topology_compliance_path.write_text(
+            json.dumps(topology_compliance_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        state_anchor_alignment_path.write_text(
+            json.dumps(state_anchor_alignment_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        finish_proximity_path.write_text(
+            json.dumps(finish_proximity_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        semantic_stability_path.write_text(
+            json.dumps(semantic_stability_report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        emission_summary.to_csv(emission_summary_path, index=False)
+
+        model_health_result.summary["topology_compliance"] = topology_compliance_report
+        model_health_result.summary["state_anchor_alignment"] = state_anchor_alignment_report
+        model_health_result.summary["finish_proximity"] = finish_proximity_report
+        model_health_result.summary["semantic_stability"] = semantic_stability_report
+        model_health_result.summary["train_composition"] = train_composition_report
+        model_health_result.summary["emission_summary_by_hidden_state"] = (
+            emission_summary.to_dict(orient="records") if not emission_summary.empty else []
+        )
+        for warning in semantic_stability_report.get("warnings", []) or []:
+            _append_unique(model_health_result.summary.setdefault("warnings", []), str(warning))
+        if not bool(finish_proximity_report.get("s3_is_closest_to_finish", False)):
+            _append_unique(
+                model_health_result.summary.setdefault("warnings", []),
+                "S3 is not closest to finish-like observations; inverse causal interpretation is weaker.",
+            )
+
         model_health_summary_path = write_model_health_summary(
             model_health_result,
             diagnostics_dir=dirs["diagnostics"],
@@ -1340,16 +1961,28 @@ def run_inverse_diagnostic_cycle(
             "output_dir": str(final_output_dir),
             "run_manifest_path": str(manifest_path),
             "rows_total": int(len(canonical_df)),
-            "rows_train_eligible": int(rows_train),
+            "rows_train_eligible": int(rows_train_eligible_total),
+            "rows_train_candidate": int(train_composition_report.get("rows_train_candidate", 0)),
+            "rows_used_for_training": int(train_composition_report.get("rows_used_for_training", 0)),
             "n_sequences": int(sequence_ids.nunique(dropna=False)),
+            "n_sequences_used_for_training": int(train_composition_report.get("sequences_used_for_training", 0)),
             "observation_mapping_version": str(observation_cfg.version),
             "semantic_assignment_quality": str(model_health_result.summary.get("semantic_assignment_quality", "failed")),
             "semantic_assignment": semantic_assignment,
             "semantic_confidence": semantic_confidence,
+            "semantic_stability_label": str(semantic_stability_report.get("stability_label", "fragile")),
+            "topology_compliance_share": float(topology_compliance_report.get("topology_compliance_share", 0.0)),
+            "s3_is_closest_to_finish": bool(finish_proximity_report.get("s3_is_closest_to_finish", False)),
+            "semantic_model_usable": bool(
+                str(semantic_stability_report.get("stability_label", "fragile")) in {"stable", "moderate"}
+                and float(topology_compliance_report.get("topology_compliance_share", 0.0)) >= 0.70
+            ),
             "recommendation_profile": recommendation_profile,
             "recommendation": recommendation,
             "observed_layer_summary": observed_summary,
             "sequence_quality_summary": seq_summary,
+            "primary_cause_state_s2": semantic_assignment.get("S2"),
+            "secondary_cause_state_s3": semantic_assignment.get("S3"),
             "direct_finish_observations_available": bool(
                 observation_audit_result.summary.get("direct_finish_observations_available", False)
             ),
@@ -1378,6 +2011,11 @@ def run_inverse_diagnostic_cycle(
             "observed_layer_summary": observed_summary,
             "sequence_quality_summary": seq_summary,
             "transitions_summary": transitions,
+            "topology_compliance": topology_compliance_report,
+            "state_anchor_alignment": state_anchor_alignment_report,
+            "finish_proximity": finish_proximity_report,
+            "semantic_stability": semantic_stability_report,
+            "train_composition": train_composition_report,
             "recommendation_profile": recommendation_profile,
             "observation_audit_summary": observation_audit_result.summary,
             "metadata_extraction_summary": metadata_audit_result.summary,
@@ -1394,6 +2032,7 @@ def run_inverse_diagnostic_cycle(
             metadata_audit_result.summary,
             sequence_audit_result.summary,
             model_health_result.summary,
+            semantic_stability_report,
         ):
             for warning in source.get("warnings", []) or []:
                 _append_unique(warnings_summary, str(warning))
@@ -1417,6 +2056,13 @@ def run_inverse_diagnostic_cycle(
             metadata_summary=metadata_audit_result.summary,
             sequence_audit_summary=sequence_audit_result.summary,
             model_health_summary=model_health_result.summary,
+            inverse_diagnostics={
+                "topology_compliance": topology_compliance_report,
+                "state_anchor_alignment": state_anchor_alignment_report,
+                "finish_proximity": finish_proximity_report,
+                "semantic_stability": semantic_stability_report,
+                "train_composition": train_composition_report,
+            },
             run_provenance={
                 "run_id": effective_run_id,
                 "input_file": str(input_resolved.name),
@@ -1460,6 +2106,12 @@ def run_inverse_diagnostic_cycle(
             Path(sequence_audit_paths["sequence_audit_json"]),
             Path(sequence_audit_paths["sequence_length_distribution_csv"]),
             Path(sequence_audit_paths["suspicious_sequences_csv"]),
+            Path(train_composition_path),
+            Path(topology_compliance_path),
+            Path(state_anchor_alignment_path),
+            Path(finish_proximity_path),
+            Path(semantic_stability_path),
+            Path(emission_summary_path),
             Path(model_health_summary_path),
             report_path,
             manifest_path,
@@ -1495,7 +2147,7 @@ def run_inverse_diagnostic_cycle(
                 "model_path_used": str(model_file),
                 "mapping_version": str(observation_cfg.version),
                 "number_of_episodes": int(len(canonical_df)),
-                "number_of_train_eligible_episodes": int(rows_train),
+                "number_of_train_eligible_episodes": int(rows_train_eligible_total),
                 "number_of_sequences": int(sequence_ids.nunique(dropna=False)),
                 "created_artifact_files": created_relative,
                 "warnings_summary": warnings_summary,
@@ -1535,7 +2187,7 @@ def run_inverse_diagnostic_cycle(
             report_path=str(report_path),
             model_path=str(model_file),
             rows_total=len(canonical_df),
-            rows_train_eligible=rows_train,
+            rows_train_eligible=rows_train_eligible_total,
             observation_mapping_version=str(observation_cfg.version),
             canonical_state_order=[str(x) for x in (canonical_map.get("canonical_state_names", []) or [])],
             semantic_assignment=semantic_assignment,
