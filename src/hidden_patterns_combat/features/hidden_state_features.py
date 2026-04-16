@@ -170,18 +170,18 @@ def _build_train_weight(frame: pd.DataFrame) -> pd.Series:
     weights = pd.Series(np.ones(len(frame), dtype=float), index=frame.index)
 
     observed_weight_map = {
-        "no_score": 0.12,
-        "unknown": 0.015,
+        "no_score": 0.08,
+        "unknown": 0.005,
     }
     resolution_weight_map = {
         "direct_finish_signal": 1.00,
         "inferred_from_score": 0.80,
-        "no_score_rule": 0.18,
-        "ambiguous": 0.02,
-        "unknown": 0.01,
+        "no_score_rule": 0.08,
+        "ambiguous": 0.01,
+        "unknown": 0.005,
     }
-    confidence_weight_map = {"high": 1.00, "medium": 0.80, "low": 0.30}
-    sequence_weight_map = {"high": 1.00, "medium": 0.90, "low": 0.30}
+    confidence_weight_map = {"high": 1.00, "medium": 0.80, "low": 0.20}
+    sequence_weight_map = {"high": 1.00, "medium": 0.90, "low": 0.20}
 
     weights *= observed.map(observed_weight_map).fillna(1.0)
     weights *= resolution.map(resolution_weight_map).fillna(0.35)
@@ -290,7 +290,7 @@ def build_hidden_state_feature_layer(canonical_episode_table: pd.DataFrame) -> H
     low_info_mask = observed_text.isin({"no_score", "unknown"}) | resolution_text.isin(
         {"no_score_rule", "ambiguous", "unknown"}
     )
-    blend = pd.Series(np.where(low_info_mask, 0.60, 0.20), index=hidden.index, dtype=float)
+    blend = pd.Series(np.where(low_info_mask, 0.85, 0.35), index=hidden.index, dtype=float)
     anchors = anchors.mul(1.0 - blend, axis=0) + stage.mul(blend, axis=0)
     anchors = anchors + _EPS
     anchors = anchors.div(anchors.sum(axis=1).replace(0.0, 1.0), axis=0)

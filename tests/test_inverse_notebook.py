@@ -68,6 +68,7 @@ def test_inverse_notebook_loader_reads_extended_diagnostics(tmp_path: Path) -> N
     assert not artifacts.observation_mapping_crosstab.empty
     assert artifacts.raw_finish_signal_summary.shape[0] >= 0
     assert artifacts.unsupported_finish_values.shape[0] >= 0
+    assert isinstance(artifacts.unsupported_values_assessment, dict)
     assert artifacts.metadata_field_coverage.shape[0] >= 0
     assert artifacts.sequence_length_distribution.shape[0] >= 0
     assert artifacts.suspicious_sequences.shape[0] >= 0

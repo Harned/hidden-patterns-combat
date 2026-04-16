@@ -7,7 +7,10 @@ from pathlib import Path
 from openpyxl import Workbook
 import pandas as pd
 
-from hidden_patterns_combat.app.inverse_diagnostic_cycle import run_inverse_diagnostic_cycle
+from hidden_patterns_combat.app.inverse_diagnostic_cycle import (
+    _semantic_stability_report,
+    run_inverse_diagnostic_cycle,
+)
 
 
 def _make_inverse_excel(path: Path) -> Path:
@@ -97,6 +100,7 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert Path(result.raw_finish_signal_summary_path).exists()
     assert Path(result.unsupported_finish_values_path).exists()
     assert Path(result.unsupported_score_values_path).exists()
+    assert Path(result.unsupported_values_assessment_path).exists()
     assert Path(result.metadata_extraction_summary_path).exists()
     assert Path(result.metadata_field_coverage_path).exists()
     assert Path(result.sequence_audit_path).exists()
@@ -153,6 +157,8 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert "weighted_rows_used_for_training" in train_composition
     assert "weighted_rows_candidate" in train_composition
     assert "by_sequence_resolution" in train_composition
+    assert "observation_weighting_policy" in train_composition
+    assert "low_information_weight_share_used" in train_composition["observation_weighting_policy"]
 
     anchor_alignment = json.loads(
         (Path(result.final_output_dir) / "diagnostics" / "state_anchor_alignment_report.json").read_text(encoding="utf-8")
@@ -162,6 +168,16 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
         first = anchor_alignment["state_anchor_alignment"][0]
         assert "assigned_semantic" in first
         assert "assigned_semantic_matches_dominant_anchor" in first
+
+    unsupported_assessment = json.loads(
+        (Path(result.final_output_dir) / "diagnostics" / "unsupported_values_assessment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "score" in unsupported_assessment
+    assert "finish" in unsupported_assessment
+    assert "assessment" in unsupported_assessment["score"]
+    assert "assessment" in unsupported_assessment["finish"]
 
 
 def test_inverse_report_is_cautious_when_semantics_are_weak(tmp_path: Path) -> None:
@@ -208,3 +224,19 @@ def test_inverse_entrypoint_signature_kept_backward_compatible() -> None:
         "run_id",
     ]:
         assert name in sig.parameters
+
+
+def test_semantic_stability_report_is_not_stable_when_anchor_alignment_is_weak() -> None:
+    canonical_map = {
+        "semantic_assignment": {"S1": 0, "S2": 1, "S3": 2},
+        "semantic_confidence": {"S1": 0.90, "S2": 0.80, "S3": 0.70},
+    }
+    report = _semantic_stability_report(
+        canonical_map=canonical_map,
+        state_anchor_alignment={"assignment_anchor_match_share": 0.12},
+        topology_compliance={"topology_compliance_share": 1.0},
+        finish_proximity={"s3_is_closest_to_finish": True},
+    )
+    assert report["stability_label"] in {"moderate", "fragile"}
+    assert report["stability_label"] != "stable"
+    assert any("anchor dominance" in warning for warning in report["warnings"])

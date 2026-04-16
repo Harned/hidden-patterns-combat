@@ -69,11 +69,18 @@ class ModelConfig:
     min_forward_transition: float = 0.05
     min_self_transition: float = 0.55
     max_self_transition: float = 0.94
+    inverse_first_state_min_forward_transition: float = 0.15
+    inverse_first_state_max_self_transition: float = 0.85
     inverse_initial_self_transition: float = 0.88
     inverse_anchor_blend: float = 0.50
+    inverse_anchor_observation_strength: float = 0.55
+    inverse_inference_anchor_strength: float = 1.40
     inverse_emission_prior_blend: float = 0.08
+    inverse_emission_low_info_floor: float = 0.02
+    inverse_state_balance_prior_strength: float = 0.15
     inverse_anchor_power: float = 2.0
     inverse_stage_prior_blend: float = 0.30
+    inverse_stage_low_info_blend: float = 0.90
     block_weights: dict[str, float] = field(
         default_factory=lambda: {
             "maneuvering": 1.0,

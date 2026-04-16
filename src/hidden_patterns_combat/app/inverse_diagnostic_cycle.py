@@ -58,6 +58,7 @@ class InverseDiagnosticResult:
     raw_finish_signal_summary_path: str
     unsupported_finish_values_path: str
     unsupported_score_values_path: str
+    unsupported_values_assessment_path: str
     metadata_extraction_summary_path: str
     metadata_field_coverage_path: str
     sequence_audit_path: str
@@ -273,6 +274,7 @@ def _expected_artifact_files(*, generate_plots: bool) -> list[str]:
         "diagnostics/raw_finish_signal_summary.csv",
         "diagnostics/unsupported_finish_values.csv",
         "diagnostics/unsupported_score_values.csv",
+        "diagnostics/unsupported_values_assessment.json",
         "diagnostics/metadata_extraction_summary.json",
         "diagnostics/metadata_field_coverage.csv",
         "diagnostics/sequence_audit.json",
@@ -633,6 +635,21 @@ def _build_train_selection_report(
     )
     weighted_train_mass = float(weights.loc[train_mask].sum()) if int(train_mask.sum()) > 0 else 0.0
     weighted_candidate_mass = float(weights.loc[candidate_mask].sum()) if int(candidate_mask.sum()) > 0 else 0.0
+    observed_text = frame.get("observed_zap_class", pd.Series(["unknown"] * len(frame), index=frame.index)).astype(str).str.lower()
+    resolution_text = frame.get(
+        "observation_resolution_type",
+        pd.Series(["unknown"] * len(frame), index=frame.index),
+    ).astype(str).str.lower()
+    low_info_mask = observed_text.isin({"no_score", "unknown"}) | resolution_text.isin(
+        {"no_score_rule", "ambiguous", "unknown"}
+    )
+    informative_mask = ~low_info_mask
+    low_info_rows_used = int((train_mask & low_info_mask).sum())
+    informative_rows_used = int((train_mask & informative_mask).sum())
+    low_info_weight_used = float(weights.loc[train_mask & low_info_mask].sum()) if int(train_mask.sum()) > 0 else 0.0
+    informative_weight_used = (
+        float(weights.loc[train_mask & informative_mask].sum()) if int(train_mask.sum()) > 0 else 0.0
+    )
 
     report = {
         "rows_total": int(len(frame)),
@@ -649,6 +666,38 @@ def _build_train_selection_report(
             "min_train_weight": float(weights.loc[train_mask].min()) if int(train_mask.sum()) > 0 else 0.0,
             "max_train_weight": float(weights.loc[train_mask].max()) if int(train_mask.sum()) > 0 else 0.0,
             "p90_train_weight": float(weights.loc[train_mask].quantile(0.90)) if int(train_mask.sum()) > 0 else 0.0,
+        },
+        "observation_weighting_policy": {
+            "observed_class_weight_map": {
+                "no_score": 0.08,
+                "unknown": 0.005,
+                "default": 1.0,
+            },
+            "resolution_weight_map": {
+                "direct_finish_signal": 1.0,
+                "inferred_from_score": 0.80,
+                "no_score_rule": 0.08,
+                "ambiguous": 0.01,
+                "unknown": 0.005,
+                "default": 0.35,
+            },
+            "confidence_weight_map": {
+                "high": 1.0,
+                "medium": 0.80,
+                "low": 0.20,
+                "default": 0.35,
+            },
+            "sequence_quality_weight_map": {
+                "high": 1.0,
+                "medium": 0.90,
+                "low": 0.20,
+                "default": 0.35,
+            },
+            "low_information_rows_used_for_training": low_info_rows_used,
+            "informative_rows_used_for_training": informative_rows_used,
+            "low_information_weight_mass_used": low_info_weight_used,
+            "informative_weight_mass_used": informative_weight_used,
+            "low_information_weight_share_used": float(low_info_weight_used / max(1e-12, weighted_train_mass)),
         },
         "excluded_rows": excluded_rows,
         "suspicious_sequence_policy": suspicious_info,
@@ -850,9 +899,73 @@ def _finish_proximity_report(
     }
 
 
-def _semantic_stability_report(canonical_map: dict[str, object]) -> dict[str, object]:
+def _unsupported_values_assessment(
+    *,
+    rows_total: int,
+    observation_audit_summary: dict[str, Any],
+    unsupported_score_values: pd.DataFrame,
+    unsupported_finish_values: pd.DataFrame,
+) -> dict[str, object]:
+    score_values = [int(x) for x in (observation_audit_summary.get("unsupported_score_values", []) or [])]
+    score_rows = int(len(unsupported_score_values))
+    finish_rows = int(len(unsupported_finish_values))
+    score_share = float(score_rows / max(1, rows_total))
+    finish_share = float(finish_rows / max(1, rows_total))
+
+    if score_rows == 0:
+        score_label = "none_detected"
+        score_recommendation = "No unsupported score values in current run."
+    elif score_share <= 0.01 and len(score_values) <= 3:
+        score_label = "likely_noise"
+        score_recommendation = "Unsupported score values look sparse; keep in diagnostics and monitor next runs."
+    else:
+        score_label = "requires_mapping_review"
+        score_recommendation = (
+            "Unsupported score values are non-trivial; verify semantics before adding mapping rules."
+        )
+
+    if finish_rows == 0:
+        finish_label = "none_detected"
+        finish_recommendation = "No unsupported finish/action positive values in current run."
+    elif finish_share <= 0.005:
+        finish_label = "likely_noise"
+        finish_recommendation = "Unsupported finish/action positives are sparse; keep isolated diagnostics."
+    else:
+        finish_label = "requires_mapping_review"
+        finish_recommendation = (
+            "Unsupported finish/action positives are non-trivial; review raw columns before expanding mapping."
+        )
+
+    return {
+        "rows_total": int(rows_total),
+        "score": {
+            "unsupported_values": score_values,
+            "unsupported_rows": score_rows,
+            "unsupported_share": score_share,
+            "assessment": score_label,
+            "recommendation": score_recommendation,
+        },
+        "finish": {
+            "unsupported_rows": finish_rows,
+            "unsupported_share": finish_share,
+            "assessment": finish_label,
+            "recommendation": finish_recommendation,
+        },
+    }
+
+
+def _semantic_stability_report(
+    canonical_map: dict[str, object],
+    *,
+    state_anchor_alignment: dict[str, object] | None = None,
+    topology_compliance: dict[str, object] | None = None,
+    finish_proximity: dict[str, object] | None = None,
+) -> dict[str, object]:
     assignment = canonical_map.get("semantic_assignment", {}) or {}
     confidence = canonical_map.get("semantic_confidence", {}) or {}
+    anchor_alignment_payload = state_anchor_alignment or {}
+    topology_payload = topology_compliance or {}
+    finish_payload = finish_proximity or {}
 
     states = {}
     for semantic_name in ("S1", "S2", "S3"):
@@ -867,6 +980,9 @@ def _semantic_stability_report(canonical_map: dict[str, object]) -> dict[str, ob
     conf_values = [float(confidence.get(k, 0.0)) for k in ("S1", "S2", "S3")]
     conf_min = float(min(conf_values)) if conf_values else 0.0
     conf_mean = float(np.mean(conf_values)) if conf_values else 0.0
+    anchor_match_share = float(anchor_alignment_payload.get("assignment_anchor_match_share", 0.0))
+    topology_share = float(topology_payload.get("topology_compliance_share", 0.0))
+    s3_is_closest = bool(finish_payload.get("s3_is_closest_to_finish", False))
     complete = set(states.keys()) == {"S1", "S2", "S3"}
     unique = len(set(states.values())) == len(states.values())
     order_ok = bool(
@@ -875,9 +991,23 @@ def _semantic_stability_report(canonical_map: dict[str, object]) -> dict[str, ob
     )
 
     label = "fragile"
-    if complete and unique and order_ok and conf_min >= 0.45:
+    if (
+        complete
+        and unique
+        and order_ok
+        and conf_min >= 0.45
+        and anchor_match_share >= 0.55
+        and topology_share >= 0.85
+        and s3_is_closest
+    ):
         label = "stable"
-    elif complete and unique and conf_min >= 0.25:
+    elif (
+        complete
+        and unique
+        and conf_min >= 0.25
+        and anchor_match_share >= 0.30
+        and topology_share >= 0.70
+    ):
         label = "moderate"
 
     warnings: list[str] = []
@@ -889,6 +1019,12 @@ def _semantic_stability_report(canonical_map: dict[str, object]) -> dict[str, ob
         warnings.append("Assigned S1/S2/S3 order conflicts with left-to-right progression.")
     if complete and conf_min < 0.35:
         warnings.append("At least one semantic confidence score is low.")
+    if anchor_match_share < 0.30:
+        warnings.append("Semantic assignment weakly matches anchor dominance across decoded states.")
+    if topology_share < 0.70:
+        warnings.append("Semantic topology compliance is low for S1→S2→S3.")
+    if not s3_is_closest:
+        warnings.append("S3 is not closest to finish-like observations.")
 
     return {
         "semantic_assignment": {k: int(v) for k, v in states.items()},
@@ -898,6 +1034,9 @@ def _semantic_stability_report(canonical_map: dict[str, object]) -> dict[str, ob
         "order_consistent_with_topology": bool(order_ok),
         "confidence_min": conf_min,
         "confidence_mean": conf_mean,
+        "assignment_anchor_match_share": anchor_match_share,
+        "topology_compliance_share": topology_share,
+        "s3_is_closest_to_finish": s3_is_closest,
         "stability_label": label,
         "warnings": warnings,
     }
@@ -1192,6 +1331,10 @@ def _write_inverse_report(
     mapped_finish_positive_rows = int(observation_audit_summary.get("mapped_finish_positive_rows", 0))
     unmapped_finish_positive_rows = int(observation_audit_summary.get("unmapped_finish_positive_rows", 0))
     finish_presence = observation_audit_summary.get("finish_signal_presence", {}) or {}
+    unsupported_assessment_default = {
+        "score": {"assessment": "none_detected", "unsupported_share": 0.0, "recommendation": ""},
+        "finish": {"assessment": "none_detected", "unsupported_share": 0.0, "recommendation": ""},
+    }
 
     metadata_informative = [str(x) for x in (metadata_summary.get("informative_fields", []) or [])]
     metadata_non_informative = [str(x) for x in (metadata_summary.get("non_informative_fields", []) or [])]
@@ -1206,10 +1349,20 @@ def _write_inverse_report(
     finish_proximity = inverse_diag.get("finish_proximity", {}) or {}
     semantic_stability = inverse_diag.get("semantic_stability", {}) or {}
     train_composition = inverse_diag.get("train_composition", {}) or {}
+    unsupported_values_assessment = inverse_diag.get("unsupported_values_assessment", {}) or unsupported_assessment_default
 
     topology_share = float(topology_compliance.get("topology_compliance_share", 0.0))
     s3_is_closest = bool(finish_proximity.get("s3_is_closest_to_finish", False))
     stability_label = str(semantic_stability.get("stability_label", "fragile"))
+    low_info_weight_share = float(
+        ((train_composition.get("observation_weighting_policy", {}) or {}).get("low_information_weight_share_used", 0.0))
+    )
+    unsupported_score_assessment = str(
+        ((unsupported_values_assessment.get("score", {}) or {}).get("assessment", "none_detected"))
+    )
+    unsupported_finish_assessment = str(
+        ((unsupported_values_assessment.get("finish", {}) or {}).get("assessment", "none_detected"))
+    )
 
     semantic_assignment = model_health_summary.get("semantic_assignment", {}) or {}
     primary_cause_state = semantic_assignment.get("S2")
@@ -1246,8 +1399,12 @@ def _write_inverse_report(
         exec_flags.append("Observed layer is mostly no_score.")
     if unsupported_scores:
         exec_flags.append(f"Unsupported score values detected: {unsupported_scores}.")
+    if unsupported_score_assessment == "requires_mapping_review":
+        exec_flags.append("Unsupported score values are non-trivial; mapping review required.")
     if unsupported_finish_columns:
         exec_flags.append("Raw finish/action columns contain unmapped positive signals.")
+    if unsupported_finish_assessment == "requires_mapping_review":
+        exec_flags.append("Unsupported finish/action positives are non-trivial; mapping review required.")
     if mapping_gap_detected:
         exec_flags.append("Direct finish/action mapping has coverage gaps (unmapped positive signals exist).")
     if explicit_share <= 0.01 and surrogate_share >= 0.90:
@@ -1351,6 +1508,14 @@ def _write_inverse_report(
         next_actions.append(
             "Добавить правила для unsupported score values или подтвердить, что они должны оставаться unknown."
         )
+    if unsupported_score_assessment == "requires_mapping_review":
+        next_actions.append(
+            "Проверить unsupported score values вручную: при подтверждении смысла добавить mapping, иначе оставить отдельной диагностикой."
+        )
+    if unsupported_finish_assessment == "requires_mapping_review":
+        next_actions.append(
+            "Проверить unsupported finish/action positive rows вручную перед добавлением новых mapping-правил."
+        )
     if not bool(metadata_summary.get("episode_time_informative", False)):
         next_actions.append(
             "Подтвердить источник episode_time и расширить aliases для времени в canonical extraction."
@@ -1409,6 +1574,10 @@ def _write_inverse_report(
         f"- unsupported finish columns with positive values: {unsupported_finish_columns}",
         f"- unsupported finish values rows: {int(observation_audit_summary.get('unsupported_finish_values_rows', 0))}",
         f"- unsupported score values: {unsupported_scores}",
+        f"- unsupported score assessment: {unsupported_score_assessment}",
+        f"- unsupported finish assessment: {unsupported_finish_assessment}",
+        f"- unsupported score recommendation: {(unsupported_values_assessment.get('score', {}) or {}).get('recommendation', '')}",
+        f"- unsupported finish recommendation: {(unsupported_values_assessment.get('finish', {}) or {}).get('recommendation', '')}",
         f"- direct finish match class counts: {observation_audit_summary.get('direct_finish_match_class_counts', {})}",
         f"- hold/arm/leg presence: {finish_presence}",
     ]
@@ -1470,6 +1639,7 @@ def _write_inverse_report(
         f"- semantic_stability_label: {stability_label}",
         f"- train rows used / candidate: {int(train_composition.get('rows_used_for_training', 0))} / {int(train_composition.get('rows_train_candidate', 0))}",
         f"- weighted train rows used / candidate: {float(train_composition.get('weighted_rows_used_for_training', 0.0)):.3f} / {float(train_composition.get('weighted_rows_candidate', 0.0)):.3f}",
+        f"- low-information weighted share in train: {low_info_weight_share:.3f}",
     ]
 
     lines += [
@@ -1532,6 +1702,33 @@ def _write_inverse_report(
             "",
             "### Finish Proximity",
             _frame_to_markdown(finish_preview),
+        ]
+
+    emission_rows = pd.DataFrame(model_health_summary.get("emission_summary_by_hidden_state", []) or [])
+    if not emission_rows.empty:
+        prob_cols = [c for c in emission_rows.columns if str(c).startswith("p_")]
+
+        def _top_obs(row: pd.Series) -> str:
+            ranking = sorted(
+                [(col.replace("p_", ""), float(row.get(col, 0.0))) for col in prob_cols],
+                key=lambda it: float(it[1]),
+                reverse=True,
+            )
+            return ", ".join([f"{name}:{value:.3f}" for name, value in ranking[:3]])
+
+        emission_preview = emission_rows.copy()
+        emission_preview["top_observed_classes"] = emission_preview.apply(_top_obs, axis=1)
+        emission_preview = emission_preview[
+            [
+                c
+                for c in ["hidden_state", "hidden_state_name", "semantic_label", "top_observed_classes"]
+                if c in emission_preview.columns
+            ]
+        ]
+        lines += [
+            "",
+            "### Emission Summary by Hidden State",
+            _frame_to_markdown(emission_preview),
         ]
 
     lines += [
@@ -1777,6 +1974,19 @@ def run_inverse_diagnostic_cycle(
         hidden_layer.hidden_state_features.to_csv(hidden_layer_path, index=False)
 
         observation_audit_paths = write_observation_audit(observation_audit_result, diagnostics_dir=dirs["diagnostics"])
+        unsupported_finish_values_df = pd.read_csv(observation_audit_paths["unsupported_finish_values_csv"])
+        unsupported_score_values_df = pd.read_csv(observation_audit_paths["unsupported_score_values_csv"])
+        unsupported_values_assessment = _unsupported_values_assessment(
+            rows_total=len(canonical_df),
+            observation_audit_summary=observation_audit_result.summary,
+            unsupported_score_values=unsupported_score_values_df,
+            unsupported_finish_values=unsupported_finish_values_df,
+        )
+        unsupported_values_assessment_path = dirs["diagnostics"] / "unsupported_values_assessment.json"
+        unsupported_values_assessment_path.write_text(
+            json.dumps(unsupported_values_assessment, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
         metadata_extraction_summary_path = write_metadata_audit(
             metadata_audit_result,
             diagnostics_dir=dirs["diagnostics"],
@@ -1831,6 +2041,7 @@ def run_inverse_diagnostic_cycle(
         prediction = model.predict(
             observed_sequence=canonical_df["observed_zap_class"],
             sequence_ids=sequence_ids,
+            hidden_state_features=hidden_layer.hidden_state_features,
         )
 
         canonical_map = model.canonical_state_mapping()
@@ -1880,7 +2091,12 @@ def run_inverse_diagnostic_cycle(
             canonical_map=canonical_map,
         )
         finish_proximity_report = _finish_proximity_report(analysis_df=analysis_df, canonical_map=canonical_map)
-        semantic_stability_report = _semantic_stability_report(canonical_map=canonical_map)
+        semantic_stability_report = _semantic_stability_report(
+            canonical_map=canonical_map,
+            state_anchor_alignment=state_anchor_alignment_report,
+            topology_compliance=topology_compliance_report,
+            finish_proximity=finish_proximity_report,
+        )
         emission_summary = _emission_summary_by_state(model=model, canonical_map=canonical_map)
 
         topology_compliance_path = dirs["diagnostics"] / "topology_compliance_report.json"
@@ -1912,6 +2128,7 @@ def run_inverse_diagnostic_cycle(
         model_health_result.summary["finish_proximity"] = finish_proximity_report
         model_health_result.summary["semantic_stability"] = semantic_stability_report
         model_health_result.summary["train_composition"] = train_composition_report
+        model_health_result.summary["unsupported_values_assessment"] = unsupported_values_assessment
         model_health_result.summary["emission_summary_by_hidden_state"] = (
             emission_summary.to_dict(orient="records") if not emission_summary.empty else []
         )
@@ -1921,6 +2138,16 @@ def run_inverse_diagnostic_cycle(
             _append_unique(
                 model_health_result.summary.setdefault("warnings", []),
                 "S3 is not closest to finish-like observations; inverse causal interpretation is weaker.",
+            )
+        if str((unsupported_values_assessment.get("score", {}) or {}).get("assessment", "")) == "requires_mapping_review":
+            _append_unique(
+                model_health_result.summary.setdefault("warnings", []),
+                "Unsupported score values are non-trivial; mapping review is recommended.",
+            )
+        if str((unsupported_values_assessment.get("finish", {}) or {}).get("assessment", "")) == "requires_mapping_review":
+            _append_unique(
+                model_health_result.summary.setdefault("warnings", []),
+                "Unsupported finish/action positives are non-trivial; mapping review is recommended.",
             )
 
         model_health_summary_path = write_model_health_summary(
@@ -1995,6 +2222,7 @@ def run_inverse_diagnostic_cycle(
                     observation_audit_result.summary.get("unsupported_finish_columns_with_positive_values", []) or []
                 )
             ],
+            "unsupported_values_assessment": unsupported_values_assessment,
             "episode_time_informative": bool(metadata_audit_result.summary.get("episode_time_informative", False)),
             "weight_class_informative": bool(metadata_audit_result.summary.get("weight_class_informative", False)),
             "surrogate_based_segmentation": bool(
@@ -2016,6 +2244,7 @@ def run_inverse_diagnostic_cycle(
             "finish_proximity": finish_proximity_report,
             "semantic_stability": semantic_stability_report,
             "train_composition": train_composition_report,
+            "unsupported_values_assessment": unsupported_values_assessment,
             "recommendation_profile": recommendation_profile,
             "observation_audit_summary": observation_audit_result.summary,
             "metadata_extraction_summary": metadata_audit_result.summary,
@@ -2062,6 +2291,7 @@ def run_inverse_diagnostic_cycle(
                 "finish_proximity": finish_proximity_report,
                 "semantic_stability": semantic_stability_report,
                 "train_composition": train_composition_report,
+                "unsupported_values_assessment": unsupported_values_assessment,
             },
             run_provenance={
                 "run_id": effective_run_id,
@@ -2101,6 +2331,7 @@ def run_inverse_diagnostic_cycle(
             Path(observation_audit_paths["raw_finish_signal_summary_csv"]),
             Path(observation_audit_paths["unsupported_finish_values_csv"]),
             Path(observation_audit_paths["unsupported_score_values_csv"]),
+            Path(unsupported_values_assessment_path),
             Path(metadata_extraction_summary_path),
             Path(metadata_field_coverage_path),
             Path(sequence_audit_paths["sequence_audit_json"]),
@@ -2178,6 +2409,7 @@ def run_inverse_diagnostic_cycle(
             raw_finish_signal_summary_path=str(observation_audit_paths["raw_finish_signal_summary_csv"]),
             unsupported_finish_values_path=str(observation_audit_paths["unsupported_finish_values_csv"]),
             unsupported_score_values_path=str(observation_audit_paths["unsupported_score_values_csv"]),
+            unsupported_values_assessment_path=str(unsupported_values_assessment_path),
             metadata_extraction_summary_path=str(metadata_extraction_summary_path),
             metadata_field_coverage_path=str(metadata_field_coverage_path),
             sequence_audit_path=str(sequence_audit_paths["sequence_audit_json"]),

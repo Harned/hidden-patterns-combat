@@ -208,7 +208,32 @@ class InverseDiagnosticHMM:
             start = end
         return out
 
-    def _forward_backward(self, obs: np.ndarray) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+    @staticmethod
+    def _state_prior_multiplier(
+        state_prior: np.ndarray | None,
+        t: int,
+        n_states: int,
+        *,
+        strength: float,
+    ) -> np.ndarray:
+        if state_prior is None or strength <= 0.0:
+            return np.ones(n_states, dtype=float)
+        if t < 0 or t >= len(state_prior):
+            return np.ones(n_states, dtype=float)
+        row = np.asarray(state_prior[t], dtype=float).reshape(-1)
+        if row.size != n_states:
+            return np.ones(n_states, dtype=float)
+        row = np.clip(row, _EPS, None)
+        row /= max(float(row.sum()), _EPS)
+        return np.power(row, float(np.clip(strength, 0.0, 2.0)))
+
+    def _forward_backward(
+        self,
+        obs: np.ndarray,
+        *,
+        state_prior: np.ndarray | None = None,
+        state_prior_strength: float = 0.0,
+    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
         assert self.startprob_ is not None
         assert self.transmat_ is not None
         assert self.emissionprob_ is not None
@@ -221,18 +246,36 @@ class InverseDiagnosticHMM:
         beta = np.zeros((t_max, n), dtype=float)
         scales = np.zeros(t_max, dtype=float)
 
-        alpha[0] = self.startprob_ * self.emissionprob_[:, obs[0]]
+        emit0 = self.emissionprob_[:, obs[0]] * self._state_prior_multiplier(
+            state_prior,
+            0,
+            n,
+            strength=state_prior_strength,
+        )
+        alpha[0] = self.startprob_ * emit0
         scales[0] = max(float(alpha[0].sum()), eps)
         alpha[0] /= scales[0]
 
         for t in range(1, t_max):
-            alpha[t] = (alpha[t - 1] @ self.transmat_) * self.emissionprob_[:, obs[t]]
+            emit_t = self.emissionprob_[:, obs[t]] * self._state_prior_multiplier(
+                state_prior,
+                t,
+                n,
+                strength=state_prior_strength,
+            )
+            alpha[t] = (alpha[t - 1] @ self.transmat_) * emit_t
             scales[t] = max(float(alpha[t].sum()), eps)
             alpha[t] /= scales[t]
 
         beta[-1] = np.ones(n, dtype=float)
         for t in range(t_max - 2, -1, -1):
-            beta[t] = (self.transmat_ * self.emissionprob_[:, obs[t + 1]].reshape(1, -1)) @ beta[t + 1]
+            emit_next = self.emissionprob_[:, obs[t + 1]] * self._state_prior_multiplier(
+                state_prior,
+                t + 1,
+                n,
+                strength=state_prior_strength,
+            )
+            beta[t] = (self.transmat_ * emit_next.reshape(1, -1)) @ beta[t + 1]
             beta[t] /= max(scales[t + 1], eps)
 
         gamma = alpha * beta
@@ -244,7 +287,15 @@ class InverseDiagnosticHMM:
             numer = (
                 alpha[t].reshape(-1, 1)
                 * self.transmat_
-                * self.emissionprob_[:, obs[t + 1]].reshape(1, -1)
+                * (
+                    self.emissionprob_[:, obs[t + 1]]
+                    * self._state_prior_multiplier(
+                        state_prior,
+                        t + 1,
+                        n,
+                        strength=state_prior_strength,
+                    )
+                ).reshape(1, -1)
                 * beta[t + 1].reshape(1, -1)
             )
             denom = max(float(numer.sum()), eps)
@@ -255,7 +306,13 @@ class InverseDiagnosticHMM:
         log_likelihood = float(np.sum(np.log(np.maximum(scales, eps))))
         return log_likelihood, gamma, xi_sum, xi_steps
 
-    def _viterbi(self, obs: np.ndarray) -> tuple[np.ndarray, float]:
+    def _viterbi(
+        self,
+        obs: np.ndarray,
+        *,
+        state_prior: np.ndarray | None = None,
+        state_prior_strength: float = 0.0,
+    ) -> tuple[np.ndarray, float]:
         assert self.startprob_ is not None
         assert self.transmat_ is not None
         assert self.emissionprob_ is not None
@@ -269,12 +326,34 @@ class InverseDiagnosticHMM:
         n = self.n_states
         delta = np.zeros((t_max, n), dtype=float)
         psi = np.zeros((t_max, n), dtype=int)
-        delta[0] = log_start + log_emit[:, obs[0]]
+        prior0 = np.log(
+            np.maximum(
+                self._state_prior_multiplier(
+                    state_prior,
+                    0,
+                    n,
+                    strength=state_prior_strength,
+                ),
+                eps,
+            )
+        )
+        delta[0] = log_start + log_emit[:, obs[0]] + prior0
 
         for t in range(1, t_max):
             scores = delta[t - 1].reshape(-1, 1) + log_trans
             psi[t] = np.argmax(scores, axis=0)
-            delta[t] = np.max(scores, axis=0) + log_emit[:, obs[t]]
+            prior_t = np.log(
+                np.maximum(
+                    self._state_prior_multiplier(
+                        state_prior,
+                        t,
+                        n,
+                        strength=state_prior_strength,
+                    ),
+                    eps,
+                )
+            )
+            delta[t] = np.max(scores, axis=0) + log_emit[:, obs[t]] + prior_t
 
         states = np.zeros(t_max, dtype=int)
         states[-1] = int(np.argmax(delta[-1]))
@@ -291,9 +370,13 @@ class InverseDiagnosticHMM:
         min_forward = float(getattr(self.cfg, "min_forward_transition", 0.05))
         max_self = float(getattr(self.cfg, "max_self_transition", 0.94))
         min_self = float(getattr(self.cfg, "min_self_transition", 0.55))
+        first_min_forward = float(getattr(self.cfg, "inverse_first_state_min_forward_transition", 0.15))
+        first_max_self = float(getattr(self.cfg, "inverse_first_state_max_self_transition", 0.85))
         min_forward = max(0.0, min(0.49, min_forward))
         max_self = max(0.50, min(0.995, max_self))
         min_self = max(0.05, min(max_self - 1e-6, min_self))
+        first_min_forward = max(min_forward, min(0.49, first_min_forward))
+        first_max_self = max(0.50, min(max_self, first_max_self))
         if min_self + min_forward >= 1.0:
             min_self = max(0.05, 1.0 - min_forward - 1e-6)
 
@@ -309,6 +392,12 @@ class InverseDiagnosticHMM:
                 constrained[i, :] = 0.0
                 constrained[i, i] = 1.0
                 continue
+            row_min_forward = first_min_forward if i == 0 else min_forward
+            row_max_self = first_max_self if i == 0 else max_self
+            row_min_self = min_self
+            if row_min_self + row_min_forward >= 1.0:
+                row_min_self = max(0.05, 1.0 - row_min_forward - 1e-6)
+            row_min_self = min(row_min_self, row_max_self - 1e-6)
 
             self_prob = max(float(constrained[i, i]), _EPS)
             next_prob = max(float(constrained[i, i + 1]), _EPS)
@@ -317,19 +406,19 @@ class InverseDiagnosticHMM:
             self_prob /= row_sum
             next_prob /= row_sum
 
-            if self_prob > max_self:
-                spill = self_prob - max_self
-                self_prob = max_self
+            if self_prob > row_max_self:
+                spill = self_prob - row_max_self
+                self_prob = row_max_self
                 next_prob += spill
 
-            if self_prob < min_self:
-                need = min_self - self_prob
+            if self_prob < row_min_self:
+                need = row_min_self - self_prob
                 take = min(need, next_prob - _EPS)
                 self_prob += take
                 next_prob -= take
 
-            if next_prob < min_forward:
-                need = min_forward - next_prob
+            if next_prob < row_min_forward:
+                need = row_min_forward - next_prob
                 take = min(need, self_prob - _EPS)
                 next_prob += take
                 self_prob -= take
@@ -535,19 +624,49 @@ class InverseDiagnosticHMM:
             .str.lower()
         )
 
-        observed_factor = observed.map({"no_score": 0.35, "unknown": 0.05}).fillna(1.0)
+        observed_factor = observed.map({"no_score": 0.20, "unknown": 0.03}).fillna(1.0)
         resolution_factor = resolution.map(
             {
                 "direct_finish_signal": 1.0,
                 "inferred_from_score": 0.85,
-                "no_score_rule": 0.45,
-                "ambiguous": 0.05,
-                "unknown": 0.02,
+                "no_score_rule": 0.20,
+                "ambiguous": 0.02,
+                "unknown": 0.01,
             }
         ).fillna(0.30)
-        confidence_factor = confidence.map({"high": 1.0, "medium": 0.90, "low": 0.50}).fillna(0.50)
+        confidence_factor = confidence.map({"high": 1.0, "medium": 0.90, "low": 0.35}).fillna(0.35)
         weights = (weights * observed_factor * resolution_factor * confidence_factor).clip(lower=0.0, upper=1.0)
         return weights.to_numpy(dtype=float)
+
+    def _row_emission_weights(self, features: pd.DataFrame, observed_labels: list[str]) -> np.ndarray:
+        observed = pd.Series(observed_labels, index=features.index).fillna("unknown").astype(str).str.lower()
+        resolution = (
+            pd.Series(features.get("observation_resolution_type", "unknown"), index=features.index)
+            .fillna("unknown")
+            .astype(str)
+            .str.lower()
+        )
+        confidence = (
+            pd.Series(features.get("observation_confidence_label", "low"), index=features.index)
+            .fillna("low")
+            .astype(str)
+            .str.lower()
+        )
+        floor = float(getattr(self.cfg, "inverse_emission_low_info_floor", 0.02))
+        floor = max(0.0, min(0.20, floor))
+        observed_factor = observed.map({"no_score": floor, "unknown": floor * 0.25}).fillna(1.0)
+        resolution_factor = resolution.map(
+            {
+                "direct_finish_signal": 1.0,
+                "inferred_from_score": 0.75,
+                "no_score_rule": floor,
+                "ambiguous": floor * 0.20,
+                "unknown": floor * 0.10,
+            }
+        ).fillna(max(floor * 0.25, 0.01))
+        confidence_factor = confidence.map({"high": 1.0, "medium": 0.80, "low": 0.45}).fillna(0.45)
+        weights = observed_factor * resolution_factor * confidence_factor
+        return np.clip(weights.to_numpy(dtype=float), 0.0, 1.0)
 
     def _anchor_prior_matrix(self, features: pd.DataFrame, lengths: list[int] | None = None) -> np.ndarray:
         n_rows = len(features)
@@ -594,6 +713,8 @@ class InverseDiagnosticHMM:
 
         stage_blend = float(getattr(self.cfg, "inverse_stage_prior_blend", 0.30))
         stage_blend = max(0.0, min(0.60, stage_blend))
+        stage_blend_low_info = float(getattr(self.cfg, "inverse_stage_low_info_blend", 0.75))
+        stage_blend_low_info = max(stage_blend, min(0.90, stage_blend_low_info))
         resolution = (
             pd.Series(features.get("observation_resolution_type", "unknown"), index=features.index)
             .fillna("unknown")
@@ -602,7 +723,7 @@ class InverseDiagnosticHMM:
         )
         low_info = resolution.isin({"no_score_rule", "ambiguous", "unknown"}).to_numpy(dtype=bool)
         stage_blend_vec = np.full(n_rows, stage_blend, dtype=float)
-        stage_blend_vec[low_info] = np.maximum(stage_blend_vec[low_info], 0.55)
+        stage_blend_vec[low_info] = np.maximum(stage_blend_vec[low_info], stage_blend_low_info)
         out = (1.0 - stage_blend_vec.reshape(-1, 1)) * base + stage_blend_vec.reshape(-1, 1) * stage
         out = out / np.maximum(out.sum(axis=1, keepdims=True), _EPS)
         return out
@@ -820,10 +941,50 @@ class InverseDiagnosticHMM:
                 + 0.08 * productive_norm
             ),
         }
+        anchor_order_by_state: dict[int, list[tuple[str, float]]] = {}
+        anchor_margin_by_state: dict[int, float] = {}
+        for state_id in range(n_states):
+            ranking = sorted(
+                [
+                    ("S1", float(state_rows[state_id]["anchor_s1_mean"])),
+                    ("S2", float(state_rows[state_id]["anchor_s2_mean"])),
+                    ("S3", float(state_rows[state_id]["anchor_s3_mean"])),
+                ],
+                key=lambda it: float(it[1]),
+                reverse=True,
+            )
+            anchor_order_by_state[state_id] = ranking
+            anchor_margin_by_state[state_id] = (
+                float(ranking[0][1] - ranking[1][1]) if len(ranking) > 1 else float(ranking[0][1])
+            )
+
+        # Weak supervision guardrail:
+        # keep semantic assignment close to anchor dominance when the anchor signal is clear.
+        for semantic_name in _SEMANTIC_NAMES:
+            for state_id in range(n_states):
+                ranking = anchor_order_by_state[state_id]
+                margin = float(anchor_margin_by_state[state_id])
+                rank_labels = [item[0] for item in ranking]
+                try:
+                    rank = rank_labels.index(semantic_name)
+                except ValueError:
+                    rank = 2
+                if rank == 0:
+                    bonus = 0.10 + 0.25 * np.clip(margin, 0.0, 0.35)
+                elif rank == 1:
+                    bonus = 0.02
+                else:
+                    bonus = -0.12 - 0.20 * np.clip(margin, 0.0, 0.35)
+                score_by_semantic[semantic_name][state_id] = float(
+                    score_by_semantic[semantic_name][state_id] + bonus
+                )
 
         semantic_to_state: dict[str, int] = {}
         semantic_confidence: dict[str, float] = {name: 0.0 for name in _SEMANTIC_NAMES}
         warnings: list[str] = []
+        observed_norm = pd.Series(observed_labels).fillna("unknown").astype(str).str.lower()
+        informative_share = float((~observed_norm.isin({"no_score", "unknown"})).mean()) if len(observed_norm) else 0.0
+        informative_scale = float(np.clip((informative_share + 0.05) / 0.30, 0.25, 1.0))
 
         state_ids = list(range(n_states))
         if n_states >= 3:
@@ -864,7 +1025,30 @@ class InverseDiagnosticHMM:
             coverage_term = float(np.clip(coverage / 0.12, 0.0, 1.0))
             if semantic_name == "S3":
                 coverage_term = max(coverage_term, float(finish_close_norm[state_id]))
-            conf = float(np.clip(0.55 * best + 0.35 * margin + 0.10 * coverage_term, 0.0, 1.0))
+            ranking = anchor_order_by_state[state_id]
+            dominant_anchor = str(ranking[0][0]) if ranking else ""
+            anchor_margin = float(anchor_margin_by_state.get(state_id, 0.0))
+            anchor_match = bool(dominant_anchor == semantic_name)
+            anchor_term = 1.0 if anchor_match else float(np.clip(1.0 - 3.0 * anchor_margin, 0.0, 1.0))
+            conf = float(np.clip(0.45 * best + 0.25 * margin + 0.15 * coverage_term + 0.15 * anchor_term, 0.0, 1.0))
+            if not anchor_match and anchor_margin >= 0.03:
+                conf *= 0.72
+                warnings.append(
+                    f"{semantic_name} assignment conflicts with dominant anchor "
+                    f"({dominant_anchor}, margin={anchor_margin:.3f}); confidence penalized."
+                )
+            if semantic_name in {"S1", "S2"} and coverage < 0.05:
+                conf *= 0.70
+                warnings.append(
+                    f"{semantic_name} assigned state has low coverage ({coverage:.3f}); interpretation may be unstable."
+                )
+            if semantic_name == "S3" and float(finish_close_norm[state_id]) < 0.40:
+                conf *= 0.75
+                warnings.append(
+                    "S3 assigned state is not close enough to finish-like observations; confidence penalized."
+                )
+            conf *= informative_scale
+            conf = float(np.clip(conf, 0.0, 1.0))
             semantic_confidence[semantic_name] = conf
             if conf < 0.35:
                 warnings.append(
@@ -917,6 +1101,11 @@ class InverseDiagnosticHMM:
                 semantic_to_state["S1"] <= semantic_to_state["S2"] <= semantic_to_state["S3"]
             ):
                 warnings.append("Assigned S1/S2/S3 order conflicts with left-to-right progression.")
+        if informative_share < 0.15:
+            warnings.append(
+                "Observed sequence has low informative share (few non-no_score/unknown observations); "
+                "semantic assignment confidence is intentionally downscaled."
+            )
 
         return SemanticOrderingDiagnostics(
             original_name_mapping=name_mapping,
@@ -950,8 +1139,10 @@ class InverseDiagnosticHMM:
             semantic_features = self._semantic_feature_view(pd.DataFrame(index=range(len(obs_idx))))
 
         row_weights = self._row_train_weights(semantic_features, observed_labels=observed_labels)
+        emission_row_weights = self._row_emission_weights(semantic_features, observed_labels=observed_labels)
         anchor_prior = self._anchor_prior_matrix(semantic_features, lengths=lengths)
         weight_sequences = self._split_by_lengths(row_weights, lengths)
+        emission_weight_sequences = self._split_by_lengths(emission_row_weights, lengths)
         anchor_sequences = self._split_by_lengths(anchor_prior, lengths)
 
         self._initialize_parameters()
@@ -963,6 +1154,10 @@ class InverseDiagnosticHMM:
         tol = 1e-4
         max_iter = max(1, int(getattr(self.cfg, "n_iter", 100)))
         anchor_alpha = float(getattr(self.cfg, "inverse_anchor_blend", 0.35))
+        anchor_obs_strength = float(getattr(self.cfg, "inverse_anchor_observation_strength", 0.55))
+        anchor_obs_strength = max(0.0, min(1.5, anchor_obs_strength))
+        state_balance_prior_strength = float(getattr(self.cfg, "inverse_state_balance_prior_strength", 0.15))
+        state_balance_prior_strength = max(0.0, min(1.0, state_balance_prior_strength))
         emission_prior_blend = float(getattr(self.cfg, "inverse_emission_prior_blend", 0.08))
 
         prev_ll: float | None = None
@@ -974,10 +1169,20 @@ class InverseDiagnosticHMM:
             start_counts = np.zeros(self.n_states, dtype=float)
             trans_counts = np.zeros((self.n_states, self.n_states), dtype=float)
             emission_counts = np.zeros((self.n_states, self.n_observations), dtype=float)
+            anchor_emission_prior = np.zeros((self.n_states, self.n_observations), dtype=float)
 
             ll = 0.0
-            for seq, seq_weights, seq_anchor in zip(sequences, weight_sequences, anchor_sequences):
-                seq_ll, gamma, _, xi_steps = self._forward_backward(seq)
+            for seq, seq_weights, seq_emission_weights, seq_anchor in zip(
+                sequences,
+                weight_sequences,
+                emission_weight_sequences,
+                anchor_sequences,
+            ):
+                seq_ll, gamma, _, xi_steps = self._forward_backward(
+                    seq,
+                    state_prior=seq_anchor,
+                    state_prior_strength=anchor_obs_strength,
+                )
                 ll += seq_ll
                 gamma_adj = self._blend_gamma(gamma, seq_anchor, alpha=anchor_alpha)
 
@@ -998,7 +1203,13 @@ class InverseDiagnosticHMM:
                     trans_counts += np.sum(xi_steps, axis=0) * _EPS
 
                 for t, obs in enumerate(seq):
-                    emission_counts[:, obs] += gamma_adj[t] * max(float(seq_weights[t]), 0.0)
+                    obs_weight = max(float(seq_weights[t]), 0.0)
+                    emission_weight = max(float(seq_emission_weights[t]), 0.0)
+                    emission_counts[:, obs] += gamma_adj[t] * obs_weight * emission_weight
+                    anchor_emission_prior[:, obs] += seq_anchor[t] * obs_weight
+
+            if state_balance_prior_strength > 0.0:
+                emission_counts += state_balance_prior_strength * anchor_emission_prior
 
             start_new = self._normalize(start_counts + smoothing)
             if self.cfg.topology_mode == "left_to_right":
@@ -1032,7 +1243,14 @@ class InverseDiagnosticHMM:
         )
 
         if hidden_state_features is not None and len(hidden_state_features) == len(obs_idx):
-            states, _ = self._decode_states(obs_idx, lengths=lengths)
+            infer_anchor_strength = float(getattr(self.cfg, "inverse_inference_anchor_strength", 0.85))
+            infer_anchor_strength = max(0.0, min(1.5, infer_anchor_strength))
+            states, _ = self._decode_states(
+                obs_idx,
+                lengths=lengths,
+                state_prior=anchor_prior,
+                state_prior_strength=infer_anchor_strength,
+            )
             semantic_diag = self._derive_inverse_semantic_ordering(
                 semantic_features=semantic_features,
                 decoded_states=states,
@@ -1049,7 +1267,12 @@ class InverseDiagnosticHMM:
             if reordered:
                 # Recompute semantic diagnostics on the reordered model so coverage,
                 # role metrics and confidence are aligned with final inference states.
-                states_post, _ = self._decode_states(obs_idx, lengths=lengths)
+                states_post, _ = self._decode_states(
+                    obs_idx,
+                    lengths=lengths,
+                    state_prior=anchor_prior,
+                    state_prior_strength=infer_anchor_strength,
+                )
                 semantic_post = self._derive_inverse_semantic_ordering(
                     semantic_features=semantic_features,
                     decoded_states=states_post,
@@ -1096,22 +1319,46 @@ class InverseDiagnosticHMM:
         )
         return float(ll)
 
-    def _decode_states(self, obs_idx: np.ndarray, lengths: list[int] | None = None) -> tuple[np.ndarray, float]:
+    def _decode_states(
+        self,
+        obs_idx: np.ndarray,
+        lengths: list[int] | None = None,
+        *,
+        state_prior: np.ndarray | None = None,
+        state_prior_strength: float = 0.0,
+    ) -> tuple[np.ndarray, float]:
         sequences = self._split_by_lengths(obs_idx, lengths or [])
+        prior_sequences = self._split_by_lengths(state_prior, lengths or []) if state_prior is not None else [None] * len(sequences)
         states_all: list[np.ndarray] = []
         ll = 0.0
-        for seq in sequences:
-            states, seq_ll = self._viterbi(seq)
+        for seq, seq_prior in zip(sequences, prior_sequences):
+            states, seq_ll = self._viterbi(
+                seq,
+                state_prior=seq_prior,
+                state_prior_strength=state_prior_strength,
+            )
             states_all.append(states)
             ll += seq_ll
         return np.concatenate(states_all, axis=0), float(ll)
 
-    def _posterior_probabilities(self, obs_idx: np.ndarray, lengths: list[int] | None = None) -> tuple[np.ndarray, float]:
+    def _posterior_probabilities(
+        self,
+        obs_idx: np.ndarray,
+        lengths: list[int] | None = None,
+        *,
+        state_prior: np.ndarray | None = None,
+        state_prior_strength: float = 0.0,
+    ) -> tuple[np.ndarray, float]:
         sequences = self._split_by_lengths(obs_idx, lengths or [])
+        prior_sequences = self._split_by_lengths(state_prior, lengths or []) if state_prior is not None else [None] * len(sequences)
         posteriors: list[np.ndarray] = []
         ll = 0.0
-        for seq in sequences:
-            seq_ll, gamma, _, _ = self._forward_backward(seq)
+        for seq, seq_prior in zip(sequences, prior_sequences):
+            seq_ll, gamma, _, _ = self._forward_backward(
+                seq,
+                state_prior=seq_prior,
+                state_prior_strength=state_prior_strength,
+            )
             posteriors.append(gamma)
             ll += seq_ll
         return np.concatenate(posteriors, axis=0), float(ll)
@@ -1120,14 +1367,32 @@ class InverseDiagnosticHMM:
         self,
         observed_sequence: pd.Series | list[str],
         sequence_ids: pd.Series | None = None,
+        hidden_state_features: pd.DataFrame | None = None,
     ) -> InverseHMMPrediction:
         if self.startprob_ is None or self.transmat_ is None or self.emissionprob_ is None:
             raise ValueError("Model is not fitted yet.")
 
         obs_idx = self._encode_observations(observed_sequence)
         lengths = self._sequence_lengths(sequence_ids)
-        states, _ = self._decode_states(obs_idx, lengths=lengths)
-        posterior, log_likelihood = self._posterior_probabilities(obs_idx, lengths=lengths)
+        state_prior = None
+        state_prior_strength = 0.0
+        if hidden_state_features is not None and len(hidden_state_features) == len(obs_idx):
+            semantic_features = self._semantic_feature_view(hidden_state_features)
+            state_prior = self._anchor_prior_matrix(semantic_features, lengths=lengths)
+            state_prior_strength = float(getattr(self.cfg, "inverse_inference_anchor_strength", 0.85))
+            state_prior_strength = max(0.0, min(1.5, state_prior_strength))
+        states, _ = self._decode_states(
+            obs_idx,
+            lengths=lengths,
+            state_prior=state_prior,
+            state_prior_strength=state_prior_strength,
+        )
+        posterior, log_likelihood = self._posterior_probabilities(
+            obs_idx,
+            lengths=lengths,
+            state_prior=state_prior,
+            state_prior_strength=state_prior_strength,
+        )
 
         return InverseHMMPrediction(
             states=states,

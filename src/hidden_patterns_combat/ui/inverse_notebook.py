@@ -31,6 +31,7 @@ class InverseNotebookArtifacts:
     raw_finish_signal_summary: pd.DataFrame
     unsupported_finish_values: pd.DataFrame
     unsupported_score_values: pd.DataFrame
+    unsupported_values_assessment: dict[str, object]
     metadata_field_coverage: pd.DataFrame
     sequence_length_distribution: pd.DataFrame
     suspicious_sequences: pd.DataFrame
@@ -222,6 +223,7 @@ def load_inverse_artifacts(
     raw_finish_summary_path = out / "diagnostics" / "raw_finish_signal_summary.csv"
     unsupported_finish_path = out / "diagnostics" / "unsupported_finish_values.csv"
     unsupported_score_path = out / "diagnostics" / "unsupported_score_values.csv"
+    unsupported_assessment_path = out / "diagnostics" / "unsupported_values_assessment.json"
     metadata_field_coverage_path = out / "diagnostics" / "metadata_field_coverage.csv"
     sequence_length_path = out / "diagnostics" / "sequence_length_distribution.csv"
     suspicious_sequences_path = out / "diagnostics" / "suspicious_sequences.csv"
@@ -243,6 +245,7 @@ def load_inverse_artifacts(
     raw_finish_signal_summary = _load_csv("raw_finish_signal_summary", raw_finish_summary_path)
     unsupported_finish_values = _load_csv("unsupported_finish_values", unsupported_finish_path)
     unsupported_score_values = _load_csv("unsupported_score_values", unsupported_score_path)
+    unsupported_values_assessment = _load_json("unsupported_values_assessment", unsupported_assessment_path)
     metadata_field_coverage = _load_csv("metadata_field_coverage", metadata_field_coverage_path)
     sequence_length_distribution = _load_csv("sequence_length_distribution", sequence_length_path)
     suspicious_sequences = _load_csv("suspicious_sequences", suspicious_sequences_path)
@@ -280,6 +283,7 @@ def load_inverse_artifacts(
         raw_finish_signal_summary=raw_finish_signal_summary,
         unsupported_finish_values=unsupported_finish_values,
         unsupported_score_values=unsupported_score_values,
+        unsupported_values_assessment=unsupported_values_assessment,
         metadata_field_coverage=metadata_field_coverage,
         sequence_length_distribution=sequence_length_distribution,
         suspicious_sequences=suspicious_sequences,
