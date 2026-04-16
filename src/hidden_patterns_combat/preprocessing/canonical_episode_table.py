@@ -21,14 +21,28 @@ class CanonicalEpisodeConfig:
     athlete_id_candidates: tuple[str, ...] = (
         "metadata__athlete_id",
         "athlete_id",
+        "metadata__athlete",
         "id_athlete",
     )
     opponent_candidates: tuple[str, ...] = (
         "metadata__opponent_name",
         "metadata__opponent",
+        "metadata__opponent_id",
+        "metadata__opponent_full_name",
+        "metadata__enemy",
+        "metadata__rival_name",
+        "metadata__rival",
         "opponent_name",
         "opponent",
+        "opponent_full_name",
+        "opponent_id",
+        "rival_name",
+        "enemy",
+        "opp",
+        "rival",
         "соперник",
+        "оппонент",
+        "противник",
     )
     sheet_candidates: tuple[str, ...] = (
         "metadata__sheet",
@@ -38,38 +52,99 @@ class CanonicalEpisodeConfig:
     )
     weight_class_candidates: tuple[str, ...] = (
         "metadata__weight_class",
+        "metadata__weight",
+        "metadata__weight_category",
+        "metadata__weight_division",
+        "metadata__weight_kg",
         "weight_category",
         "weight_class",
+        "weight_division",
+        "division",
+        "category_weight",
+        "weight",
+        "weight_kg",
+        "весовая",
         "весовая категория",
         "вес",
+        "вес_кг",
     )
     tournament_candidates: tuple[str, ...] = (
         "metadata__tournament",
+        "metadata__tournament_name",
+        "metadata__tournament_title",
         "metadata__event",
+        "metadata__event_name",
         "metadata__competition",
+        "metadata__competition_name",
+        "metadata__cup",
+        "metadata__league",
         "tournament",
+        "tournament_name",
         "event",
+        "event_name",
+        "competition",
+        "competition_name",
+        "competition_title",
+        "championship",
+        "league",
+        "cup",
         "турнир",
+        "соревнован",
     )
     date_candidates: tuple[str, ...] = (
         "metadata__event_date",
         "metadata__date",
+        "metadata__match_date",
+        "metadata__competition_date",
+        "metadata__bout_date",
+        "metadata__fight_date",
         "event_date",
         "date",
+        "match_date",
+        "competition_date",
+        "bout_date",
+        "fight_date",
+        "event_dt",
+        "competition_dt",
         "дата",
+        "дата проведения",
     )
     sequence_id_candidates: tuple[str, ...] = (
         "metadata__sequence_id",
+        "metadata__sequence",
         "sequence_id",
+        "sequence",
         "metadata__bout_id",
+        "metadata__bout_number",
+        "metadata__bout_num",
+        "metadata__bout",
+        "metadata__bout_no",
+        "metadata__bout_sequence",
+        "metadata__fight_number",
+        "metadata__fight_no",
         "metadata__match_id",
+        "metadata__match_number",
+        "metadata__match_no",
         "metadata__fight_id",
         "bout_id",
         "bout",
+        "bout_number",
+        "bout_num",
+        "bout_no",
+        "bout_sequence",
+        "bout_seq",
         "match_id",
+        "match_no",
+        "match_num",
+        "match_number",
         "match",
         "fight_id",
+        "fight_number",
+        "fight_no",
         "fight",
+        "номер_схватки",
+        "номер поединка",
+        "номер схватки",
         "схватка",
         "поединок",
     )
@@ -84,21 +159,46 @@ class CanonicalEpisodeConfig:
     )
     episode_time_candidates: tuple[str, ...] = (
         "metadata__episode_duration",
+        "metadata__episode_time_sec",
+        "metadata__episode_sec",
+        "metadata__episode_time_seconds",
+        "metadata__time_episode",
         "episode_duration",
         "metadata__episode_time",
         "episode_time",
+        "episode_time_sec",
+        "episode_seconds",
+        "time_episode_sec",
         "metadata__episode_attr_02_03",
         "metadata__time_attr_01_02",
+        "round_time",
+        "elapsed_time",
+        "elapsed_sec",
+        "fight_time_sec",
+        "bout_time_sec",
+        "time_sec",
+        "time",
         "duration",
         "время эпизода",
+        "время",
     )
     pause_time_candidates: tuple[str, ...] = (
         "metadata__pause_duration",
+        "metadata__pause_time_sec",
+        "metadata__pause_sec",
+        "metadata__pause_time_seconds",
         "pause_duration",
         "metadata__pause_time",
         "pause_time",
+        "pause_time_sec",
+        "pause_seconds",
         "metadata__episode_attr_03_04",
         "metadata__time_attr_02_03",
+        "rest_time",
+        "rest_sec",
+        "break_time",
+        "break_sec",
+        "pause_sec",
         "pause",
         "время паузы",
     )
@@ -230,6 +330,7 @@ def _detect_weight_column_from_metadata(
     *,
     excluded: set[str],
 ) -> str | None:
+    weight_tokens = ("weight", "вес", "kg", "кг", "wt")
     candidates = [
         str(col)
         for col in frame.columns
@@ -238,6 +339,10 @@ def _detect_weight_column_from_metadata(
     best_col: str | None = None
     best_score = -1.0
     for col in candidates:
+        normalized = str(col).strip().lower().replace("ё", "е")
+        if not any(token in normalized for token in weight_tokens):
+            # Be conservative: do not infer semantic meaning from arbitrary metadata columns.
+            continue
         numeric = pd.to_numeric(frame[col], errors="coerce")
         valid = numeric.dropna()
         if valid.empty:
@@ -447,7 +552,7 @@ def build_canonical_episode_table(
     if not weight_col:
         guessed_weight = _detect_weight_column_from_metadata(
             frame,
-            excluded={c for c in [episode_col, episode_time_col, pause_col] if c},
+            excluded={c for c in [sheet_col, episode_col, episode_time_col, pause_col] if c},
         )
         if guessed_weight:
             weight_col = guessed_weight
@@ -621,6 +726,20 @@ def build_canonical_episode_table(
             "score": score_col,
         },
         "selection_method": selection_method,
+        "field_candidates": {
+            "athlete_name": list(cfg.athlete_name_candidates),
+            "athlete_id": list(cfg.athlete_id_candidates),
+            "sheet_name": list(cfg.sheet_candidates),
+            "weight_class": list(cfg.weight_class_candidates),
+            "opponent_name": list(cfg.opponent_candidates),
+            "tournament_name": list(cfg.tournament_candidates),
+            "event_date": list(cfg.date_candidates),
+            "explicit_sequence_id": list(cfg.sequence_id_candidates),
+            "episode_id": list(cfg.episode_id_candidates),
+            "episode_time_sec": list(cfg.episode_time_candidates),
+            "pause_time_sec": list(cfg.pause_time_candidates),
+            "score": list(cfg.score_candidates),
+        },
     }
 
     return CanonicalEpisodeBuildResult(canonical_table=out, extraction_info=extraction_info)

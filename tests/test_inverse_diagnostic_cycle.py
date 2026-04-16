@@ -85,11 +85,15 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert Path(result.hidden_feature_layer_path).exists()
     assert Path(result.episode_analysis_path).exists()
     assert Path(result.state_profile_path).exists()
+    assert result.run_summary_path is not None
+    assert Path(result.run_summary_path).exists()
     assert Path(result.observation_audit_path).exists()
     assert Path(result.observation_mapping_crosstab_path).exists()
     assert Path(result.raw_finish_signal_summary_path).exists()
+    assert Path(result.unsupported_finish_values_path).exists()
     assert Path(result.unsupported_score_values_path).exists()
     assert Path(result.metadata_extraction_summary_path).exists()
+    assert Path(result.metadata_field_coverage_path).exists()
     assert Path(result.sequence_audit_path).exists()
     assert Path(result.sequence_length_distribution_path).exists()
     assert Path(result.suspicious_sequences_path).exists()
@@ -115,14 +119,17 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert isinstance(result.recommendation, str)
     assert result.recommendation.strip() != ""
     assert result.semantic_assignment_quality in {
-        "full_semantic_assignment",
-        "partial_semantic_assignment",
-        "failed_semantic_assignment",
+        "full",
+        "partial",
+        "failed",
     }
 
     report_text = Path(result.report_path).read_text(encoding="utf-8")
     assert "## 1) Executive summary" in report_text
-    assert "## 9) Limitations / caveats" in report_text
+    assert "## 3) Raw finish/action signal audit" in report_text
+    assert "## 4) Metadata and time extraction quality" in report_text
+    assert "## 7) State semantics quality" in report_text
+    assert "## 9) Limitations" in report_text
 
 
 def test_inverse_report_is_cautious_when_semantics_are_weak(tmp_path: Path) -> None:
@@ -139,8 +146,10 @@ def test_inverse_report_is_cautious_when_semantics_are_weak(tmp_path: Path) -> N
 
     report_text = Path(result.report_path).read_text(encoding="utf-8")
     assert (
-        "State semantics did not stabilize sufficiently for confident KFV/VUP interpretation."
+        "Содержательная привязка скрытых состояний к КФВ/ВУП не стабилизировалась"
         in report_text
-        or "Семантическое назначение состояний не удалось" in report_text
-        or "Назначена только часть семантических состояний" in report_text
+        or "интерпретация остальных состояний не стабилизировалась" in report_text
     )
+    assert "observed layer mostly no_score: True" in report_text
+    assert "direct finish observations absent in this run: True" in report_text
+    assert "semantic_assignment_quality: failed" in report_text or "semantic_assignment_quality: partial" in report_text

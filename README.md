@@ -116,8 +116,10 @@ Notebook frontend:
 - `diagnostics/observation_audit.json`
 - `diagnostics/observation_mapping_crosstab.csv`
 - `diagnostics/raw_finish_signal_summary.csv`
+- `diagnostics/unsupported_finish_values.csv`
 - `diagnostics/unsupported_score_values.csv`
 - `diagnostics/metadata_extraction_summary.json`
+- `diagnostics/metadata_field_coverage.csv`
 - `diagnostics/sequence_audit.json`
 - `diagnostics/sequence_length_distribution.csv`
 - `diagnostics/suspicious_sequences.csv`

@@ -19,6 +19,7 @@ class ObservationAuditResult:
     summary: dict[str, Any]
     mapping_crosstab: pd.DataFrame
     raw_finish_signal_summary: pd.DataFrame
+    unsupported_finish_values: pd.DataFrame
     unsupported_score_values: pd.DataFrame
 
 
@@ -26,13 +27,17 @@ def _normalize_col(value: object) -> str:
     return str(value).strip().lower().replace("ё", "е")
 
 
+def _normalize_value(value: object) -> str:
+    return str(value).strip()
+
+
 def _is_non_empty(value: object) -> bool:
-    text = str(value).strip().lower()
+    text = _normalize_value(value).lower()
     return text not in _MISSING_TEXT
 
 
 def _is_positive(value: object) -> bool:
-    text = str(value).strip().lower()
+    text = _normalize_value(value).lower()
     if text in _MISSING_TEXT:
         return False
     if text in {"да", "yes", "true", "истина", "y"}:
@@ -102,6 +107,7 @@ def _finish_like_columns(df: pd.DataFrame) -> list[str]:
     keywords = (
         "finish",
         "outcome_action",
+        "action_indicator",
         "заверша",
         "удерж",
         "болев",
@@ -129,13 +135,23 @@ def _column_positive_share(series: pd.Series) -> float:
     return float(series.map(_is_positive).mean())
 
 
-def _top_values(series: pd.Series, top_k: int = 8) -> list[str]:
+def _non_empty_value_counts(series: pd.Series, *, top_k: int = 12) -> pd.Series:
     text = series.fillna("").astype(str).str.strip()
     text = text[text != ""]
     if text.empty:
-        return []
-    counts = text.value_counts().head(top_k)
+        return pd.Series(dtype="int64")
+    return text.value_counts().head(top_k)
+
+
+def _top_values(series: pd.Series, top_k: int = 8) -> list[str]:
+    counts = _non_empty_value_counts(series, top_k=top_k)
     return [str(idx) for idx in counts.index.tolist()]
+
+
+def _value_frequencies_json(series: pd.Series, *, top_k: int = 12) -> str:
+    counts = _non_empty_value_counts(series, top_k=top_k)
+    payload = [{"value": str(idx), "rows": int(val)} for idx, val in counts.items()]
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _json_list(value: object) -> list[str]:
@@ -202,6 +218,32 @@ def _make_mapping_crosstab(observation_df: pd.DataFrame) -> pd.DataFrame:
     return grouped.reset_index(drop=True)
 
 
+def _direct_finish_match_counts(observation_df: pd.DataFrame) -> tuple[dict[str, int], dict[str, int]]:
+    frame = observation_df.copy().reset_index(drop=True)
+    if frame.empty or "observation_resolution_type" not in frame.columns:
+        return {}, {}
+
+    direct = frame[frame["observation_resolution_type"].astype(str) == "direct_finish_signal"].copy()
+    if direct.empty:
+        return {}, {}
+
+    class_counts = (
+        direct.get("observed_zap_class", pd.Series(dtype="object"))
+        .astype(str)
+        .value_counts()
+        .to_dict()
+    )
+
+    column_counts: dict[str, int] = {}
+    for value in direct.get("finish_match_columns", pd.Series(["[]"] * len(direct))).astype(str):
+        for col in _json_list(value):
+            column_counts[col] = column_counts.get(col, 0) + 1
+
+    class_counts_out = {str(k): int(v) for k, v in class_counts.items()}
+    column_counts_out = {str(k): int(v) for k, v in sorted(column_counts.items(), key=lambda item: (-item[1], item[0]))}
+    return class_counts_out, column_counts_out
+
+
 def build_observation_audit(
     cleaned_df: pd.DataFrame,
     observation_df: pd.DataFrame,
@@ -228,16 +270,23 @@ def build_observation_audit(
         if col not in frame.columns:
             continue
         series = frame[col]
+        non_empty_rows = int(series.map(_is_non_empty).sum())
         mapped_classes = _column_mapped_classes(col, cfg)
         finish_rows.append(
             {
                 "column_name": col,
+                "source_column_name": col,
+                "normalized_column_name": _normalize_col(col),
+                "non_empty_rows": non_empty_rows,
                 "non_empty_share": _column_non_empty_share(series),
-                "positive_share": _column_positive_share(series),
                 "positive_rows": int(series.map(_is_positive).sum()),
+                "positive_share": _column_positive_share(series),
+                "distinct_non_empty_values": int(_non_empty_value_counts(series, top_k=max(1, len(series))).shape[0]),
                 "top_values": json.dumps(_top_values(series), ensure_ascii=False),
+                "value_frequencies": _value_frequencies_json(series),
                 "covered_by_mapping": bool(mapped_classes),
                 "mapped_classes": json.dumps(mapped_classes, ensure_ascii=False),
+                "mapping_status": "mapped" if mapped_classes else "unsupported",
             }
         )
 
@@ -247,19 +296,25 @@ def build_observation_audit(
         else pd.DataFrame(
             columns=[
                 "column_name",
+                "source_column_name",
+                "normalized_column_name",
+                "non_empty_rows",
                 "non_empty_share",
-                "positive_share",
                 "positive_rows",
+                "positive_share",
+                "distinct_non_empty_values",
                 "top_values",
+                "value_frequencies",
                 "covered_by_mapping",
                 "mapped_classes",
+                "mapping_status",
             ]
         )
     )
     if not raw_finish_summary.empty:
         raw_finish_summary = raw_finish_summary.sort_values(
-            ["positive_rows", "column_name"],
-            ascending=[False, True],
+            ["positive_rows", "non_empty_rows", "source_column_name"],
+            ascending=[False, False, True],
         ).reset_index(drop=True)
 
     unsupported_finish_columns = []
@@ -268,10 +323,58 @@ def build_observation_audit(
             raw_finish_summary[
                 (raw_finish_summary["positive_rows"] > 0)
                 & (~raw_finish_summary["covered_by_mapping"].astype(bool))
-            ]["column_name"]
+            ]["source_column_name"]
             .astype(str)
             .tolist()
         )
+
+    unsupported_finish_rows: list[dict[str, Any]] = []
+    rows_total = max(1, int(len(frame)))
+    for col in unsupported_finish_columns:
+        if col not in frame.columns:
+            continue
+        series = frame[col]
+        non_empty = series[series.map(_is_non_empty)].astype(str).str.strip()
+        if non_empty.empty:
+            continue
+        counts = non_empty.value_counts().head(20)
+        non_empty_rows = int(non_empty.shape[0])
+        positive_rows = int(series.map(_is_positive).sum())
+        for value, count in counts.items():
+            unsupported_finish_rows.append(
+                {
+                    "source_column_name": str(col),
+                    "normalized_column_name": _normalize_col(col),
+                    "raw_value": str(value),
+                    "rows": int(count),
+                    "share_within_column": float(int(count) / max(1, non_empty_rows)),
+                    "share_of_total_rows": float(int(count) / float(rows_total)),
+                    "non_empty_rows_in_column": non_empty_rows,
+                    "positive_rows_in_column": positive_rows,
+                }
+            )
+
+    unsupported_finish_values = (
+        pd.DataFrame(unsupported_finish_rows)
+        if unsupported_finish_rows
+        else pd.DataFrame(
+            columns=[
+                "source_column_name",
+                "normalized_column_name",
+                "raw_value",
+                "rows",
+                "share_within_column",
+                "share_of_total_rows",
+                "non_empty_rows_in_column",
+                "positive_rows_in_column",
+            ]
+        )
+    )
+    if not unsupported_finish_values.empty:
+        unsupported_finish_values = unsupported_finish_values.sort_values(
+            ["rows", "source_column_name", "raw_value"],
+            ascending=[False, True, True],
+        ).reset_index(drop=True)
 
     unsupported_score_values = pd.DataFrame(columns=["score_rounded", "rows", "share"])
     score_values_seen: list[int] = []
@@ -323,6 +426,23 @@ def build_observation_audit(
         if not positive_matrix.empty:
             direct_finish_positive_rows = int(positive_matrix.any(axis=1).sum())
 
+    unsupported_finish_positive_rows = 0
+    if unsupported_finish_columns:
+        unsupported_matrix = pd.DataFrame(
+            {
+                col: frame[col].map(_is_positive)
+                for col in unsupported_finish_columns
+                if col in frame.columns
+            }
+        )
+        if not unsupported_matrix.empty:
+            unsupported_finish_positive_rows = int(unsupported_matrix.any(axis=1).sum())
+
+    supported_finish_positive_columns: list[str] = []
+    for col in sorted(supported_finish_columns):
+        if col in frame.columns and int(frame[col].map(_is_positive).sum()) > 0:
+            supported_finish_positive_columns.append(str(col))
+
     finish_signal_presence: dict[str, dict[str, Any]] = {}
     for target_class in ("hold", "arm_submission", "leg_submission"):
         class_columns = []
@@ -347,7 +467,7 @@ def build_observation_audit(
             "present_in_raw": bool(positive_rows > 0),
         }
 
-    rows_total = int(len(frame))
+    rows_total_int = int(len(frame))
     columns_used = sorted(
         [c for c in [score_col] if c]
         + [c for c in sorted(supported_finish_columns)]
@@ -363,19 +483,39 @@ def build_observation_audit(
         if col in frame.columns
     }
 
+    direct_match_class_counts, direct_match_column_counts = _direct_finish_match_counts(obs)
+    mapping_gap_detected = bool(
+        unsupported_finish_positive_rows > 0
+        or not unsupported_finish_values.empty
+    )
+
     summary: dict[str, Any] = {
-        "rows_total": rows_total,
+        "rows_total": rows_total_int,
         "mapping_version": str(cfg.version),
         "score_column_used": score_col,
         "raw_columns_used_for_mapping": columns_used,
         "column_non_empty_share": column_non_empty,
         "column_positive_share": column_positive,
         "resolution_type_share": {str(k): float(v) for k, v in resolution_share.items()},
+        "candidate_finish_columns": finish_candidates,
+        "candidate_finish_columns_count": int(len(finish_candidates)),
         "supported_finish_columns": sorted(supported_finish_columns),
+        "supported_finish_columns_with_positive_values": supported_finish_positive_columns,
         "direct_finish_signal_columns_available": bool(supported_finish_columns),
         "direct_finish_positive_rows": int(direct_finish_positive_rows),
-        "direct_finish_positive_share": float(direct_finish_positive_rows / max(1, rows_total)),
+        "direct_finish_positive_share": float(direct_finish_positive_rows / max(1, rows_total_int)),
+        "mapped_finish_positive_rows": int(direct_finish_positive_rows),
+        "unmapped_finish_positive_rows": int(unsupported_finish_positive_rows),
+        "mapping_gap_detected": mapping_gap_detected,
+        "unsupported_finish_columns": [
+            str(col)
+            for col in finish_candidates
+            if col not in supported_finish_columns
+        ],
         "unsupported_finish_columns_with_positive_values": unsupported_finish_columns,
+        "unsupported_finish_values_rows": int(len(unsupported_finish_values)),
+        "direct_finish_match_class_counts": direct_match_class_counts,
+        "direct_finish_match_column_counts": direct_match_column_counts,
         "score_values_seen": score_values_seen,
         "unsupported_score_values": (
             []
@@ -398,6 +538,14 @@ def build_observation_audit(
         warnings.append(
             "Some raw finish/action columns contain positive values but are not covered by mapping rules."
         )
+    if bool(supported_finish_columns) and mapping_gap_detected:
+        warnings.append(
+            "Direct finish-like signals are present, but mapping coverage is incomplete (mapping gap detected)."
+        )
+    if not unsupported_finish_values.empty:
+        warnings.append(
+            "Unsupported raw finish/action values were detected; review unsupported_finish_values.csv and mapping rules."
+        )
     if not unsupported_score_values.empty:
         warnings.append(
             "Unsupported non-zero score values were found; these rows map to unknown without direct finish signals."
@@ -411,6 +559,7 @@ def build_observation_audit(
         summary=summary,
         mapping_crosstab=mapping_crosstab,
         raw_finish_signal_summary=raw_finish_summary,
+        unsupported_finish_values=unsupported_finish_values.reset_index(drop=True),
         unsupported_score_values=unsupported_score_values.reset_index(drop=True),
     )
 
@@ -425,6 +574,7 @@ def write_observation_audit(
     observation_audit_path = out / "observation_audit.json"
     mapping_crosstab_path = out / "observation_mapping_crosstab.csv"
     raw_finish_path = out / "raw_finish_signal_summary.csv"
+    unsupported_finish_path = out / "unsupported_finish_values.csv"
     unsupported_score_path = out / "unsupported_score_values.csv"
 
     observation_audit_path.write_text(
@@ -433,11 +583,13 @@ def write_observation_audit(
     )
     result.mapping_crosstab.to_csv(mapping_crosstab_path, index=False)
     result.raw_finish_signal_summary.to_csv(raw_finish_path, index=False)
+    result.unsupported_finish_values.to_csv(unsupported_finish_path, index=False)
     result.unsupported_score_values.to_csv(unsupported_score_path, index=False)
 
     return {
         "observation_audit_json": str(observation_audit_path),
         "observation_mapping_crosstab_csv": str(mapping_crosstab_path),
         "raw_finish_signal_summary_csv": str(raw_finish_path),
+        "unsupported_finish_values_csv": str(unsupported_finish_path),
         "unsupported_score_values_csv": str(unsupported_score_path),
     }

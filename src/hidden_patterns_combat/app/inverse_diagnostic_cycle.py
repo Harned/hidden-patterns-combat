@@ -45,8 +45,10 @@ class InverseDiagnosticResult:
     observation_audit_path: str
     observation_mapping_crosstab_path: str
     raw_finish_signal_summary_path: str
+    unsupported_finish_values_path: str
     unsupported_score_values_path: str
     metadata_extraction_summary_path: str
+    metadata_field_coverage_path: str
     sequence_audit_path: str
     sequence_length_distribution_path: str
     suspicious_sequences_path: str
@@ -66,6 +68,7 @@ class InverseDiagnosticResult:
     recommendation: str
     transitions_summary: list[dict[str, object]]
     created_artifacts: list[str]
+    run_summary_path: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -101,6 +104,17 @@ def _resolve_input_path(input_path: str | Path) -> Path:
     if candidate.exists():
         return candidate
     return path
+
+
+def _normalize_semantic_quality_label(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"full", "full_semantic_assignment"}:
+        return "full"
+    if text in {"partial", "partial_semantic_assignment"}:
+        return "partial"
+    if text in {"failed", "failed_semantic_assignment"}:
+        return "failed"
+    return "failed"
 
 
 def _state_probability_columns(df: pd.DataFrame) -> list[str]:
@@ -270,15 +284,6 @@ def _semantic_label_for_state(state_id: int, canonical_map: dict[str, object]) -
         return "kfv"
     if s3i is not None and state_id == s3i:
         return "vup"
-
-    name_map = {int(k): str(v) for k, v in (canonical_map.get("canonical_to_name", {}) or {}).items()}
-    state_name = name_map.get(int(state_id), "")
-    if state_name == "S1":
-        return "maneuvering"
-    if state_name == "S2":
-        return "kfv"
-    if state_name == "S3":
-        return "vup"
     return "other"
 
 
@@ -342,23 +347,52 @@ def _recommendation_profile(
         or sequence_summary.get("surrogate_sequence_share", 0.0) > 0.80
     )
     self_share = float(model_health_summary.get("self_transition_share", 0.0))
-    semantic_quality = str(
-        model_health_summary.get(
-            "semantic_assignment_quality",
-            "failed_semantic_assignment",
-        )
+    semantic_quality = _normalize_semantic_quality_label(
+        model_health_summary.get("semantic_assignment_quality", "failed")
     )
+    confirmed_states = [str(x) for x in (model_health_summary.get("semantic_confirmed_states", []) or [])]
+    assigned_states = [str(x) for x in (model_health_summary.get("semantic_assigned_states", []) or [])]
     degenerate_transition_warning = bool(model_health_summary.get("degenerate_transition_warning", False))
+    maneuvering_only_warning = bool(model_health_summary.get("maneuvering_only_state_profile_warning", False))
 
     metrics_line = (
         "Метрики профиля: coverage={cov:.2f}, high_conf={hc:.2f}, mean_posterior={mp:.2f}, "
         "self_transition_share={selfs:.2f}."
     ).format(cov=cov_share, hc=hc_share, mp=mp_share, selfs=self_share)
 
-    if semantic_quality != "full_semantic_assignment":
+    if semantic_quality == "failed":
         return (
             "cautious profile",
-            "State semantics did not stabilize sufficiently for confident KFV/VUP interpretation. "
+            "Содержательная привязка скрытых состояний к КФВ/ВУП не стабилизировалась на текущих данных. "
+            + metrics_line,
+        )
+
+    if semantic_quality == "partial":
+        if confirmed_states:
+            confirmed_text = ", ".join(sorted(set(confirmed_states)))
+            return (
+                "cautious profile",
+                f"Семантика подтверждена только для части состояний ({confirmed_text}); "
+                "для остальных состояний содержательная интерпретация пока неустойчива. "
+                + metrics_line,
+            )
+        if assigned_states:
+            assigned_text = ", ".join(sorted(set(assigned_states)))
+            return (
+                "cautious profile",
+                f"Назначения семантики есть ({assigned_text}), но устойчивость подтверждена недостаточно. "
+                + metrics_line,
+            )
+        return (
+            "cautious profile",
+            "Семантика состояний назначена частично, но содержательная интерпретация ограничена. "
+            + metrics_line,
+        )
+
+    if maneuvering_only_warning:
+        return (
+            "cautious profile",
+            "Все скрытые состояния имеют maneuvering-like профиль; контраст между КФВ/ВУП не подтвержден. "
             + metrics_line,
         )
 
@@ -463,29 +497,62 @@ def _write_inverse_report(
     ].head(40)
 
     transition_view = pd.DataFrame(transitions[:15])
-    semantic_quality = str(model_health_summary.get("semantic_assignment_quality", "failed_semantic_assignment"))
+    semantic_quality = _normalize_semantic_quality_label(model_health_summary.get("semantic_assignment_quality", "failed"))
+    confirmed_states = [str(x) for x in (model_health_summary.get("semantic_confirmed_states", []) or [])]
+    assigned_states = [str(x) for x in (model_health_summary.get("semantic_assigned_states", []) or [])]
+    unconfirmed_states = [str(x) for x in (model_health_summary.get("semantic_unconfirmed_states", []) or [])]
 
     unique_observed = (
         sorted(analysis_df["observed_zap_class"].dropna().astype(str).unique().tolist())
         if "observed_zap_class" in analysis_df.columns
         else []
     )
-    direct_share = observed_summary.get("direct_share", 0.0)
-    no_score_share = observed_summary.get("no_score_rule_share", 0.0)
-    surrogate_share = sequence_summary.get("surrogate_sequence_share", 0.0)
-    explicit_share = sequence_summary.get("explicit_sequence_share", 0.0)
+    direct_share = float(observed_summary.get("direct_share", 0.0))
+    inferred_share = float(observed_summary.get("inferred_from_score_share", 0.0))
+    no_score_share = float(observed_summary.get("no_score_rule_share", 0.0))
+    unknown_share = float(observed_summary.get("unknown_share", 0.0))
+    ambiguous_share = float(observed_summary.get("ambiguous_share", 0.0))
+    surrogate_share = float(sequence_summary.get("surrogate_sequence_share", 0.0))
+    explicit_share = float(sequence_summary.get("explicit_sequence_share", 0.0))
+    fallback_share = float(sequence_summary.get("fallback_sequence_share", 0.0))
+
+    direct_finish_available = bool(observation_audit_summary.get("direct_finish_observations_available", False))
+    unsupported_scores = [int(x) for x in (observation_audit_summary.get("unsupported_score_values", []) or [])]
+    unsupported_finish_columns = [
+        str(x) for x in (observation_audit_summary.get("unsupported_finish_columns_with_positive_values", []) or [])
+    ]
+    mapping_gap_detected = bool(observation_audit_summary.get("mapping_gap_detected", False))
+    mapped_finish_positive_rows = int(observation_audit_summary.get("mapped_finish_positive_rows", 0))
+    unmapped_finish_positive_rows = int(observation_audit_summary.get("unmapped_finish_positive_rows", 0))
+    finish_presence = observation_audit_summary.get("finish_signal_presence", {}) or {}
+
+    metadata_informative = [str(x) for x in (metadata_summary.get("informative_fields", []) or [])]
+    metadata_non_informative = [str(x) for x in (metadata_summary.get("non_informative_fields", []) or [])]
+    segmentation_support = metadata_summary.get("segmentation_support", {}) or {}
+    temporal_support = metadata_summary.get("temporal_modeling_support", {}) or {}
+    critical_field_quality = metadata_summary.get("critical_field_quality", {}) or {}
+    degenerate_transition_warning = bool(model_health_summary.get("degenerate_transition_warning", False))
+    maneuvering_only_warning = bool(model_health_summary.get("maneuvering_only_state_profile_warning", False))
 
     exec_flags: list[str] = []
-    if direct_share <= 0.01:
-        exec_flags.append("Direct observations are effectively absent.")
+    if not direct_finish_available:
+        exec_flags.append("Direct finish observations are absent or effectively absent in current run.")
     if no_score_share >= 0.70:
         exec_flags.append("Observed layer is mostly no_score.")
+    if unsupported_scores:
+        exec_flags.append(f"Unsupported score values detected: {unsupported_scores}.")
+    if unsupported_finish_columns:
+        exec_flags.append("Raw finish/action columns contain unmapped positive signals.")
+    if mapping_gap_detected:
+        exec_flags.append("Direct finish/action mapping has coverage gaps (unmapped positive signals exist).")
     if explicit_share <= 0.01 and surrogate_share >= 0.90:
-        exec_flags.append("Sequence segmentation is almost fully surrogate.")
-    if semantic_quality != "full_semantic_assignment":
-        exec_flags.append("State semantics are partial/failed; strong KFV/VUP claims are unsafe.")
-    if bool(model_health_summary.get("degenerate_transition_warning", False)):
-        exec_flags.append("Transition dynamics are close to degenerate (high self-loops).")
+        exec_flags.append("Sequence segmentation is surrogate-based.")
+    if semantic_quality in {"partial", "failed"}:
+        exec_flags.append("State semantics are not fully stabilized; strong KFV/VUP interpretation is unsafe.")
+    if degenerate_transition_warning:
+        exec_flags.append("Hidden transition dynamics are close to degenerate (self-loops dominate).")
+    if maneuvering_only_warning:
+        exec_flags.append("All hidden states are maneuvering-like; semantic contrast is weak.")
 
     limitations: list[str] = []
     for source_key in ("warnings",):
@@ -496,36 +563,101 @@ def _write_inverse_report(
     limitations = sorted(set(x for x in limitations if x))
 
     interpretation_line = "Интерпретация ограничена."
-    if semantic_quality == "full_semantic_assignment" and not profile_view.empty:
+    if semantic_quality == "failed":
+        interpretation_line = (
+            "Содержательная привязка скрытых состояний к КФВ/ВУП не стабилизировалась на текущих данных."
+        )
+    elif semantic_quality == "partial":
+        if confirmed_states:
+            interpretation_line = (
+                f"Семантика подтверждается только для {', '.join(sorted(set(confirmed_states)))}; "
+                "интерпретация остальных состояний не стабилизировалась."
+            )
+        else:
+            interpretation_line = (
+                "Семантика назначена частично, но подтверждение недостаточно; строгая привязка S1/S2/S3 ограничена."
+            )
+    elif maneuvering_only_warning:
+        interpretation_line = (
+            "Все скрытые состояния имеют maneuvering-like profile; контрастные профили КФВ/ВУП не подтверждены."
+        )
+    elif degenerate_transition_warning:
+        interpretation_line = (
+            "Скрытая динамика близка к вырожденной (self-loops доминируют); содержательные выводы ограничены."
+        )
+    elif semantic_quality == "full" and not profile_view.empty:
         dominant = profile_view.sort_values("episodes_count", ascending=False).iloc[0]
         interpretation_line = (
-            f"Доминирующее состояние: {dominant.get('hidden_state_name', 'unknown')} "
+            f"Содержательная интерпретация допустима: доминирует {dominant.get('hidden_state_name', 'unknown')} "
             f"(key_link={dominant.get('key_link', 'unknown')}, episodes={int(dominant.get('episodes_count', 0))})."
         )
-    elif semantic_quality == "partial_semantic_assignment":
-        interpretation_line = (
-            "Назначена только часть семантических состояний; интерпретация S2/S3 остается неопределенной."
-        )
-    elif semantic_quality == "failed_semantic_assignment":
-        interpretation_line = (
-            "Семантическое назначение состояний не удалось; KFV/VUP-интерпретация ненадежна."
-        )
+    if maneuvering_only_warning and semantic_quality in {"partial", "failed"}:
+        interpretation_line += " Дополнительно: все состояния имеют maneuvering-like profile."
+
+    metadata_view = pd.DataFrame(
+        [
+            {
+                "field": field,
+                "informative": bool(payload.get("informative", False)),
+                "source_column": payload.get("source_column"),
+                "missing_share": float(payload.get("missing_share", 1.0)),
+                "zero_share": payload.get("zero_share"),
+            }
+            for field, payload in (metadata_summary.get("field_quality", {}) or {}).items()
+        ]
+    )
+    if not metadata_view.empty:
+        metadata_view = metadata_view.sort_values(["informative", "field"], ascending=[False, True]).head(20)
+    critical_field_view = pd.DataFrame(
+        [
+            {
+                "field": field,
+                "found": bool(payload.get("found", False)),
+                "source_column": payload.get("source_column"),
+                "missing_share": float(payload.get("missing_share", 1.0)),
+                "zero_share": payload.get("zero_share"),
+                "informative": bool(payload.get("informative", False)),
+                "sample_values": ", ".join([str(x) for x in (payload.get("sample_values", []) or [])][:3]),
+            }
+            for field, payload in critical_field_quality.items()
+        ]
+    )
+    if not critical_field_view.empty:
+        critical_field_view = critical_field_view.sort_values(["informative", "field"], ascending=[False, True]).reset_index(drop=True)
 
     next_actions: list[str] = []
-    if direct_share <= 0.01:
+    if not direct_finish_available:
         next_actions.append(
-            "Проверить исходный workbook на наличие прямых finish/action полей и зафиксировать их в observation mapping."
+            "Проверить workbook на прямые finish/action поля и зафиксировать их в mapping rules как явные direct signals."
         )
-    if bool(observation_audit_summary.get("unsupported_finish_columns_with_positive_values")):
-        next_actions.append("Расширить правила direct mapping для unsupported finish/action колонок из diagnostics.")
+    if unsupported_finish_columns:
+        next_actions.append(
+            "Расширить mapping rules для unsupported finish/action колонок из diagnostics/unsupported_finish_values.csv."
+        )
+    elif mapping_gap_detected:
+        next_actions.append(
+            "Проверить observation mapping: есть unmapped finish/action сигналы при наличии direct finish колонок."
+        )
+    if unsupported_scores:
+        next_actions.append(
+            "Добавить правила для unsupported score values или подтвердить, что они должны оставаться unknown."
+        )
     if not bool(metadata_summary.get("episode_time_informative", False)):
-        next_actions.append("Подтвердить источник полей времени (episode/pause) и добавить устойчивые синонимы колонок.")
+        next_actions.append(
+            "Подтвердить источник episode_time и расширить aliases для времени в canonical extraction."
+        )
+    if not bool(metadata_summary.get("weight_class_informative", False)):
+        next_actions.append(
+            "Подтвердить источник weight_class; не использовать эвристическую подмену без явного признака колонки."
+        )
     if explicit_share <= 0.01:
-        next_actions.append("Добавить/синтезировать более надежный bout/sequence marker на уровне ingest.")
+        next_actions.append(
+            "Добавить явный bout/sequence marker на уровне ingest или metadata export, чтобы уйти от surrogate-only segmentation."
+        )
     if bool(model_health_summary.get("degenerate_transition_warning", False)):
-        next_actions.append("Проверить разнообразие наблюдаемого слоя перед повторным обучением HMM.")
-    if semantic_quality != "full_semantic_assignment":
-        next_actions.append("Повторно оценить semantic assignment после усиления observed layer и segmentation.")
+        next_actions.append("Перед повторным обучением увеличить информативность observed layer и разнообразие последовательностей.")
+    if semantic_quality in {"partial", "failed"}:
+        next_actions.append("Повторно оценить semantic assignment после усиления observed/metadata/segmentation слоев.")
 
     lines = [
         "# Inverse Diagnostic Report",
@@ -534,54 +666,114 @@ def _write_inverse_report(
         f"- Rows analyzed: {len(analysis_df)}",
         f"- Unique observed classes: {unique_observed}",
         f"- Mean posterior confidence: {float(analysis_df['confidence'].mean()):.3f}" if "confidence" in analysis_df.columns else "- Mean posterior confidence: n/a",
+        f"- semantic_assignment_quality: {semantic_quality}",
     ]
     for flag in exec_flags:
         lines.append(f"- {flag}")
 
     lines += [
         "",
-        "## 2) Data quality summary",
-        f"- Detected metadata fields: {metadata_summary.get('detected_metadata_fields', [])}",
-        f"- Missing metadata fields: {metadata_summary.get('missing_metadata_fields', [])}",
-        f"- Episode time informative: {bool(metadata_summary.get('episode_time_informative', False))}",
-        f"- Weight class informative: {bool(metadata_summary.get('weight_class_informative', False))}",
-        "",
-        "## 3) Observed layer quality",
+        "## 2) Observed layer quality",
         f"- direct_finish_signal share: {direct_share:.3f}",
-        f"- inferred_from_score share: {observed_summary.get('inferred_from_score_share', 0.0):.3f}",
+        f"- inferred_from_score share: {inferred_share:.3f}",
         f"- no_score_rule share: {no_score_share:.3f}",
-        f"- ambiguous+unknown share: {(observed_summary.get('ambiguous_share', 0.0) + observed_summary.get('unknown_share', 0.0)):.3f}",
-        f"- direct finish columns available: {bool(observation_audit_summary.get('direct_finish_signal_columns_available', False))}",
-        f"- direct finish positive share: {float(observation_audit_summary.get('direct_finish_positive_share', 0.0)):.3f}",
+        f"- ambiguous share: {ambiguous_share:.3f}",
+        f"- unknown share: {unknown_share:.3f}",
+        f"- direct observations available: {direct_finish_available}",
+    ]
+    if no_score_share >= 0.70:
+        lines.append("- observed layer mostly no_score: True")
+
+    lines += [
         "",
-        "## 4) Sequence segmentation quality",
-        f"- explicit/surrogate/fallback shares: {explicit_share:.3f} / {surrogate_share:.3f} / {sequence_summary.get('fallback_sequence_share', 0.0):.3f}",
+        "## 3) Raw finish/action signal audit",
+        f"- candidate finish/action columns: {int(observation_audit_summary.get('candidate_finish_columns_count', 0))}",
+        f"- supported finish columns: {observation_audit_summary.get('supported_finish_columns', [])}",
+        f"- supported finish columns with positive values: {observation_audit_summary.get('supported_finish_columns_with_positive_values', [])}",
+        f"- mapped finish positive rows: {mapped_finish_positive_rows}",
+        f"- unmapped finish positive rows: {unmapped_finish_positive_rows}",
+        f"- mapping gap detected: {mapping_gap_detected}",
+        f"- unsupported finish columns with positive values: {unsupported_finish_columns}",
+        f"- unsupported finish values rows: {int(observation_audit_summary.get('unsupported_finish_values_rows', 0))}",
+        f"- unsupported score values: {unsupported_scores}",
+        f"- direct finish match class counts: {observation_audit_summary.get('direct_finish_match_class_counts', {})}",
+        f"- hold/arm/leg presence: {finish_presence}",
+    ]
+    if not direct_finish_available:
+        lines.append("- direct finish observations absent in this run: True")
+
+    lines += [
+        "",
+        "## 4) Metadata and time extraction quality",
+        f"- informative metadata fields: {metadata_informative}",
+        f"- non-informative metadata fields: {metadata_non_informative}",
+        f"- episode_time informative: {bool(metadata_summary.get('episode_time_informative', False))}",
+        f"- pause_time informative: {bool(metadata_summary.get('pause_time_informative', False))}",
+        f"- weight_class informative: {bool(metadata_summary.get('weight_class_informative', False))}",
+        f"- segmentation support: {segmentation_support}",
+        f"- temporal modeling support: {temporal_support}",
+    ]
+    if not critical_field_view.empty:
+        lines += [
+            "",
+            "### Critical Metadata/Time Fields",
+            _frame_to_markdown(critical_field_view),
+        ]
+    if metadata_view.empty:
+        lines.append("- metadata field coverage table is unavailable.")
+    else:
+        lines += [
+            "",
+            "### Metadata Field Coverage (preview)",
+            _frame_to_markdown(metadata_view),
+        ]
+
+    lines += [
+        "",
+        "## 5) Sequence segmentation quality",
+        f"- explicit/surrogate/fallback shares: {explicit_share:.3f} / {surrogate_share:.3f} / {fallback_share:.3f}",
         f"- high/medium/low sequence quality shares: {sequence_summary.get('high_quality_share', 0.0):.3f} / {sequence_summary.get('medium_quality_share', 0.0):.3f} / {sequence_summary.get('low_quality_share', 0.0):.3f}",
-        f"- suspicious sequences detected: {int(sequence_audit_summary.get('suspicious_long_sequences', 0)) + int(sequence_audit_summary.get('suspicious_flat_sequences', 0))}",
-        f"- explicit unavailable reasons: {sequence_audit_summary.get('explicit_unavailable_reasons', [])}",
+        f"- explicit sequence fields checked: {sequence_audit_summary.get('explicit_sequence_fields_checked', [])}",
+        f"- explicit sequence source column: {sequence_audit_summary.get('explicit_sequence_source_column')}",
+        f"- explicit sequence fields missing: {sequence_audit_summary.get('explicit_sequence_fields_missing', [])}",
+        f"- surrogate_based_segmentation: {bool(sequence_audit_summary.get('surrogate_based_segmentation', False))}",
+        f"- surrogate reason counts: {sequence_audit_summary.get('surrogate_reason_counts', {})}",
+        f"- suspicious potential multi-bout sequences: {sequence_audit_summary.get('suspicious_potential_multi_bout_sequences', 0)}",
+        f"- potential multi-bout ids preview: {sequence_audit_summary.get('potential_multi_bout_sequence_ids_preview', [])}",
+    ]
+
+    lines += [
         "",
-        "## 5) Model health",
+        "## 6) Model health",
         f"- self_transition_share: {float(model_health_summary.get('self_transition_share', 0.0)):.3f}",
         f"- top_self_transition_share: {float(model_health_summary.get('top_self_transition_share', 0.0)):.3f}",
         f"- effective_state_usage: {float(model_health_summary.get('effective_state_usage', 0.0)):.3f}",
         f"- degenerate_transition_warning: {bool(model_health_summary.get('degenerate_transition_warning', False))}",
         f"- low_information_observed_layer_warning: {bool(model_health_summary.get('low_information_observed_layer_warning', False))}",
+        f"- maneuvering_only_state_profile_warning: {bool(model_health_summary.get('maneuvering_only_state_profile_warning', False))}",
+    ]
+
+    lines += [
         "",
-        "## 6) State semantics quality",
+        "## 7) State semantics quality",
         f"- semantic_assignment_quality: {semantic_quality}",
         f"- semantic_assignment: {model_health_summary.get('semantic_assignment', {})}",
         f"- semantic_confidence: {model_health_summary.get('semantic_confidence', {})}",
-        "",
-        "## 7) Most likely hidden-state interpretation",
+        f"- confirmed states: {confirmed_states}",
+        f"- assigned but unconfirmed states: {unconfirmed_states}",
+        f"- all assigned states: {assigned_states}",
         f"- {interpretation_line}",
         "",
         _frame_to_markdown(profile_view) if not profile_view.empty else "State profile is unavailable.",
+    ]
+
+    lines += [
         "",
         "## 8) Recommendation",
         f"- Profile: {recommendation_profile}",
         f"- {recommendation}",
         "",
-        "## 9) Limitations / caveats",
+        "## 9) Limitations",
     ]
     if limitations:
         for item in limitations:
@@ -591,7 +783,7 @@ def _write_inverse_report(
 
     lines += [
         "",
-        "## 10) Next actions",
+        "## 10) Concrete next actions",
     ]
     if next_actions:
         for idx, action in enumerate(next_actions, start=1):
@@ -602,7 +794,7 @@ def _write_inverse_report(
     lines += [
         "",
         "### Episode Preview",
-        _frame_to_markdown(sample_rows),
+        _frame_to_markdown(sample_rows) if not sample_rows.empty else "Episode preview is unavailable.",
         "",
         "### Transition Preview",
         _frame_to_markdown(transition_view) if not transition_view.empty else "No transitions available.",
@@ -703,6 +895,7 @@ def run_inverse_diagnostic_cycle(
         metadata_audit_result,
         diagnostics_dir=dirs["diagnostics"],
     )
+    metadata_field_coverage_path = dirs["diagnostics"] / "metadata_field_coverage.csv"
 
     model_file = Path(model_path) if model_path else (dirs["models"] / "inverse_hmm.pkl")
 
@@ -762,7 +955,10 @@ def run_inverse_diagnostic_cycle(
 
     observed_summary = _observed_layer_summary(analysis_df)
     transitions = _transition_summary(analysis_df)
-    sequence_audit_result = build_sequence_audit(analysis_df)
+    sequence_audit_result = build_sequence_audit(
+        analysis_df,
+        extraction_info=canonical_result.extraction_info,
+    )
     sequence_audit_paths = write_sequence_audit(sequence_audit_result, diagnostics_dir=dirs["diagnostics"])
     seq_summary = {
         "high_quality_share": float(sequence_audit_result.summary.get("high_quality_share", 0.0)),
@@ -793,17 +989,62 @@ def run_inverse_diagnostic_cycle(
         sequence_summary=seq_summary,
         model_health_summary=model_health_result.summary,
     )
+    semantic_assignment: dict[str, int] = {}
+    for key, value in (canonical_map.get("semantic_assignment", {}) or {}).items():
+        try:
+            semantic_assignment[str(key)] = int(value)
+        except Exception:
+            continue
+    semantic_confidence = {
+        str(k): float(v) for k, v in (canonical_map.get("semantic_confidence", {}) or {}).items()
+    }
 
     episode_analysis_path = dirs["diagnostics"] / "episode_analysis.csv"
     state_profile_path = dirs["diagnostics"] / "state_profile.csv"
     quality_diagnostics_path = dirs["diagnostics"] / "quality_diagnostics.json"
+    run_summary_path = dirs["diagnostics"] / "run_summary.json"
     report_path = dirs["reports"] / "inverse_diagnostic_report.md"
 
     analysis_df.to_csv(episode_analysis_path, index=False)
 
     state_profile.to_csv(state_profile_path, index=False)
 
+    run_summary_payload = {
+        "input_path": str(input_resolved),
+        "output_dir": str(output_dir),
+        "rows_total": int(len(canonical_df)),
+        "rows_train_eligible": int(rows_train),
+        "observation_mapping_version": str(observation_cfg.version),
+        "semantic_assignment_quality": str(model_health_result.summary.get("semantic_assignment_quality", "failed")),
+        "semantic_assignment": semantic_assignment,
+        "semantic_confidence": semantic_confidence,
+        "recommendation_profile": recommendation_profile,
+        "recommendation": recommendation,
+        "observed_layer_summary": observed_summary,
+        "sequence_quality_summary": seq_summary,
+        "direct_finish_observations_available": bool(
+            observation_audit_result.summary.get("direct_finish_observations_available", False)
+        ),
+        "unsupported_score_values": [
+            int(x) for x in (observation_audit_result.summary.get("unsupported_score_values", []) or [])
+        ],
+        "unsupported_finish_columns_with_positive_values": [
+            str(x)
+            for x in (observation_audit_result.summary.get("unsupported_finish_columns_with_positive_values", []) or [])
+        ],
+        "episode_time_informative": bool(metadata_audit_result.summary.get("episode_time_informative", False)),
+        "weight_class_informative": bool(metadata_audit_result.summary.get("weight_class_informative", False)),
+        "surrogate_based_segmentation": bool(
+            sequence_audit_result.summary.get("surrogate_based_segmentation", False)
+        ),
+    }
+    run_summary_path.write_text(
+        json.dumps(run_summary_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
     quality_payload = {
+        "run_summary": run_summary_payload,
         "observed_layer_summary": observed_summary,
         "sequence_quality_summary": seq_summary,
         "transitions_summary": transitions,
@@ -843,13 +1084,6 @@ def run_inverse_diagnostic_cycle(
             transition_summary=transitions,
         )
 
-    semantic_assignment = {
-        str(k): int(v) for k, v in (canonical_map.get("semantic_assignment", {}) or {}).items()
-    }
-    semantic_confidence = {
-        str(k): float(v) for k, v in (canonical_map.get("semantic_confidence", {}) or {}).items()
-    }
-
     artifacts = [
         Path(preprocessing.exports["raw_csv"]),
         cleaned_data_path,
@@ -860,11 +1094,14 @@ def run_inverse_diagnostic_cycle(
         episode_analysis_path,
         state_profile_path,
         quality_diagnostics_path,
+        run_summary_path,
         Path(observation_audit_paths["observation_audit_json"]),
         Path(observation_audit_paths["observation_mapping_crosstab_csv"]),
         Path(observation_audit_paths["raw_finish_signal_summary_csv"]),
+        Path(observation_audit_paths["unsupported_finish_values_csv"]),
         Path(observation_audit_paths["unsupported_score_values_csv"]),
         Path(metadata_extraction_summary_path),
+        Path(metadata_field_coverage_path),
         Path(sequence_audit_paths["sequence_audit_json"]),
         Path(sequence_audit_paths["sequence_length_distribution_csv"]),
         Path(sequence_audit_paths["suspicious_sequences_csv"]),
@@ -888,8 +1125,10 @@ def run_inverse_diagnostic_cycle(
         observation_audit_path=str(observation_audit_paths["observation_audit_json"]),
         observation_mapping_crosstab_path=str(observation_audit_paths["observation_mapping_crosstab_csv"]),
         raw_finish_signal_summary_path=str(observation_audit_paths["raw_finish_signal_summary_csv"]),
+        unsupported_finish_values_path=str(observation_audit_paths["unsupported_finish_values_csv"]),
         unsupported_score_values_path=str(observation_audit_paths["unsupported_score_values_csv"]),
         metadata_extraction_summary_path=str(metadata_extraction_summary_path),
+        metadata_field_coverage_path=str(metadata_field_coverage_path),
         sequence_audit_path=str(sequence_audit_paths["sequence_audit_json"]),
         sequence_length_distribution_path=str(sequence_audit_paths["sequence_length_distribution_csv"]),
         suspicious_sequences_path=str(sequence_audit_paths["suspicious_sequences_csv"]),
@@ -904,13 +1143,12 @@ def run_inverse_diagnostic_cycle(
         semantic_confidence=semantic_confidence,
         observed_layer_summary=observed_summary,
         sequence_quality_summary=seq_summary,
-        semantic_assignment_quality=str(
-            model_health_result.summary.get("semantic_assignment_quality", "failed_semantic_assignment")
-        ),
+        semantic_assignment_quality=str(model_health_result.summary.get("semantic_assignment_quality", "failed")),
         recommendation_profile=recommendation_profile,
         recommendation=recommendation,
         transitions_summary=transitions,
         created_artifacts=[str(p) for p in artifacts if Path(p).exists()],
+        run_summary_path=str(run_summary_path),
     )
 
     log("[7/7] Inverse diagnostic cycle completed.")

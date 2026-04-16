@@ -38,6 +38,11 @@ def test_observation_audit_detects_direct_vs_score_and_unsupported_signals(tmp_p
     assert float(audit.summary["direct_finish_positive_share"]) > 0.0
     assert 5 in audit.summary["unsupported_score_values"]
     assert "custom_finish_signal" in audit.summary["unsupported_finish_columns_with_positive_values"]
+    assert bool(audit.summary["mapping_gap_detected"]) is True
+    assert int(audit.summary["unmapped_finish_positive_rows"]) > 0
+    assert int(audit.summary["mapped_finish_positive_rows"]) > 0
+    assert not audit.unsupported_finish_values.empty
+    assert "custom_finish_signal" in set(audit.unsupported_finish_values["source_column_name"].astype(str).tolist())
 
     resolution_share = audit.summary.get("resolution_type_share", {})
     assert float(resolution_share.get("direct_finish_signal", 0.0)) > 0.0
@@ -48,6 +53,7 @@ def test_observation_audit_detects_direct_vs_score_and_unsupported_signals(tmp_p
         "observation_audit_json",
         "observation_mapping_crosstab_csv",
         "raw_finish_signal_summary_csv",
+        "unsupported_finish_values_csv",
         "unsupported_score_values_csv",
     ):
         assert Path(written[key]).exists()

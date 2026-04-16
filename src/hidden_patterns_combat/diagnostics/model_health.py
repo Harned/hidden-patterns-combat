@@ -8,20 +8,50 @@ from typing import Any
 import pandas as pd
 
 
+SEMANTIC_CONFIDENCE_STABLE_THRESHOLD = 0.35
+
+
 @dataclass
 class ModelHealthResult:
     summary: dict[str, Any]
 
 
-def _semantic_assignment_quality(semantic_assignment: dict[str, int]) -> str:
-    required = {"S1", "S2", "S3"}
-    assigned = {str(k) for k, v in semantic_assignment.items() if v is not None}
-    assigned_required = required.intersection(assigned)
-    if len(assigned_required) >= 3:
-        return "full_semantic_assignment"
-    if len(assigned_required) >= 1:
-        return "partial_semantic_assignment"
-    return "failed_semantic_assignment"
+def _semantic_assignment_quality(
+    semantic_assignment: dict[str, int],
+    semantic_confidence: dict[str, float],
+) -> tuple[str, list[str], list[str], bool, bool]:
+    required = ("S1", "S2", "S3")
+    assigned_states: list[str] = []
+    confirmed_states: list[str] = []
+
+    for semantic_name in required:
+        state_id = semantic_assignment.get(semantic_name)
+        if state_id is None:
+            continue
+        assigned_states.append(semantic_name)
+        confidence = float(semantic_confidence.get(semantic_name, 0.0))
+        if confidence >= SEMANTIC_CONFIDENCE_STABLE_THRESHOLD:
+            confirmed_states.append(semantic_name)
+
+    complete_assignment = len(assigned_states) == len(required)
+    stable_assignment = complete_assignment and len(confirmed_states) == len(required)
+
+    if stable_assignment:
+        return "full", assigned_states, confirmed_states, complete_assignment, stable_assignment
+    # Partial quality requires at least one *confirmed* semantic state.
+    # Purely nominal assignments without confidence support are treated as failed.
+    if confirmed_states:
+        return "partial", assigned_states, confirmed_states, complete_assignment, stable_assignment
+    return "failed", assigned_states, confirmed_states, complete_assignment, stable_assignment
+
+
+def _semantic_quality_legacy_label(semantic_quality: str) -> str:
+    mapping = {
+        "full": "full_semantic_assignment",
+        "partial": "partial_semantic_assignment",
+        "failed": "failed_semantic_assignment",
+    }
+    return mapping.get(str(semantic_quality), "failed_semantic_assignment")
 
 
 def build_model_health_summary(
@@ -65,7 +95,10 @@ def build_model_health_summary(
     semantic_confidence = {
         str(k): float(v) for k, v in (canonical_map.get("semantic_confidence", {}) or {}).items()
     }
-    semantic_quality = _semantic_assignment_quality(semantic_assignment)
+    semantic_quality, assigned_states, confirmed_states, complete_assignment, stable_assignment = _semantic_assignment_quality(
+        semantic_assignment,
+        semantic_confidence,
+    )
 
     low_information_observed_layer_warning = bool(
         observed_summary.get("direct_share", 0.0) < 0.05
@@ -90,11 +123,16 @@ def build_model_health_summary(
         )
     if maneuvering_only_profile_warning:
         warnings.append("State profiles collapse to maneuvering-like links; semantic contrast is weak.")
-    if semantic_quality != "full_semantic_assignment":
+    if semantic_quality == "partial":
         warnings.append(
-            "State semantics did not stabilize sufficiently for confident KFV/VUP interpretation."
+            "State semantics are only partially confirmed; avoid hard interpretation for unconfirmed states."
+        )
+    if semantic_quality == "failed":
+        warnings.append(
+            "State semantics did not stabilize on current data; confident KFV/VUP assignment is unsafe."
         )
 
+    unconfirmed_states = [state for state in assigned_states if state not in set(confirmed_states)]
     summary: dict[str, Any] = {
         "rows_total": int(len(frame)),
         "n_states": int(n_states),
@@ -105,6 +143,15 @@ def build_model_health_summary(
         "semantic_assignment": semantic_assignment,
         "semantic_confidence": semantic_confidence,
         "semantic_assignment_quality": semantic_quality,
+        "semantic_assignment_quality_legacy": _semantic_quality_legacy_label(semantic_quality),
+        "semantic_assignment_complete": bool(complete_assignment),
+        "semantic_assignment_stable": bool(stable_assignment),
+        "semantic_assignment_confidence_threshold": float(SEMANTIC_CONFIDENCE_STABLE_THRESHOLD),
+        "semantic_assigned_states": assigned_states,
+        "semantic_confirmed_states": confirmed_states,
+        "semantic_unconfirmed_states": unconfirmed_states,
+        "semantic_confirmed_states_count": int(len(confirmed_states)),
+        "semantic_unconfirmed_states_count": int(len(unconfirmed_states)),
         "degenerate_transition_warning": degenerate_transition_warning,
         "low_information_observed_layer_warning": low_information_observed_layer_warning,
         "maneuvering_only_state_profile_warning": maneuvering_only_profile_warning,

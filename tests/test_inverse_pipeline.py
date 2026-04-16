@@ -78,6 +78,6 @@ def test_inverse_pipeline_end_to_end_with_quality_columns(tmp_path: Path) -> Non
     assert result.recommendation.strip() != ""
 
     report_text = Path(result.report_path).read_text(encoding="utf-8")
-    assert "## 3) Observed layer quality" in report_text
-    assert "## 4) Sequence segmentation quality" in report_text
-    assert "## 9) Limitations / caveats" in report_text
+    assert "## 2) Observed layer quality" in report_text
+    assert "## 5) Sequence segmentation quality" in report_text
+    assert "## 9) Limitations" in report_text

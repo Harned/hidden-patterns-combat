@@ -34,8 +34,23 @@ def _safe_mode(series: pd.Series, default: str = "unknown") -> str:
     return str(mode.iloc[0])
 
 
-def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
+def _reason_counts(series: pd.Series, *, max_items: int = 10) -> dict[str, int]:
+    counts = series.astype(str).value_counts().head(max_items)
+    return {str(k): int(v) for k, v in counts.items()}
+
+
+def build_sequence_audit(
+    analysis_df: pd.DataFrame,
+    extraction_info: dict[str, Any] | None = None,
+) -> SequenceAuditResult:
     frame = analysis_df.copy().reset_index(drop=True)
+    info = extraction_info or {}
+    selected_columns = info.get("selected_columns", {}) or {}
+    field_candidates = info.get("field_candidates", {}) or {}
+
+    explicit_fields_checked = [str(x) for x in (field_candidates.get("explicit_sequence_id") or [])]
+    explicit_source_column = selected_columns.get("explicit_sequence_id")
+
     if frame.empty:
         empty_len = pd.DataFrame(columns=["sequence_length", "sequence_count", "share_of_sequences"])
         empty_susp = pd.DataFrame(columns=["sequence_id", "sequence_length", "suspicion_reasons"])
@@ -53,7 +68,18 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
             "suspicious_long_sequences": 0,
             "suspicious_flat_sequences": 0,
             "explicit_sequence_available": False,
+            "explicit_sequence_fields_checked": explicit_fields_checked,
+            "explicit_sequence_source_column": None if explicit_source_column is None else str(explicit_source_column),
+            "explicit_sequence_fields_found": [],
+            "explicit_sequence_fields_missing": explicit_fields_checked,
             "explicit_unavailable_reasons": [],
+            "surrogate_based_segmentation": True,
+            "surrogate_reason_counts": {},
+            "fallback_reason_counts": {},
+            "sequence_context_source_columns": {},
+            "sequence_context_missing_fields": ["weight_class", "opponent_name", "tournament_name", "event_date"],
+            "suspicious_potential_multi_bout_sequences": 0,
+            "potential_multi_bout_sequence_ids_preview": [],
             "warnings": ["No rows in analysis dataframe for sequence audit."],
         }
         return SequenceAuditResult(summary=summary, length_distribution=empty_len, suspicious_sequences=empty_susp)
@@ -68,6 +94,10 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
     frame["sequence_quality_flag"] = frame.get(
         "sequence_quality_flag",
         pd.Series(["low"] * len(frame), index=frame.index),
+    ).astype(str)
+    frame["sequence_quality_reason"] = frame.get(
+        "sequence_quality_reason",
+        pd.Series(["unknown"] * len(frame), index=frame.index),
     ).astype(str)
     frame["observed_zap_class"] = frame.get(
         "observed_zap_class",
@@ -100,6 +130,7 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
                 "sequence_length": int(len(group)),
                 "resolution_type": _safe_mode(group["sequence_resolution_type"]),
                 "quality_flag": _safe_mode(group["sequence_quality_flag"]),
+                "quality_reason_mode": _safe_mode(group["sequence_quality_reason"]),
                 "observed_unique_classes": observed_unique,
                 "hidden_unique_states": hidden_unique,
                 "no_score_share": float((group["observed_zap_class"] == "no_score").mean()),
@@ -139,6 +170,7 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
                 "sequence_length",
                 "resolution_type",
                 "quality_flag",
+                "quality_reason_mode",
                 "observed_unique_classes",
                 "hidden_unique_states",
                 "no_score_share",
@@ -153,7 +185,6 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
             ascending=[False, True],
         ).reset_index(drop=True)
 
-    rows_total = max(1, int(len(frame)))
     explicit_share = float((frame["sequence_resolution_type"] == "explicit").mean())
     surrogate_share = float((frame["sequence_resolution_type"] == "surrogate").mean())
     fallback_share = float((frame["sequence_resolution_type"] == "fallback").mean())
@@ -171,6 +202,38 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
         counts = reason_series.value_counts().head(8)
         explicit_reasons = [f"{idx}: {int(val)}" for idx, val in counts.items()]
 
+    surrogate_reason_counts = _reason_counts(
+        frame.loc[frame["sequence_resolution_type"] == "surrogate", "sequence_quality_reason"]
+    )
+    fallback_reason_counts = _reason_counts(
+        frame.loc[frame["sequence_resolution_type"] == "fallback", "sequence_quality_reason"]
+    )
+
+    potential_multi_bout_ids: list[str] = []
+    if not suspicious_sequences.empty:
+        multi_mask = (
+            suspicious_sequences["suspicion_reasons"].astype(str).str.contains("suspiciously_long_sequence")
+            | (
+                suspicious_sequences["quality_reason_mode"].astype(str).isin({"surrogate_no_context", "surrogate_partial_context"})
+                & (suspicious_sequences["sequence_length"].astype(int) >= max(10, long_threshold // 2))
+            )
+        )
+        potential_multi_bout_ids = (
+            suspicious_sequences.loc[multi_mask, "sequence_id"].astype(str).head(30).tolist()
+        )
+
+    sequence_context_source_columns = {
+        field: (None if selected_columns.get(field) is None else str(selected_columns.get(field)))
+        for field in ["weight_class", "opponent_name", "tournament_name", "event_date"]
+    }
+    sequence_context_missing_fields = [
+        field for field, source in sequence_context_source_columns.items() if not source
+    ]
+
+    explicit_fields_found = []
+    if explicit_source_column:
+        explicit_fields_found.append(str(explicit_source_column))
+
     warnings: list[str] = []
     if explicit_share <= 0.0:
         warnings.append(
@@ -182,6 +245,10 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
         warnings.append("A substantial share of rows has low sequence quality.")
     if not suspicious_sequences.empty:
         warnings.append("Suspicious sequences were detected; inspect suspicious_sequences.csv.")
+    if sequence_context_missing_fields:
+        warnings.append(
+            "Some bout-context fields are missing; surrogate segmentation may merge multiple bouts."
+        )
 
     summary: dict[str, Any] = {
         "rows_total": int(len(frame)),
@@ -211,7 +278,18 @@ def build_sequence_audit(analysis_df: pd.DataFrame) -> SequenceAuditResult:
         if not suspicious_sequences.empty
         else 0,
         "explicit_sequence_available": bool(explicit_share > 0.0),
+        "explicit_sequence_fields_checked": explicit_fields_checked,
+        "explicit_sequence_source_column": None if explicit_source_column is None else str(explicit_source_column),
+        "explicit_sequence_fields_found": explicit_fields_found,
+        "explicit_sequence_fields_missing": [] if explicit_fields_found else explicit_fields_checked,
         "explicit_unavailable_reasons": explicit_reasons,
+        "surrogate_based_segmentation": bool(explicit_share <= 0.0 and surrogate_share > 0.0),
+        "surrogate_reason_counts": surrogate_reason_counts,
+        "fallback_reason_counts": fallback_reason_counts,
+        "sequence_context_source_columns": sequence_context_source_columns,
+        "sequence_context_missing_fields": sequence_context_missing_fields,
+        "suspicious_potential_multi_bout_sequences": int(len(potential_multi_bout_ids)),
+        "potential_multi_bout_sequence_ids_preview": potential_multi_bout_ids,
         "warnings": warnings,
     }
 

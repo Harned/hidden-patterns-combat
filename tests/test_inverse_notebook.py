@@ -51,6 +51,8 @@ def test_inverse_notebook_loader_reads_extended_diagnostics(tmp_path: Path) -> N
     )
 
     artifacts = load_inverse_artifacts(output_dir)
+    assert isinstance(artifacts.run_summary, dict)
+    assert "semantic_assignment_quality" in artifacts.run_summary
     assert not artifacts.episode_analysis.empty
     assert not artifacts.state_profile.empty
     assert isinstance(artifacts.observation_audit, dict)
@@ -59,5 +61,37 @@ def test_inverse_notebook_loader_reads_extended_diagnostics(tmp_path: Path) -> N
     assert isinstance(artifacts.model_health_summary, dict)
     assert not artifacts.observation_mapping_crosstab.empty
     assert artifacts.raw_finish_signal_summary.shape[0] >= 0
+    assert artifacts.unsupported_finish_values.shape[0] >= 0
+    assert artifacts.metadata_field_coverage.shape[0] >= 0
     assert artifacts.sequence_length_distribution.shape[0] >= 0
     assert artifacts.suspicious_sequences.shape[0] >= 0
+    assert isinstance(artifacts.artifact_status, type(artifacts.episode_analysis))
+    assert "artifact_name" in artifacts.artifact_status.columns
+    assert "status" in artifacts.artifact_status.columns
+
+
+def test_inverse_notebook_loader_reports_missing_artifacts(tmp_path: Path) -> None:
+    excel_path = _make_inverse_excel(tmp_path / "inverse_demo_missing.xlsx")
+    output_dir = tmp_path / "inverse_artifacts_missing"
+
+    run_inverse_diagnostic_cycle(
+        input_path=excel_path,
+        output_dir=output_dir,
+        retrain=True,
+        generate_plots=False,
+        verbose=False,
+    )
+
+    missing_sequence = output_dir / "diagnostics" / "sequence_audit.json"
+    if missing_sequence.exists():
+        missing_sequence.unlink()
+    missing_run_summary = output_dir / "diagnostics" / "run_summary.json"
+    if missing_run_summary.exists():
+        missing_run_summary.unlink()
+
+    artifacts = load_inverse_artifacts(output_dir)
+    status = artifacts.artifact_status.set_index("artifact_name")["status"].to_dict()
+    assert status.get("sequence_audit") == "missing"
+    assert status.get("run_summary") == "missing"
+    assert any("sequence_audit" in warning for warning in artifacts.loader_warnings)
+    assert any("run_summary" in warning for warning in artifacts.loader_warnings)
