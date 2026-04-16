@@ -21,3 +21,5 @@ def test_cli_inverse_mode_is_explicit() -> None:
     parser = build_parser()
     inverse = parser.parse_args(["inverse-diagnostic", "--excel", "x.xlsx"])
     assert inverse.command == "inverse-diagnostic"
+    assert inverse.cleanup_mode is None
+    assert inverse.isolated_run is False

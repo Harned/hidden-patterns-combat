@@ -58,6 +58,8 @@ def test_inverse_pipeline_end_to_end_with_quality_columns(tmp_path: Path) -> Non
     assert Path(result.state_profile_path).exists()
     assert Path(result.quality_diagnostics_path).exists()
     assert Path(result.report_path).exists()
+    assert Path(result.run_manifest_path).exists()
+    assert result.final_output_dir == str(output_dir)
 
     analysis = pd.read_csv(result.episode_analysis_path)
     assert "observed_zap_class" in analysis.columns

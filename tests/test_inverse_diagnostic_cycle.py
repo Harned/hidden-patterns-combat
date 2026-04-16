@@ -80,6 +80,9 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     )
 
     assert Path(result.cleaned_data_path).exists()
+    assert result.run_id
+    assert Path(result.run_manifest_path).exists()
+    assert Path(result.final_output_dir) == output_dir
     assert Path(result.canonical_episode_table_path).exists()
     assert Path(result.observed_sequence_path).exists()
     assert Path(result.hidden_feature_layer_path).exists()
@@ -99,11 +102,13 @@ def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
     assert Path(result.suspicious_sequences_path).exists()
     assert Path(result.model_health_summary_path).exists()
     assert Path(result.report_path).exists()
+    assert Path(result.run_manifest_path).name == "run_manifest.json"
+    assert len(result.created_files) >= len(result.created_artifacts)
 
     for required_dir in ["cleaned", "features", "diagnostics", "plots", "reports"]:
-        assert (output_dir / required_dir).exists()
-    assert (output_dir / "plots" / "hidden_state_sequence.png").exists()
-    assert (output_dir / "plots" / "state_probability_profile.png").exists()
+        assert (Path(result.final_output_dir) / required_dir).exists()
+    assert (Path(result.final_output_dir) / "plots" / "hidden_state_sequence.png").exists()
+    assert (Path(result.final_output_dir) / "plots" / "state_probability_profile.png").exists()
 
     analysis = pd.read_csv(result.episode_analysis_path)
     assert "observed_zap_class" in analysis.columns

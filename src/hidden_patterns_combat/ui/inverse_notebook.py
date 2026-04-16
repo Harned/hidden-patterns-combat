@@ -7,9 +7,18 @@ from pathlib import Path
 import pandas as pd
 
 
+_MANIFEST_NAME = "run_manifest.json"
+_PIPELINE_ARTIFACT_DIRS = ("cleaned", "features", "diagnostics", "plots", "reports")
+
+
 @dataclass
 class InverseNotebookArtifacts:
     output_dir: Path
+    run_manifest_path: Path
+    run_manifest: dict[str, object]
+    manifest_warnings: list[str]
+    missing_expected_artifacts: list[str]
+    unexpected_artifacts: list[str]
     run_summary: dict[str, object]
     episode_analysis: pd.DataFrame
     state_profile: pd.DataFrame
@@ -29,6 +38,13 @@ class InverseNotebookArtifacts:
     plot_paths: dict[str, Path]
     artifact_status: pd.DataFrame
     loader_warnings: list[str]
+
+
+def _normalize_rel_path(value: object) -> str:
+    text = str(value).strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text
 
 
 def _read_csv_with_status(path: Path) -> tuple[pd.DataFrame, str, str]:
@@ -79,10 +95,34 @@ def _status_row(artifact_name: str, path: Path, artifact_type: str, status: str,
     }
 
 
-def load_inverse_artifacts(output_dir: str | Path) -> InverseNotebookArtifacts:
+def _collect_pipeline_files(output_dir: Path) -> set[str]:
+    files: set[str] = set()
+    for dirname in _PIPELINE_ARTIFACT_DIRS:
+        root = output_dir / dirname
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file():
+                files.add(_normalize_rel_path(path.relative_to(output_dir)))
+    manifest_path = output_dir / _MANIFEST_NAME
+    if manifest_path.exists():
+        files.add(_MANIFEST_NAME)
+    return files
+
+
+def load_inverse_artifacts(
+    output_dir: str | Path,
+    *,
+    expected_run_id: str | None = None,
+    expected_run_fingerprint: str | None = None,
+    expected_params: dict[str, object] | None = None,
+) -> InverseNotebookArtifacts:
     out = Path(output_dir)
     status_rows: list[dict[str, object]] = []
     loader_warnings: list[str] = []
+    manifest_warnings: list[str] = []
+    missing_expected_artifacts: list[str] = []
+    unexpected_artifacts: list[str] = []
 
     def _record(artifact_name: str, path: Path, artifact_type: str, status: str, detail: str) -> None:
         status_rows.append(_status_row(artifact_name, path, artifact_type, status, detail))
@@ -103,6 +143,72 @@ def load_inverse_artifacts(output_dir: str | Path) -> InverseNotebookArtifacts:
         value, status, detail = _read_text_with_status(path)
         _record(artifact_name, path, "text", status, detail)
         return value
+
+    manifest_path = out / _MANIFEST_NAME
+    run_manifest = _load_json("run_manifest", manifest_path)
+    if not run_manifest:
+        manifest_warnings.append(f"run_manifest_missing_or_invalid: {manifest_path}")
+    else:
+        status = str(run_manifest.get("status", "unknown")).strip().lower()
+        if status != "completed":
+            manifest_warnings.append(f"manifest_status_is_not_completed: {status}")
+
+        manifest_expected = sorted(
+            {
+                _normalize_rel_path(item)
+                for item in (run_manifest.get("expected_artifact_files", []) or [])
+                if _normalize_rel_path(item)
+            }
+        )
+        manifest_created = sorted(
+            {
+                _normalize_rel_path(item)
+                for item in (run_manifest.get("created_artifact_files", []) or [])
+                if _normalize_rel_path(item)
+            }
+        )
+        actual_files = _collect_pipeline_files(out)
+
+        if not manifest_expected:
+            manifest_warnings.append("manifest_missing_expected_artifact_files")
+        else:
+            missing_expected_artifacts = sorted(
+                [rel for rel in manifest_expected if not (out / rel).exists()]
+            )
+            for rel in missing_expected_artifacts:
+                manifest_warnings.append(f"missing_expected_artifact: {rel}")
+
+        missing_created = sorted([rel for rel in manifest_created if not (out / rel).exists()])
+        for rel in missing_created:
+            manifest_warnings.append(f"missing_created_artifact: {rel}")
+
+        baseline = set(manifest_expected) | set(manifest_created)
+        unexpected_artifacts = sorted([rel for rel in actual_files if rel not in baseline])
+        for rel in unexpected_artifacts:
+            manifest_warnings.append(f"unexpected_artifact_not_in_manifest: {rel}")
+
+        manifest_run_id = str(run_manifest.get("run_id", "")).strip()
+        if expected_run_id and manifest_run_id and manifest_run_id != str(expected_run_id):
+            manifest_warnings.append(
+                f"run_id_mismatch: expected={expected_run_id} manifest={manifest_run_id}"
+            )
+        if expected_run_id and not manifest_run_id:
+            manifest_warnings.append("manifest_run_id_missing")
+
+        manifest_fingerprint = str(run_manifest.get("run_fingerprint", "")).strip()
+        if expected_run_fingerprint and manifest_fingerprint != str(expected_run_fingerprint):
+            manifest_warnings.append(
+                "run_fingerprint_mismatch: "
+                f"expected={expected_run_fingerprint} manifest={manifest_fingerprint or 'missing'}"
+            )
+
+        params = expected_params or {}
+        for key, expected_value in params.items():
+            actual_value = run_manifest.get(key)
+            if actual_value != expected_value:
+                manifest_warnings.append(
+                    f"manifest_param_mismatch:{key}: expected={expected_value} actual={actual_value}"
+                )
 
     episode_analysis_path = out / "diagnostics" / "episode_analysis.csv"
     state_profile_path = out / "diagnostics" / "state_profile.csv"
@@ -146,14 +252,22 @@ def load_inverse_artifacts(output_dir: str | Path) -> InverseNotebookArtifacts:
         "hidden_state_sequence": out / "plots" / "hidden_state_sequence.png",
         "state_probability_profile": out / "plots" / "state_probability_profile.png",
         "transition_distribution": out / "plots" / "transition_distribution.png",
+        "scenario_success_frequencies": out / "plots" / "scenario_success_frequencies.png",
+        "athlete_comparative_profile": out / "plots" / "athlete_comparative_profile.png",
     }
 
     artifact_status = pd.DataFrame(status_rows)
     if not artifact_status.empty:
         artifact_status = artifact_status.sort_values(["status", "artifact_name"]).reset_index(drop=True)
 
+    all_warnings = loader_warnings + manifest_warnings
     return InverseNotebookArtifacts(
         output_dir=out,
+        run_manifest_path=manifest_path,
+        run_manifest=run_manifest,
+        manifest_warnings=manifest_warnings,
+        missing_expected_artifacts=missing_expected_artifacts,
+        unexpected_artifacts=unexpected_artifacts,
         run_summary=run_summary,
         episode_analysis=episode_analysis,
         state_profile=state_profile,
@@ -172,7 +286,7 @@ def load_inverse_artifacts(output_dir: str | Path) -> InverseNotebookArtifacts:
         report_markdown=report_markdown,
         plot_paths={k: v for k, v in plot_paths.items() if v.exists()},
         artifact_status=artifact_status,
-        loader_warnings=loader_warnings,
+        loader_warnings=all_warnings,
     )
 
 

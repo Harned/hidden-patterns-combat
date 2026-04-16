@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from hidden_patterns_combat.config import PipelineConfig
 from hidden_patterns_combat.logging_utils import setup_logging
@@ -136,6 +137,14 @@ def build_parser() -> argparse.ArgumentParser:
     inverse.add_argument("--model-path", default=None, help="Path to inverse model file")
     inverse.add_argument("--no-retrain", action="store_true", help="Reuse existing inverse model")
     inverse.add_argument("--reset-outputs", action="store_true", help="Clear output directory before run")
+    inverse.add_argument(
+        "--cleanup-mode",
+        choices=["none", "artifacts_only", "full_run_dir"],
+        default=None,
+        help="Output cleanup policy before run",
+    )
+    inverse.add_argument("--isolated-run", action="store_true", help="Use dedicated output directory for each run")
+    inverse.add_argument("--run-id", default=None, help="Explicit run id")
     inverse.add_argument("--no-plots", action="store_true", help="Skip plot generation")
 
     return parser
@@ -225,7 +234,21 @@ def main() -> None:
             topology_mode=args.topology_mode,
             generate_plots=not args.no_plots,
             verbose=False,
+            cleanup_mode=args.cleanup_mode,
+            isolated_run=args.isolated_run,
+            run_id=args.run_id,
         ).as_dict()
+
+        print(
+            f"inverse-diagnostic completed: run_id={result['run_id']}, output={result['final_output_dir']}",
+            file=sys.stderr,
+        )
+        print(f"run manifest: {result['run_manifest_path']}", file=sys.stderr)
+        if result.get("cleanup_actions"):
+            print(
+                f"cleanup: mode={result.get('cleanup_mode')} removed={len(result.get('cleanup_actions', []))}",
+                file=sys.stderr,
+            )
     else:  # pragma: no cover
         raise ValueError(f"Unsupported command: {args.command}")
 
