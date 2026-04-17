@@ -1,0 +1,5 @@
+hidden_state,hidden_state_name,episodes_count,confidence,maneuver_right_code,maneuver_left_code,kfv_capture_code,kfv_grip_code,kfv_wrap_code,kfv_hook_code,kfv_post_code,vup_code,key_link
+0,S1,2892,1.0,0.0,0.0,0.0,0.0,0.3796680497925311,0.0,0.0,1.3278008298755186,maneuvering
+1,S2,2892,1.0,0.0,0.0,0.0,0.0,0.3796680497925311,0.0,0.0,1.3278008298755186,kfv
+2,S3,2892,1.0,0.0,0.0,0.0,0.0,0.3796680497925311,0.0,0.0,1.3278008298755186,vup
+3,O,2892,1.0,0.0,0.0,0.0,0.0,0.3796680497925311,0.0,0.0,1.3278008298755186,zap

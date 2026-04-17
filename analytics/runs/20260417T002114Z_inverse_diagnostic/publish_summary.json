@@ -1,0 +1,32 @@
+{
+  "published_at": "2026-04-17T12:41:17Z",
+  "source_run_dir": "artifacts/inverse_diagnostic",
+  "target_run_dir": "analytics/runs/20260417T002114Z_inverse_diagnostic",
+  "run_id": "20260417T002114Z_inverse_diagnostic",
+  "copied_files": [
+    "features/episode_features.csv",
+    "diagnostics/run_summary.json",
+    "diagnostics/quality_diagnostics.json",
+    "diagnostics/state_profile.csv",
+    "diagnostics/transition_matrix.csv",
+    "diagnostics/emission_params.json",
+    "diagnostics/per_episode_viterbi.csv",
+    "reports/inverse_diagnostic_report.md",
+    "run_manifest.json",
+    "plots/athlete_comparative_profile.png",
+    "plots/hidden_state_sequence.png",
+    "plots/scenario_success_frequencies.png",
+    "plots/state_probability_profile.png",
+    "plots/transition_distribution.png"
+  ],
+  "missing_files": [],
+  "manifest_snapshot": {
+    "status": "completed",
+    "run_id": "20260417T002114Z_inverse_diagnostic",
+    "run_fingerprint": "a6be685da888943bb8230b406043e57943ef63ce47bcdfe0d6ee4dea0f932b3c",
+    "input_file_name": "episodes.xlsx",
+    "input_file_hash": "a6856d308cb81d094e8b8d3b68d96d1bd9ebbeb130ca761491d99eabd9487c53",
+    "started_at": "2026-04-17T00:21:14Z",
+    "finished_at": "2026-04-17T00:21:19Z"
+  }
+}

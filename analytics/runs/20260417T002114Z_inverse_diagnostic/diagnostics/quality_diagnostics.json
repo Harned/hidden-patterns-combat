@@ -1,0 +1,293 @@
+{
+  "status": "degenerate",
+  "dominant_state_share": 0.25,
+  "self_transition_share": 0.25,
+  "emission_entropy_per_state": {
+    "O": {
+      "feature_token_entropy": -0.0
+    },
+    "S1": {
+      "feature_token_entropy": -0.0
+    },
+    "S2": {
+      "feature_token_entropy": 0.5479168223247981
+    },
+    "S3": {
+      "feature_token_entropy": 0.8350213596129884
+    }
+  },
+  "kl_emission_vs_marginal": 1.3862943611198346,
+  "observations_lost": 0,
+  "o0_outcome_share": 1.0,
+  "tripwires_triggered": [
+    "o0_outcome_share_gt_0_95"
+  ],
+  "run_summary": {
+    "status": "degenerate",
+    "tripwires_triggered": [
+      "o0_outcome_share_gt_0_95"
+    ]
+  },
+  "observed_layer_summary": {
+    "direct_share": 0.0,
+    "inferred_from_score_share": 0.0,
+    "no_score_rule_share": 1.0,
+    "ambiguous_share": 0.0,
+    "unknown_share": 0.0,
+    "high_conf_share": 1.0,
+    "medium_conf_share": 0.0,
+    "low_conf_share": 0.0
+  },
+  "sequence_quality_summary": {
+    "high_quality_share": 1.0,
+    "medium_quality_share": 0.0,
+    "low_quality_share": 0.0,
+    "explicit_sequence_share": 1.0,
+    "surrogate_sequence_share": 0.0,
+    "fallback_sequence_share": 0.0
+  },
+  "transitions_summary": [
+    {
+      "from_state": 0,
+      "to_state": 1,
+      "from_name": "S1",
+      "to_name": "S2",
+      "count": 2892,
+      "share": 1.0,
+      "is_self_loop": false
+    },
+    {
+      "from_state": 1,
+      "to_state": 2,
+      "from_name": "S2",
+      "to_name": "S3",
+      "count": 2892,
+      "share": 1.0,
+      "is_self_loop": false
+    },
+    {
+      "from_state": 2,
+      "to_state": 3,
+      "from_name": "S3",
+      "to_name": "O",
+      "count": 2892,
+      "share": 1.0,
+      "is_self_loop": false
+    },
+    {
+      "from_state": 3,
+      "to_state": 3,
+      "from_name": "O",
+      "to_name": "O",
+      "count": 2892,
+      "share": 1.0,
+      "is_self_loop": true
+    }
+  ],
+  "topology_compliance": {
+    "total_transitions": 8676,
+    "semantic_known_transitions": 8676,
+    "compliant_transitions": 8676,
+    "topology_compliance_share": 1.0,
+    "topology_compliance_share_overall": 1.0,
+    "violations": []
+  },
+  "state_anchor_alignment": {
+    "rows_total": 11568,
+    "assignment_anchor_match_share": 1.0,
+    "state_anchor_alignment": [
+      {
+        "state_id": 0,
+        "state_name": "S1",
+        "assigned_semantic": "S1",
+        "assigned_semantic_matches_dominant_anchor": true
+      },
+      {
+        "state_id": 1,
+        "state_name": "S2",
+        "assigned_semantic": "S2",
+        "assigned_semantic_matches_dominant_anchor": true
+      },
+      {
+        "state_id": 2,
+        "state_name": "S3",
+        "assigned_semantic": "S3",
+        "assigned_semantic_matches_dominant_anchor": true
+      }
+    ],
+    "maneuvering_only_alignment_warning": false
+  },
+  "finish_proximity": {
+    "finish_like_observed_classes": [
+      "O1",
+      "O2",
+      "O3",
+      "O4",
+      "O5",
+      "O6"
+    ],
+    "state_finish_proximity": [],
+    "closest_state_to_finish": 2,
+    "semantic_s3_state": 2,
+    "s3_is_closest_to_finish": true
+  },
+  "semantic_stability": {
+    "semantic_assignment": {
+      "S1": 0,
+      "S2": 1,
+      "S3": 2,
+      "O": 3
+    },
+    "semantic_confidence": {
+      "S1": 1.0,
+      "S2": 1.0,
+      "S3": 1.0,
+      "O": 1.0
+    },
+    "assignment_complete": true,
+    "assignment_unique": true,
+    "assignment_anchor_match_share": 1.0,
+    "topology_compliance_share": 1.0,
+    "s3_is_closest_to_finish": true,
+    "confidence_min": 1.0,
+    "stability_label": "stable",
+    "warnings": []
+  },
+  "train_composition": {
+    "rows_total": 2892,
+    "rows_train_eligible": 2892,
+    "rows_train_candidate": 2892,
+    "rows_used_for_training": 2892,
+    "weighted_rows_used_for_training": 2892.0,
+    "weighted_rows_candidate": 2892.0,
+    "sequences_total": 284,
+    "sequences_used_for_training": 284,
+    "observation_weighting_policy": {
+      "low_information_rows_used_for_training": 2892,
+      "informative_rows_used_for_training": 0,
+      "low_information_weight_share_used": 1.0
+    },
+    "by_observed_class": [
+      {
+        "observed_zap_class": "O0",
+        "rows": 2892
+      }
+    ],
+    "by_sequence_quality": [
+      {
+        "sequence_quality_flag": "high",
+        "rows_total": 2892,
+        "rows_used_for_train": 2892,
+        "mean_weight_used": 1.0
+      }
+    ],
+    "by_sequence_resolution": [
+      {
+        "sequence_resolution_type": "explicit",
+        "rows_total": 2892,
+        "rows_used_for_train": 2892,
+        "weighted_rows_used": 2892.0
+      }
+    ]
+  },
+  "unsupported_values_assessment": {
+    "rows_total": 2892,
+    "score": {
+      "unsupported_values": [
+        5,
+        6,
+        8,
+        9,
+        10,
+        12
+      ],
+      "unsupported_rows": 48,
+      "unsupported_share": 0.016597510373443983,
+      "assessment": "requires_mapping_review",
+      "recommendation": "Проверить unsupported score values в diagnostics/unsupported_score_values.csv."
+    },
+    "finish": {
+      "unsupported_rows": 0,
+      "unsupported_share": 0.0,
+      "assessment": "none_detected",
+      "recommendation": "Проверить unsupported finish values в diagnostics/unsupported_finish_values.csv."
+    }
+  },
+  "observation_audit_summary": {
+    "mapping_version": "inside_episode_v2",
+    "rows_total": 2892,
+    "direct_finish_observations_available": false,
+    "mapped_finish_positive_rows": 0,
+    "unmapped_finish_positive_rows": 0,
+    "unsupported_finish_columns_with_positive_values": [],
+    "unsupported_score_values": [
+      5,
+      6,
+      8,
+      9,
+      10,
+      12
+    ],
+    "unsupported_finish_values_rows": 0,
+    "warnings": [
+      "unsupported_score_values_detected"
+    ]
+  },
+  "metadata_extraction_summary": {
+    "mapping_version": "inside_episode_v2",
+    "selected_columns": {
+      "athlete_name": "фио борца",
+      "episode_id": "технико-тактический эпизод",
+      "episode_time_sec": "episode_time_fallback",
+      "pause_time_sec": "pause_time_fallback",
+      "score": "баллы"
+    },
+    "informative_fields": [
+      "athlete_name",
+      "episode_id"
+    ],
+    "non_informative_fields": [
+      "episode_time_sec",
+      "pause_time_sec"
+    ],
+    "episode_time_informative": false,
+    "weight_class_informative": false,
+    "field_quality": {
+      "athlete_name": {
+        "informative": true,
+        "source_column": "фио борца",
+        "missing_share": 0.0
+      },
+      "episode_id": {
+        "informative": true,
+        "source_column": "технико-тактический эпизод",
+        "missing_share": 0.0
+      },
+      "episode_time_sec": {
+        "informative": false,
+        "source_column": "episode_time_fallback",
+        "missing_share": 1.0
+      },
+      "pause_time_sec": {
+        "informative": false,
+        "source_column": "pause_time_fallback",
+        "missing_share": 1.0
+      }
+    },
+    "warnings": []
+  },
+  "sequence_audit_summary": {
+    "rows_total": 2892,
+    "n_sequences": 284,
+    "high_quality_share": 1.0,
+    "medium_quality_share": 0.0,
+    "low_quality_share": 0.0,
+    "explicit_sequence_share": 1.0,
+    "surrogate_sequence_share": 0.0,
+    "fallback_sequence_share": 0.0,
+    "surrogate_based_segmentation": false,
+    "suspicious_potential_multi_bout_sequences": 0,
+    "potential_multi_bout_sequence_ids_preview": [],
+    "warnings": []
+  }
+}

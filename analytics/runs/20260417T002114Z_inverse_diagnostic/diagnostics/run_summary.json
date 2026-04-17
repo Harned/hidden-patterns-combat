@@ -1,0 +1,93 @@
+{
+  "run_id": "20260417T002114Z_inverse_diagnostic",
+  "run_fingerprint": "a6be685da888943bb8230b406043e57943ef63ce47bcdfe0d6ee4dea0f932b3c",
+  "status": "degenerate",
+  "input_path": "data/raw/episodes.xlsx",
+  "output_dir": "artifacts/inverse_diagnostic",
+  "run_manifest_path": "artifacts/inverse_diagnostic/run_manifest.json",
+  "rows_total": 2892,
+  "rows_train_eligible": 2892,
+  "rows_train_candidate": 2892,
+  "rows_used_for_training": 2892,
+  "n_sequences": 284,
+  "n_sequences_used_for_training": 284,
+  "observation_mapping_version": "inside_episode_v2",
+  "semantic_assignment_quality": "full",
+  "semantic_assignment": {
+    "S1": 0,
+    "S2": 1,
+    "S3": 2,
+    "O": 3
+  },
+  "semantic_confidence": {
+    "S1": 1.0,
+    "S2": 1.0,
+    "S3": 1.0,
+    "O": 1.0
+  },
+  "semantic_stability_label": "stable",
+  "topology_compliance_share": 1.0,
+  "s3_is_closest_to_finish": true,
+  "semantic_model_usable": true,
+  "recommendation_profile": "vup-gap",
+  "recommendation": "completion_share=0.000, s2_strength=0.380, s3_strength=1.328.",
+  "observed_layer_summary": {
+    "direct_share": 0.0,
+    "inferred_from_score_share": 0.0,
+    "no_score_rule_share": 1.0,
+    "ambiguous_share": 0.0,
+    "unknown_share": 0.0,
+    "high_conf_share": 1.0,
+    "medium_conf_share": 0.0,
+    "low_conf_share": 0.0
+  },
+  "sequence_quality_summary": {
+    "high_quality_share": 1.0,
+    "medium_quality_share": 0.0,
+    "low_quality_share": 0.0,
+    "explicit_sequence_share": 1.0,
+    "surrogate_sequence_share": 0.0,
+    "fallback_sequence_share": 0.0
+  },
+  "primary_cause_state_s2": 1,
+  "secondary_cause_state_s3": 2,
+  "direct_finish_observations_available": false,
+  "unsupported_score_values": [
+    5,
+    6,
+    8,
+    9,
+    10,
+    12
+  ],
+  "unsupported_finish_columns_with_positive_values": [],
+  "unsupported_values_assessment": {
+    "rows_total": 2892,
+    "score": {
+      "unsupported_values": [
+        5,
+        6,
+        8,
+        9,
+        10,
+        12
+      ],
+      "unsupported_rows": 48,
+      "unsupported_share": 0.016597510373443983,
+      "assessment": "requires_mapping_review",
+      "recommendation": "Проверить unsupported score values в diagnostics/unsupported_score_values.csv."
+    },
+    "finish": {
+      "unsupported_rows": 0,
+      "unsupported_share": 0.0,
+      "assessment": "none_detected",
+      "recommendation": "Проверить unsupported finish values в diagnostics/unsupported_finish_values.csv."
+    }
+  },
+  "episode_time_informative": false,
+  "weight_class_informative": false,
+  "surrogate_based_segmentation": false,
+  "tripwires_triggered": [
+    "o0_outcome_share_gt_0_95"
+  ]
+}

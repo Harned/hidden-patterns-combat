@@ -23,3 +23,5 @@ data/processed/
 .DS_Store
 .idea/
 .vscode/
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/

@@ -137,6 +137,25 @@ Notebook frontend:
 - `hidden_state`, `hidden_state_name`
 - `p_state_*`, `confidence`
 
+## Публикация аналитических результатов в репозиторий
+
+Raw-источник остаётся локальным (`data/raw/*` не версионируется), но промежуточные и финальные аналитические артефакты можно публиковать в `analytics/runs/<run_id>/`:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/publish_inverse_artifacts.py \
+  --source artifacts/inverse_diagnostic \
+  --target-root analytics/runs
+```
+
+Опционально, вместе с графиками:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/publish_inverse_artifacts.py \
+  --source artifacts/inverse_diagnostic \
+  --target-root analytics/runs \
+  --include-plots
+```
+
 ## Backward compatibility
 
 Старые команды сохранены:
