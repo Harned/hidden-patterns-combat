@@ -227,6 +227,10 @@ def load_inverse_artifacts(
     metadata_field_coverage_path = out / "diagnostics" / "metadata_field_coverage.csv"
     sequence_length_path = out / "diagnostics" / "sequence_length_distribution.csv"
     suspicious_sequences_path = out / "diagnostics" / "suspicious_sequences.csv"
+    episode_features_path = out / "features" / "episode_features.csv"
+    emission_params_path = out / "diagnostics" / "emission_params.json"
+    transition_matrix_path = out / "diagnostics" / "transition_matrix.csv"
+    per_episode_viterbi_path = out / "diagnostics" / "per_episode_viterbi.csv"
     report_path = out / "reports" / "inverse_diagnostic_report.md"
 
     run_summary = _load_json("run_summary", run_summary_path)
@@ -249,6 +253,10 @@ def load_inverse_artifacts(
     metadata_field_coverage = _load_csv("metadata_field_coverage", metadata_field_coverage_path)
     sequence_length_distribution = _load_csv("sequence_length_distribution", sequence_length_path)
     suspicious_sequences = _load_csv("suspicious_sequences", suspicious_sequences_path)
+    _load_csv("episode_features", episode_features_path)
+    _load_json("emission_params", emission_params_path)
+    _load_csv("transition_matrix", transition_matrix_path)
+    _load_csv("per_episode_viterbi", per_episode_viterbi_path)
     report_markdown = _load_text("report_markdown", report_path)
 
     plot_paths = {

@@ -6,204 +6,124 @@ from pathlib import Path
 
 from openpyxl import Workbook
 import pandas as pd
+import pytest
 
-from hidden_patterns_combat.app.inverse_diagnostic_cycle import (
-    _semantic_stability_report,
-    run_inverse_diagnostic_cycle,
-)
+from hidden_patterns_combat.app.inverse_diagnostic_cycle import run_inverse_diagnostic_cycle
 
 
-def _make_inverse_excel(path: Path) -> Path:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Общее"
+def _header_schema() -> list[tuple[str, str, str]]:
+    schema: list[tuple[str, str, str]] = [
+        ("Идентификация", "Общее", "ФИО борца"),
+        ("Идентификация", "Общее", "№ эпизода"),
+        ("Идентификация", "Общее", "Время эпизода, с."),
+        ("Идентификация", "Общее", "Время паузы, с."),
+        ("Баллы", "Общее", "Баллы"),
+    ]
 
-    ws.append(
+    for i in range(1, 13):
+        schema.append(("S1", "Правосторонняя стойка", f"ПС_{i:02d}"))
+    for i in range(1, 13):
+        schema.append(("S1", "Левосторонняя стойка", f"ЛС_{i:02d}"))
+
+    for i in range(1, 16):
+        schema.append(("S2", "Захваты", f"ЗХ_{i:02d}"))
+    for i in range(1, 4):
+        schema.append(("S2", "Хваты", f"ХВ_{i:02d}"))
+    for i in range(1, 4):
+        schema.append(("S2", "Обхваты", f"ОБ_{i:02d}"))
+    for i in range(1, 5):
+        schema.append(("S2", "Прихваты", f"ПР_{i:02d}"))
+    for i in range(1, 5):
+        schema.append(("S2", "Упоры", f"УП_{i:02d}"))
+
+    for i in range(1, 6):
+        schema.append(("S3", "ВУП", f"ВУП_{i:02d}"))
+
+    schema.extend(
         [
-            None,
-            None,
-            None,
-            "Стойка и маневрирование самбиста (основные в эпизоде)",
-            "Контакты Физического Взаимодействия (захваты, обхваты, прихваты, хваты, упоры)",
-            "Выведение соперника из устойчивого положения (при выполнении n или n1)",
-            "Удержание",
-            "Болевой на руку",
-            "Болевой на ногу",
+            ("O", "ЗАП", "Броски Руками"),
+            ("O", "ЗАП", "Броски Ногами"),
+            ("O", "ЗАП", "Броски Туловищем"),
+            ("O", "ЗАП", "Удержание"),
+            ("O", "ЗАП", "Болевой на руку"),
+            ("O", "ЗАП", "Болевой на ногу"),
         ]
     )
-    ws.append(["ФИО борца", "Технико-тактический эпизод", "Баллы", "m1", "k1", "v1", "h1", "a1", "l1"])
+    return schema
 
-    ws.append(["A", 1, 0, 1, 0, 0, 0, 0, 0])
-    ws.append(["A", 2, 1, 1, 1, 0, 0, 0, 0])
-    ws.append(["A", 3, 2, 0, 1, 0, 1, 0, 0])
-    ws.append(["A", 4, 4, 0, 0, 1, 0, 1, 0])
-    ws.append(["B", 1, 2, 0, 1, 0, 0, 0, 0])
-    ws.append(["B", 2, 3, 0, 0, 1, 0, 0, 0])
-    ws.append(["B", 3, 0, 1, 0, 0, 0, 0, 0])
+
+def _blank_episode_row() -> dict[str, float | str]:
+    row = {leaf: 0 for _, _, leaf in _header_schema()}
+    row["ФИО борца"] = ""
+    row["№ эпизода"] = ""
+    row["Время эпизода, с."] = 0
+    row["Время паузы, с."] = 0
+    row["Баллы"] = 0
+    return row
+
+
+def _make_episode(
+    *,
+    athlete: str,
+    episode_id: int | str,
+    score: float,
+    o_class: str | None,
+    high_counts: bool = False,
+) -> dict[str, float | str]:
+    row = _blank_episode_row()
+    row["ФИО борца"] = athlete
+    row["№ эпизода"] = episode_id
+    row["Время эпизода, с."] = 12
+    row["Время паузы, с."] = 4
+    row["Баллы"] = score
+
+    strength = 3 if high_counts else 1
+    row["ПС_01"] = strength
+    row["ЛС_01"] = 1
+
+    row["ЗХ_01"] = strength
+    row["ХВ_01"] = strength
+    row["ОБ_01"] = 1
+    row["ПР_01"] = 1
+    row["УП_01"] = 1
+
+    row["ВУП_01"] = strength
+
+    if o_class == "O1":
+        row["Броски Руками"] = 1
+    elif o_class == "O2":
+        row["Броски Ногами"] = 1
+    elif o_class == "O3":
+        row["Броски Туловищем"] = 1
+    elif o_class == "O4":
+        row["Удержание"] = 1
+    elif o_class == "O5":
+        row["Болевой на руку"] = 1
+    elif o_class == "O6":
+        row["Болевой на ногу"] = 1
+
+    return row
+
+
+def _write_multilevel_workbook(path: Path, rows: list[dict[str, float | str]]) -> Path:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Эпизоды"
+
+    schema = _header_schema()
+    ws.append([g for g, _, _ in schema])
+    ws.append([s for _, s, _ in schema])
+    ws.append([l for _, _, l in schema])
+
+    leaves = [leaf for _, _, leaf in schema]
+    for row in rows:
+        ws.append([row.get(leaf, 0) for leaf in leaves])
 
     wb.save(path)
     return path
 
 
-def _make_degenerate_inverse_excel(path: Path) -> Path:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Общее"
-
-    ws.append(
-        [
-            None,
-            None,
-            None,
-            "Стойка и маневрирование самбиста (основные в эпизоде)",
-            "Контакты Физического Взаимодействия (захваты, обхваты, прихваты, хваты, упоры)",
-            "Выведение соперника из устойчивого положения (при выполнении n или n1)",
-            "Удержание",
-            "Болевой на руку",
-            "Болевой на ногу",
-        ]
-    )
-    ws.append(["ФИО борца", "Технико-тактический эпизод", "Баллы", "m1", "k1", "v1", "h1", "a1", "l1"])
-
-    for episode_id in range(1, 21):
-        ws.append(["C", episode_id, 0, 1, 0, 0, 0, 0, 0])
-
-    wb.save(path)
-    return path
-
-
-def test_inverse_diagnostic_cycle_end_to_end(tmp_path: Path) -> None:
-    excel_path = _make_inverse_excel(tmp_path / "inverse_demo.xlsx")
-    output_dir = tmp_path / "inverse_artifacts"
-
-    result = run_inverse_diagnostic_cycle(
-        input_path=excel_path,
-        output_dir=output_dir,
-        retrain=True,
-        generate_plots=True,
-        verbose=False,
-    )
-
-    assert Path(result.cleaned_data_path).exists()
-    assert result.run_id
-    assert Path(result.run_manifest_path).exists()
-    assert Path(result.final_output_dir) == output_dir
-    assert Path(result.canonical_episode_table_path).exists()
-    assert Path(result.observed_sequence_path).exists()
-    assert Path(result.hidden_feature_layer_path).exists()
-    assert Path(result.episode_analysis_path).exists()
-    assert Path(result.state_profile_path).exists()
-    assert result.run_summary_path is not None
-    assert Path(result.run_summary_path).exists()
-    assert Path(result.observation_audit_path).exists()
-    assert Path(result.observation_mapping_crosstab_path).exists()
-    assert Path(result.raw_finish_signal_summary_path).exists()
-    assert Path(result.unsupported_finish_values_path).exists()
-    assert Path(result.unsupported_score_values_path).exists()
-    assert Path(result.unsupported_values_assessment_path).exists()
-    assert Path(result.metadata_extraction_summary_path).exists()
-    assert Path(result.metadata_field_coverage_path).exists()
-    assert Path(result.sequence_audit_path).exists()
-    assert Path(result.sequence_length_distribution_path).exists()
-    assert Path(result.suspicious_sequences_path).exists()
-    assert Path(result.model_health_summary_path).exists()
-    assert Path(result.report_path).exists()
-    assert Path(result.run_manifest_path).name == "run_manifest.json"
-    assert len(result.created_files) >= len(result.created_artifacts)
-    assert (Path(result.final_output_dir) / "diagnostics" / "train_composition_report.json").exists()
-    assert (Path(result.final_output_dir) / "diagnostics" / "topology_compliance_report.json").exists()
-    assert (Path(result.final_output_dir) / "diagnostics" / "state_anchor_alignment_report.json").exists()
-    assert (Path(result.final_output_dir) / "diagnostics" / "finish_proximity_report.json").exists()
-    assert (Path(result.final_output_dir) / "diagnostics" / "semantic_stability_report.json").exists()
-    assert (Path(result.final_output_dir) / "diagnostics" / "emission_summary_by_hidden_state.csv").exists()
-
-    for required_dir in ["cleaned", "features", "diagnostics", "plots", "reports"]:
-        assert (Path(result.final_output_dir) / required_dir).exists()
-    assert (Path(result.final_output_dir) / "plots" / "hidden_state_sequence.png").exists()
-    assert (Path(result.final_output_dir) / "plots" / "state_probability_profile.png").exists()
-
-    analysis = pd.read_csv(result.episode_analysis_path)
-    assert "observed_zap_class" in analysis.columns
-    assert "hidden_state" in analysis.columns
-    assert "hidden_state_name" in analysis.columns
-    assert "confidence" in analysis.columns
-    assert any(col.startswith("p_state_") for col in analysis.columns)
-
-    observed_values = set(analysis["observed_zap_class"].astype(str).unique().tolist())
-    assert "no_score" in observed_values
-    assert "unknown" in observed_values
-
-    assert isinstance(result.recommendation, str)
-    assert result.recommendation.strip() != ""
-    assert result.semantic_assignment_quality in {
-        "full",
-        "partial",
-        "failed",
-    }
-
-    report_text = Path(result.report_path).read_text(encoding="utf-8")
-    assert "## 1) Executive summary" in report_text
-    assert "## 3) Raw finish/action signal audit" in report_text
-    assert "## 4) Metadata and time extraction quality" in report_text
-    assert "## 7) State semantics quality" in report_text
-    assert "Primary cause state (S2)" in report_text
-    assert "Secondary cause state (S3)" in report_text
-    assert "assignment↔anchor match share" in report_text
-    assert "## 9) Limitations" in report_text
-
-    train_composition = json.loads(
-        (Path(result.final_output_dir) / "diagnostics" / "train_composition_report.json").read_text(encoding="utf-8")
-    )
-    assert "weighted_rows_used_for_training" in train_composition
-    assert "weighted_rows_candidate" in train_composition
-    assert "by_sequence_resolution" in train_composition
-    assert "observation_weighting_policy" in train_composition
-    assert "low_information_weight_share_used" in train_composition["observation_weighting_policy"]
-
-    anchor_alignment = json.loads(
-        (Path(result.final_output_dir) / "diagnostics" / "state_anchor_alignment_report.json").read_text(encoding="utf-8")
-    )
-    assert "assignment_anchor_match_share" in anchor_alignment
-    if anchor_alignment.get("state_anchor_alignment"):
-        first = anchor_alignment["state_anchor_alignment"][0]
-        assert "assigned_semantic" in first
-        assert "assigned_semantic_matches_dominant_anchor" in first
-
-    unsupported_assessment = json.loads(
-        (Path(result.final_output_dir) / "diagnostics" / "unsupported_values_assessment.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert "score" in unsupported_assessment
-    assert "finish" in unsupported_assessment
-    assert "assessment" in unsupported_assessment["score"]
-    assert "assessment" in unsupported_assessment["finish"]
-
-
-def test_inverse_report_is_cautious_when_semantics_are_weak(tmp_path: Path) -> None:
-    excel_path = _make_degenerate_inverse_excel(tmp_path / "inverse_degenerate.xlsx")
-    output_dir = tmp_path / "inverse_degenerate_artifacts"
-
-    result = run_inverse_diagnostic_cycle(
-        input_path=excel_path,
-        output_dir=output_dir,
-        retrain=True,
-        generate_plots=False,
-        verbose=False,
-    )
-
-    report_text = Path(result.report_path).read_text(encoding="utf-8")
-    assert (
-        "Содержательная привязка скрытых состояний к КФВ/ВУП не стабилизировалась"
-        in report_text
-        or "интерпретация остальных состояний не стабилизировалась" in report_text
-    )
-    assert "observed layer mostly no_score: True" in report_text
-    assert "direct finish observations absent in this run: True" in report_text
-    assert "semantic_assignment_quality: failed" in report_text or "semantic_assignment_quality: partial" in report_text
-
-
-def test_inverse_entrypoint_signature_kept_backward_compatible() -> None:
+def test_signature_stays_backward_compatible() -> None:
     sig = inspect.signature(run_inverse_diagnostic_cycle)
     for name in [
         "input_path",
@@ -226,17 +146,127 @@ def test_inverse_entrypoint_signature_kept_backward_compatible() -> None:
         assert name in sig.parameters
 
 
-def test_semantic_stability_report_is_not_stable_when_anchor_alignment_is_weak() -> None:
-    canonical_map = {
-        "semantic_assignment": {"S1": 0, "S2": 1, "S3": 2},
-        "semantic_confidence": {"S1": 0.90, "S2": 0.80, "S3": 0.70},
-    }
-    report = _semantic_stability_report(
-        canonical_map=canonical_map,
-        state_anchor_alignment={"assignment_anchor_match_share": 0.12},
-        topology_compliance={"topology_compliance_share": 1.0},
-        finish_proximity={"s3_is_closest_to_finish": True},
+def test_viterbi_path_with_o1_confident(tmp_path: Path) -> None:
+    excel_path = _write_multilevel_workbook(
+        tmp_path / "synthetic_o1.xlsx",
+        rows=[_make_episode(athlete="Иванов", episode_id=1, score=4, o_class="O1", high_counts=True)],
     )
-    assert report["stability_label"] in {"moderate", "fragile"}
-    assert report["stability_label"] != "stable"
-    assert any("anchor dominance" in warning for warning in report["warnings"])
+
+    result = run_inverse_diagnostic_cycle(
+        input_path=excel_path,
+        output_dir=tmp_path / "artifacts_o1",
+        n_states=4,
+        retrain=True,
+        generate_plots=False,
+        verbose=False,
+    )
+
+    viterbi = pd.read_csv(Path(result.final_output_dir) / "diagnostics" / "per_episode_viterbi.csv")
+    assert len(viterbi) == 4
+    assert viterbi["step_hidden_state"].tolist() == ["S1", "S2", "S3", "O"]
+    assert (viterbi["confidence"] >= 0.9).all()
+
+    analysis = pd.read_csv(result.episode_analysis_path)
+    assert set(analysis["observed_zap_class"].astype(str).unique()) == {"O1"}
+
+
+def test_episode_without_o_finishes_with_o0_or_s3(tmp_path: Path) -> None:
+    excel_path = _write_multilevel_workbook(
+        tmp_path / "synthetic_o0.xlsx",
+        rows=[_make_episode(athlete="Петров", episode_id=1, score=0, o_class=None)],
+    )
+
+    result = run_inverse_diagnostic_cycle(
+        input_path=excel_path,
+        output_dir=tmp_path / "artifacts_o0",
+        n_states=4,
+        retrain=True,
+        generate_plots=False,
+        verbose=False,
+    )
+
+    viterbi = pd.read_csv(Path(result.final_output_dir) / "diagnostics" / "per_episode_viterbi.csv")
+    assert len(viterbi) in {3, 4}
+    assert viterbi.iloc[-1]["step_hidden_state"] in {"S3", "O"}
+
+    analysis = pd.read_csv(result.episode_analysis_path)
+    assert set(analysis["observed_zap_class"].astype(str).unique()) == {"O0"}
+
+
+def test_degenerate_dataset_sets_status_degenerate(tmp_path: Path) -> None:
+    rows = [
+        _make_episode(athlete="Сидоров", episode_id=i + 1, score=0, o_class=None)
+        for i in range(12)
+    ]
+    excel_path = _write_multilevel_workbook(tmp_path / "degenerate.xlsx", rows=rows)
+
+    result = run_inverse_diagnostic_cycle(
+        input_path=excel_path,
+        output_dir=tmp_path / "artifacts_degenerate",
+        n_states=4,
+        retrain=True,
+        generate_plots=False,
+        verbose=False,
+    )
+
+    run_summary = json.loads(Path(result.run_summary_path).read_text(encoding="utf-8"))
+    quality = json.loads(Path(result.quality_diagnostics_path).read_text(encoding="utf-8"))
+
+    assert run_summary["status"] == "degenerate"
+    assert quality["status"] == "degenerate"
+    assert quality["tripwires_triggered"]
+    assert quality["dominant_state_share"] <= 0.9
+    assert quality["self_transition_share"] >= 0.0
+
+
+def test_loader_regression_multilevel_ffill_drop_totals_and_binarize(tmp_path: Path) -> None:
+    rows = [
+        _make_episode(athlete="Кузнецов", episode_id=1, score=2, o_class="O4", high_counts=True),
+        _make_episode(athlete="", episode_id=2, score=0, o_class=None, high_counts=True),
+        _blank_episode_row(),
+        {
+            **_make_episode(athlete="Итог", episode_id="Итог", score=0, o_class=None),
+            "ПС_01": 9,
+            "ЗХ_01": 9,
+        },
+    ]
+
+    excel_path = _write_multilevel_workbook(tmp_path / "loader_regression.xlsx", rows=rows)
+
+    result = run_inverse_diagnostic_cycle(
+        input_path=excel_path,
+        output_dir=tmp_path / "artifacts_loader",
+        n_states=4,
+        retrain=True,
+        generate_plots=False,
+        verbose=False,
+    )
+
+    canonical = pd.read_csv(result.canonical_episode_table_path)
+    assert len(canonical) == 2
+    assert (canonical["athlete_name"].astype(str).str.strip() != "").all()
+    assert not canonical["episode_id"].astype(str).str.contains("итог", case=False, na=False).any()
+
+    features = pd.read_csv(Path(result.final_output_dir) / "features" / "episode_features.csv")
+    assert "s1_ps_b01_count" in features.columns
+    assert "s1_ps_b01_bin" in features.columns
+    assert float(features["s1_ps_b01_count"].max()) > 1.0
+    assert int(features["s1_ps_b01_bin"].max()) == 1
+
+
+def test_smoke_real_episodes_if_present(tmp_path: Path) -> None:
+    real_path = Path("data/raw/episodes.xlsx")
+    if not real_path.exists():
+        pytest.skip("data/raw/episodes.xlsx is not available in this environment")
+
+    result = run_inverse_diagnostic_cycle(
+        input_path=real_path,
+        output_dir=tmp_path / "artifacts_real_smoke",
+        n_states=4,
+        retrain=True,
+        generate_plots=False,
+        verbose=False,
+    )
+
+    quality = json.loads(Path(result.quality_diagnostics_path).read_text(encoding="utf-8"))
+    assert float(quality.get("dominant_state_share", 1.0)) < 0.9
