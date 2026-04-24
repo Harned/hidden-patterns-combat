@@ -375,6 +375,10 @@ class HMMParameters(BaseModel):
         default="basic_3state",
         description="Какая вариация HMM была использована: basic_3state или detailed_7state.",
     )
+    observation_emission: str = Field(
+        default="categorical",
+        description="Тип эмиссии: categorical (по одному токену на шаг) или bernoulli (вектор каналов).",
+    )
     bic: float | None = Field(
         default=None,
         description="Bayesian Information Criterion; ниже — лучше при сравнении вариантов.",

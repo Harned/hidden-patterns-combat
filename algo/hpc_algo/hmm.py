@@ -27,6 +27,11 @@ from hpc_algo.baseline import (
     ZAP_KIND_COUNT,
     classify_zap_column,
 )
+from hpc_algo.hmm_bernoulli import (
+    BernoulliHMMParams,
+    decode_sequence,
+    fit_bernoulli_hmm,
+)
 from hpc_algo.schema import (
     BaselineReport,
     ColumnMappingConfig,
@@ -84,6 +89,8 @@ class HMMRunConfig:
 
     enable_hmm: bool = True
     mode: str = "auto"  # auto | detailed | basic | off
+    # categorical (по токенам, через hmmlearn) | bernoulli (вектор каналов, свой EM)
+    observation_emission: str = "categorical"
     min_episodes: int = DEFAULT_MIN_EPISODES
     min_zap_events: int = DEFAULT_MIN_ZAP_EVENTS
     min_alphabet: int = DEFAULT_MIN_ALPHABET
@@ -120,6 +127,94 @@ def _episode_key(row: pd.Series, episode_columns: list[str]) -> str:
             continue
         pieces.append(str(v))
     return "|".join(pieces) if pieces else ""
+
+
+def build_bernoulli_sequences(
+    frames: dict[str, pd.DataFrame],
+    config: ColumnMappingConfig,
+) -> tuple[list[tuple[str, str, np.ndarray]], list[str]]:
+    """Собрать последовательности бинарных векторов по эпизодам.
+
+    Возвращает ``(entries, channels)``, где ``entries`` — список
+    ``(sheet, episode_key, X)`` с ``X`` формы ``(T_i, K)``; ``channels``
+    — упорядоченный список каналов (атомарных названий ЗАП-колонок),
+    общий для всех листов.
+    """
+
+    # Сначала собираем канальный алфавит по всем листам.
+    channel_set: list[str] = []
+    seen: set[str] = set()
+    for sheet_name, sm in config.sheets.items():
+        df = frames.get(sheet_name)
+        if df is None:
+            continue
+        for col in sm.roles.get(HiddenGroup.ZAP, []):
+            if col not in df.columns:
+                continue
+            label = _channel_from_flat_name(col)
+            if label not in seen:
+                seen.add(label)
+                channel_set.append(label)
+
+    channels = channel_set
+    if not channels:
+        return [], []
+
+    channel_to_idx = {c: i for i, c in enumerate(channels)}
+
+    entries: list[tuple[str, str, np.ndarray]] = []
+    for sheet_name, sm in config.sheets.items():
+        df = frames.get(sheet_name)
+        if df is None or df.empty:
+            continue
+        zap_cols = [c for c in sm.roles.get(HiddenGroup.ZAP, []) if c in df.columns]
+        episode_cols = [
+            c for c in sm.roles.get(HiddenGroup.EPISODE, []) if c in df.columns
+        ]
+        if not zap_cols:
+            continue
+
+        if episode_cols:
+            grouper_keys = [_episode_key(row, episode_cols) for _, row in df.iterrows()]
+        else:
+            grouper_keys = [str(i) for i in range(len(df))]
+
+        order: list[str] = []
+        buckets: dict[str, list[np.ndarray]] = {}
+        for key, (_, row) in zip(grouper_keys, df.iterrows(), strict=True):
+            if not key:
+                continue
+            if key not in buckets:
+                buckets[key] = []
+                order.append(key)
+            vec = np.zeros(len(channels), dtype=float)
+            touched = False
+            for col in zap_cols:
+                val = row.get(col)
+                if pd.isna(val):
+                    continue
+                try:
+                    numeric = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if numeric > 0:
+                    ch = _channel_from_flat_name(col)
+                    idx = channel_to_idx.get(ch)
+                    if idx is not None:
+                        vec[idx] = 1.0
+                        touched = True
+            if touched:
+                buckets[key].append(vec)
+
+        for key in order:
+            vecs = buckets[key]
+            if not vecs:
+                # Пустой эпизод — один нулевой вектор (observation = «ничего»).
+                vecs = [np.zeros(len(channels), dtype=float)]
+            X = np.vstack(vecs)
+            entries.append((sheet_name, key, X))
+
+    return entries, channels
 
 
 def build_observation_sequences(
@@ -628,6 +723,163 @@ def _fit_variant(
     return result, sanity
 
 
+def _fit_bernoulli_variant(
+    frames: dict[str, pd.DataFrame],
+    config: ColumnMappingConfig,
+    run_config: HMMRunConfig,
+    variant: str,
+) -> tuple[HMMResult, dict[str, Any]] | None:
+    """Обучить multivariate Bernoulli HMM и собрать :class:`HMMResult`."""
+
+    entries, channels = build_bernoulli_sequences(frames, config)
+    if not entries or not channels:
+        return None
+
+    state_labels = _state_labels(variant)
+    n_states = len(state_labels)
+    n_channels = len(channels)
+    rng = np.random.default_rng(run_config.random_seed)
+
+    init = BernoulliHMMParams(
+        pi=_initial_distribution(variant),
+        A=_transition_matrix(variant),
+        B=rng.uniform(0.1, 0.4, size=(n_states, n_channels)),
+    )
+
+    sequences = [X for _, _, X in entries]
+    fit = fit_bernoulli_hmm(
+        sequences, init, n_iter=run_config.n_iter, tol=1e-4
+    )
+
+    trajectories: list[HMMTrajectory] = []
+    states_used: set[str] = set()
+    for (sheet_name, _ep_key, X), seq_index in zip(
+        entries, range(len(entries)), strict=True
+    ):
+        path, log_prob = decode_sequence(X, fit.params)
+        path_labels = [state_labels[int(s)] for s in path]
+        states_used.update(path_labels)
+        obs_tokens = [
+            "+".join(channels[i] for i, v in enumerate(row) if v > 0) or "_noop_"
+            for row in X
+        ]
+        trajectories.append(
+            HMMTrajectory(
+                sheet=sheet_name,
+                episode_index=seq_index,
+                length=X.shape[0],
+                observation_tokens=obs_tokens,
+                state_path=path_labels,
+                log_likelihood=float(log_prob),
+            )
+        )
+
+    total_state_steps = np.zeros(n_states, dtype=float)
+    for tr in trajectories:
+        for s in tr.state_path:
+            total_state_steps[state_labels.index(s)] += 1
+    denom = total_state_steps.sum() or 1.0
+    state_distribution = {
+        state_labels[i]: float(round(total_state_steps[i] / denom, 6))
+        for i in range(n_states)
+    }
+
+    A = fit.params.A
+    diag_mass = float(np.diag(A).sum())
+    forward_mass = float(np.sum(np.diag(A, k=1))) if n_states > 1 else 0.0
+    dominance_threshold = 0.5 if variant == VARIANT_BASIC else 0.30
+    sanity_ok = (diag_mass + forward_mass) / n_states >= dominance_threshold
+    min_states_used = (
+        n_states if variant == VARIANT_BASIC else max(3, (n_states * 3) // 4)
+    )
+    enough_states_used = len(states_used) >= min_states_used
+
+    total_samples = int(sum(X.shape[0] for _, _, X in entries))
+    # Параметры: pi(n-1) + A(n*(n-1)) + B(n*K).
+    k = (n_states - 1) + n_states * (n_states - 1) + n_states * n_channels
+    bic = (
+        -2.0 * fit.log_likelihood + k * float(np.log(max(1, total_samples)))
+    )
+
+    parameters = HMMParameters(
+        n_states=n_states,
+        n_observations=n_channels,
+        state_labels=list(state_labels),
+        observation_labels=list(channels),
+        initial_distribution=[float(x) for x in fit.params.pi],
+        transition_matrix=[[float(x) for x in row] for row in fit.params.A],
+        emission_matrix=[[float(x) for x in row] for row in fit.params.B],
+        random_seed=run_config.random_seed,
+        n_iter=fit.n_iter,
+        converged=fit.converged,
+        log_likelihood=fit.log_likelihood,
+        variant=variant,
+        observation_emission="bernoulli",
+        bic=bic,
+    )
+    interpretation = _build_bernoulli_interpretation(
+        state_distribution, fit.params.A, channels, fit.params.B, state_labels
+    )
+
+    sanity = {
+        "variant": variant,
+        "observation_emission": "bernoulli",
+        "transition_diagonal_mass": diag_mass,
+        "transition_forward_mass": forward_mass,
+        "transition_dominance_ok": bool(sanity_ok),
+        "all_states_used": bool(len(states_used) == n_states),
+        "enough_states_used": bool(enough_states_used),
+        "states_used": len(states_used),
+        "min_states_used_required": int(min_states_used),
+        "episodes_used": len(trajectories),
+        "n_samples": total_samples,
+        "bic": bic,
+    }
+
+    result = HMMResult(
+        parameters=parameters,
+        trajectories=trajectories,
+        state_distribution=state_distribution,
+        sanity=sanity,
+        interpretation=interpretation,
+    )
+    return result, sanity
+
+
+def _build_bernoulli_interpretation(
+    state_distribution: dict[str, float],
+    A: np.ndarray,
+    channels: list[str],
+    B: np.ndarray,
+    state_labels: tuple[str, ...] | list[str],
+) -> str:
+    lines: list[str] = []
+    top_state = max(state_distribution.items(), key=lambda kv: kv[1])[0]
+    lines.append(
+        f"Чаще всего модель находится в состоянии '{top_state}' "
+        f"({state_distribution[top_state] * 100:.1f}% времени). Эмиссия — "
+        "multivariate Bernoulli по каналам ЗАП."
+    )
+    for i, from_state in enumerate(state_labels):
+        j = int(np.argmax(A[i]))
+        to_state = state_labels[j]
+        lines.append(
+            f"Из '{from_state}' модель чаще всего переходит в '{to_state}' "
+            f"(p={A[i][j]:.2f})."
+        )
+    for i, state in enumerate(state_labels):
+        top_idx = int(np.argmax(B[i]))
+        lines.append(
+            f"В состоянии '{state}' наиболее вероятно срабатывает канал "
+            f"'{channels[top_idx]}' (p={B[i][top_idx]:.2f})."
+        )
+    lines.append(
+        "Все формулировки — вероятностные; при недостаточности данных "
+        "HMM не запускается и результат остаётся baseline_only."
+    )
+    return "\n".join(lines)
+
+
 def _detailed_data_ok(
     baseline: BaselineReport,
     alphabet: list[str],
@@ -643,6 +895,44 @@ def _detailed_data_ok(
         and total_events >= run_config.min_zap_events_detailed
         and len(non_noop_alphabet) >= run_config.min_alphabet_detailed
     )
+
+
+def fit_hmm_bernoulli(
+    frames: dict[str, pd.DataFrame],
+    config: ColumnMappingConfig,
+    run_config: HMMRunConfig,
+) -> tuple[HMMResult, dict[str, Any]] | None:
+    """Попробовать Bernoulli-вариант (detailed > auto по BIC > basic)."""
+
+    mode = run_config.mode
+    if mode == "off":
+        return None
+
+    def try_bernoulli(variant: str):
+        out = _fit_bernoulli_variant(frames, config, run_config, variant)
+        if out is None:
+            return None
+        result, sanity = out
+        if not sanity.get("transition_dominance_ok"):
+            return None
+        if variant == VARIANT_DETAILED and not sanity.get("enough_states_used"):
+            return None
+        return result, sanity
+
+    if mode == "basic":
+        return try_bernoulli(VARIANT_BASIC)
+    if mode == "detailed":
+        return try_bernoulli(VARIANT_DETAILED)
+
+    detailed = try_bernoulli(VARIANT_DETAILED)
+    basic = try_bernoulli(VARIANT_BASIC)
+    if detailed is not None and basic is not None:
+        bic_d = detailed[0].parameters.bic
+        bic_b = basic[0].parameters.bic
+        if bic_d is not None and bic_b is not None and bic_d < bic_b:
+            return detailed
+        return basic
+    return detailed or basic
 
 
 def fit_hmm(

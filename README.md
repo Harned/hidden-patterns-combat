@@ -86,6 +86,12 @@ Excel, списком источников и русскоязычным инт�
   `MappingEditor` / `HMMView` через `React.lazy`; Vitest + Testing
   Library scaffolding (`npm run test:unit`); русская локализация
   warning-кодов (`translateWarning`).
+- [x] **TASK_SPEC_008** — multivariate Bernoulli эмиссии и k-fold CV:
+  `AnalyzeConfig.observation_emission ∈ {categorical, bernoulli}`;
+  `hpc_algo/hmm_bernoulli.py` с собственной log-space реализацией
+  forward-backward/Viterbi/EM (без SciPy); `hpc_algo/cv.py` с
+  `cross_validate(frames, config, run_config, k)` поверх листов —
+  честное сравнение вариантов модели.
 
 ## Структура репозитория
 

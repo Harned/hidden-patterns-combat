@@ -48,9 +48,10 @@ class AnalyzeConfig:
     max_preview_rows: int = 5
     column_mapping: ColumnMappingConfig | None = None
 
-    # HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005).
+    # HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005 / TASK_SPEC_008).
     enable_hmm: bool = True
     hmm_mode: str = "auto"  # auto | detailed | basic | off
+    observation_emission: str = "categorical"  # categorical | bernoulli
     hmm_seed: int = 42
     hmm_min_episodes: int = 30
     hmm_min_zap_events: int = 20
@@ -64,6 +65,7 @@ class AnalyzeConfig:
         return HMMRunConfig(
             enable_hmm=self.enable_hmm,
             mode=self.hmm_mode if self.enable_hmm else "off",
+            observation_emission=self.observation_emission,
             min_episodes=self.hmm_min_episodes,
             min_zap_events=self.hmm_min_zap_events,
             min_episodes_detailed=self.hmm_min_episodes_detailed,
@@ -489,7 +491,7 @@ def _analyze_with_mapping(
         warnings.append(mr)
     warnings.extend(_mapping_warnings(config, baseline, unknown, status))
 
-    # --- HMM-ветка (TASK_SPEC_004) ---
+    # --- HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005 / TASK_SPEC_008) ---
     hmm_result: HMMResult | None = None
     hmm_charts: list[ChartData] = []
     if status == AnalysisStatus.BASELINE_ONLY:
@@ -501,9 +503,12 @@ def _analyze_with_mapping(
         if guard_warnings:
             warnings.extend(guard_warnings)
         elif run_cfg.enable_hmm:
-            fit_result = hmm_mod.fit_hmm(
-                sequences, alphabet, run_cfg, baseline=baseline
-            )
+            if run_cfg.observation_emission == "bernoulli":
+                fit_result = hmm_mod.fit_hmm_bernoulli(frames, config, run_cfg)
+            else:
+                fit_result = hmm_mod.fit_hmm(
+                    sequences, alphabet, run_cfg, baseline=baseline
+                )
             if fit_result is None:
                 warnings.append(
                     WarningItem(
@@ -514,7 +519,10 @@ def _analyze_with_mapping(
                             "зависимость 'hmmlearn'. Статус остаётся baseline_only."
                         ),
                         severity=WarningSeverity.WARNING,
-                        context={"mode": run_cfg.mode},
+                        context={
+                            "mode": run_cfg.mode,
+                            "observation_emission": run_cfg.observation_emission,
+                        },
                     )
                 )
             else:
