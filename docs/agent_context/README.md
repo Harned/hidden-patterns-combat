@@ -46,6 +46,7 @@ Use the user request and current repository stage to choose the relevant `TASK_S
 - Use `TASK_SPEC_004_HMM.md` for the first HMM diagnostic pass (3-state: маневрирование / КФВ / ВУП, observations = ЗАП). HMM only runs when strict data-quality guards pass; otherwise baseline stays untouched and the algorithm returns an honest warning. Hidden state names, observation schema and `fighter_style` prohibition must be preserved.
 - Use `TASK_SPEC_005_DETAILED_HMM.md` for the detailed 7-state HMM (маневры / захваты / хваты / обхваты / прихваты / упоры / ВУП) gated by stronger data-quality guards and a BIC comparison against the 3-state baseline. `hmm_mode` in AnalyzeConfig controls selection (`auto` / `detailed` / `basic` / `off`). Invariants from TASK_SPEC_004 remain unchanged.
 - Use `TASK_SPEC_006_INFRA.md` for production infrastructure: PostgreSQL, Alembic migrations, docker-compose, background analyze via BackgroundTasks with run states, double-submit-cookie CSRF, and simple token-bucket rate-limit on `/auth/login` and `/auth/register`. The domain algorithm is unchanged.
+- Use `TASK_SPEC_007_UX.md` for user-facing improvements: runs history panel, Viterbi timeline, sheet-data preview inside the mapping editor, code-split SPA, Vitest smoke tests, and Russian i18n of warning codes. Domain invariants unchanged.
 
 If more than one task spec appears relevant, stop and clarify before implementation.
 
