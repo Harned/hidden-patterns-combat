@@ -27,7 +27,10 @@ def test_analyze_returns_hmm_ready_on_dense_data(
     sid = _register_upload(client, "hmm-dense@example.com", dense_hmm_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
-    run = client.post(f"/api/sources/{sid}/analyze").json()
+    run = client.post(
+        f"/api/sources/{sid}/analyze", params={"wait": "true"}
+    ).json()
+    assert run["state"] == "done"
     assert run["status"] == "hmm_ready", run
 
     result = client.get(f"/api/sources/{sid}/result").json()["result"]
@@ -49,8 +52,11 @@ def test_analyze_blocks_hmm_on_thin_data(
     sid = _register_upload(client, "hmm-thin@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
-    run = client.post(f"/api/sources/{sid}/analyze").json()
+    run = client.post(
+        f"/api/sources/{sid}/analyze", params={"wait": "true"}
+    ).json()
     # Thin-data: guard должен заблокировать HMM.
+    assert run["state"] == "done"
     assert run["status"] == "baseline_only"
 
     result = client.get(f"/api/sources/{sid}/result").json()["result"]
@@ -66,7 +72,9 @@ def test_analyze_rejects_unknown_mode(
     sid = _register_upload(client, "hmm-mode@example.com", dense_hmm_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
-    resp = client.post(f"/api/sources/{sid}/analyze", params={"mode": "xyz"})
+    resp = client.post(
+        f"/api/sources/{sid}/analyze", params={"mode": "xyz", "wait": "true"}
+    )
     assert resp.status_code == 400
 
 
@@ -77,7 +85,8 @@ def test_analyze_detailed_mode_on_dense_data(
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     run = client.post(
-        f"/api/sources/{sid}/analyze", params={"mode": "detailed"}
+        f"/api/sources/{sid}/analyze",
+        params={"mode": "detailed", "wait": "true"},
     ).json()
     assert run["status"] == "hmm_ready", run
 

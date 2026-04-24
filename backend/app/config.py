@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     debug: bool = True
 
     database_url: str = f"sqlite:///{PROJECT_ROOT / 'storage' / 'app.db'}"
+    # Если True, backend не создаёт таблицы через create_all и ожидает,
+    # что Alembic уже применил миграции. В тестах по умолчанию False.
+    use_alembic: bool = False
 
     secret_key: str = Field(
         default="dev-only-change-me",
@@ -38,6 +41,21 @@ class Settings(BaseSettings):
     cookie_name: str = "hpc_session"
     cookie_secure: bool = False  # включить True в проде под HTTPS
     cookie_samesite: str = "lax"
+
+    # CSRF: double-submit cookie. Отдельное non-HttpOnly cookie +
+    # заголовок `X-CSRF-Token` на мутирующих запросах.
+    csrf_cookie_name: str = "hpc_csrf"
+    csrf_required: bool = False  # в dev/test — False, в production переключать на True
+    csrf_header_name: str = "X-CSRF-Token"
+
+    # Rate-limit на auth-эндпоинты.
+    rate_limit_enabled: bool = False  # в dev/test — False
+    rate_limit_auth_per_minute: int = 5
+
+    # Фоновая задача analyze: верхняя граница времени, после которой
+    # внешний watcher может пометить run как stuck (не используется
+    # в in-process BackgroundTasks, но полезно зафиксировать.)
+    analyze_timeout_seconds: int = 600
 
     storage_root: Path = PROJECT_ROOT / "storage" / "uploads"
     max_upload_size_bytes: int = 50 * 1024 * 1024  # 50 MiB

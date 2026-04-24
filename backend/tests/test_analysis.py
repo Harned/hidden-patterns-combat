@@ -22,10 +22,11 @@ def _setup_source(client: TestClient, email: str, data: bytes) -> int:
 def test_analyze_and_fetch_result(client: TestClient, sample_xlsx_bytes: bytes) -> None:
     source_id = _setup_source(client, "alice@example.com", sample_xlsx_bytes)
 
-    run = client.post(f"/api/sources/{source_id}/analyze")
-    assert run.status_code == 201, run.text
+    run = client.post(f"/api/sources/{source_id}/analyze", params={"wait": "true"})
+    assert run.status_code == 200, run.text
     body = run.json()
     assert body["source_id"] == source_id
+    assert body["state"] == "done"
     assert body["status"] == "baseline_only"
 
     result = client.get(f"/api/sources/{source_id}/result")

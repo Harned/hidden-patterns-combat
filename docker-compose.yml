@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hpc
+      POSTGRES_PASSWORD: hpc
+      POSTGRES_DB: hpc
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hpc -d hpc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      HPC_DATABASE_URL: postgresql+psycopg://hpc:hpc@db:5432/hpc
+      HPC_USE_ALEMBIC: "true"
+      HPC_SECRET_KEY: ${HPC_SECRET_KEY:-change-me-to-long-random-secret-32b}
+      HPC_CSRF_REQUIRED: "true"
+      HPC_RATE_LIMIT_ENABLED: "true"
+      HPC_ALLOWED_ORIGINS: ${HPC_ALLOWED_ORIGINS:-http://localhost:8080}
+      HPC_STORAGE_ROOT: /var/hpc/uploads
+    volumes:
+      - storage:/var/hpc/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2); sys.exit(0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+
+volumes:
+  pgdata:
+  storage:

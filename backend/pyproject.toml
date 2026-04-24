@@ -20,6 +20,8 @@ dependencies = [
     "bcrypt>=4.0,<5.0",
     "pyjwt>=2.8,<3.0",
     "python-multipart>=0.0.9,<1.0",
+    "alembic>=1.13,<2.0",
+    "psycopg[binary]>=3.1,<4.0",
     "hpc-algo",
 ]
 
@@ -53,4 +55,5 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 "app/**/router.py" = ["B008"]  # FastAPI Depends/File/Form/Query в defaults — идиоматично
 "app/**/deps.py" = ["B008"]
+"app/rate_limit.py" = ["B008"]
 "tests/**.py" = ["B008"]

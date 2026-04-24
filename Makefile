@@ -9,6 +9,8 @@ REAL_EXCEL ?= docs/Оценка СД содержание.xlsx
         lint lint-algo lint-backend typecheck-frontend \
         analyze report summary \
         dev-backend dev-frontend build-frontend \
+        db-upgrade db-revision \
+        docker-up docker-down docker-logs \
         clean
 
 help:
@@ -21,6 +23,15 @@ help:
 	@echo "  make dev-backend          — uvicorn на http://127.0.0.1:8000"
 	@echo "  make dev-frontend         — Vite на http://127.0.0.1:5173 (proxy /api)"
 	@echo "  make build-frontend       — prod-сборка SPA в frontend/dist"
+	@echo ""
+	@echo "Database (Alembic):"
+	@echo "  HPC_DATABASE_URL=... make db-upgrade   — применить миграции"
+	@echo "  MSG=... make db-revision               — создать новую миграцию"
+	@echo ""
+	@echo "Docker (prod-like local stack):"
+	@echo "  make docker-up            — build + up (db + backend + frontend)"
+	@echo "  make docker-down          — stop + remove"
+	@echo "  make docker-logs          — follow logs"
 	@echo ""
 	@echo "Quality:"
 	@echo "  make test                 — pytest algo/ + backend/"
@@ -73,6 +84,25 @@ dev-frontend:
 
 build-frontend:
 	cd frontend && npm run build
+
+# --- Alembic (requires HPC_DATABASE_URL env) ---
+
+db-upgrade:
+	cd backend && ../$(VENV_PY) -m alembic -c alembic.ini upgrade head
+
+db-revision:
+	cd backend && ../$(VENV_PY) -m alembic -c alembic.ini revision --autogenerate -m "$(MSG)"
+
+# --- Docker compose (prod-like local stack) ---
+
+docker-up:
+	docker compose up --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f --tail=100
 
 # --- Algo CLI on real Excel ---
 

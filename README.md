@@ -66,6 +66,17 @@ Excel, списком источников и русскоязычным инт�
   На реальных данных `auto` корректно фоллбэчит в `basic_3state`
   (alphabet на сегодняшних файлах слишком мал для 7 состояний), что
   методологически правильно.
+- [x] **TASK_SPEC_006** — продовая инфраструктура: Alembic-миграция
+  `0001_initial` (users/sources/analysis_runs + `mapping_config`
+  + расширенный `AnalysisRun` state/hmm_mode/started_at/finished_at/error);
+  поддержка Postgres через `HPC_DATABASE_URL` + psycopg;
+  `docker-compose.yml` (db + backend + frontend + healthchecks);
+  фоновый analyze через FastAPI `BackgroundTasks` со статусами
+  `pending → running → done | failed`; GET `/sources/{id}/runs/{run_id}`
+  для опроса; double-submit CSRF (токен в non-HttpOnly cookie
+  `hpc_csrf` + заголовок `X-CSRF-Token`, включается
+  `HPC_CSRF_REQUIRED=true` в проде); простой in-memory rate-limit
+  на `/auth/login` и `/auth/register` (5 попыток/минуту).
 
 ## Структура репозитория
 
@@ -94,18 +105,28 @@ hidden-patterns-combat/
 
 Требования: Python 3.11+, Node.js 20+, npm 10+.
 
+### Dev (SQLite, без Docker)
+
 ```bash
-# 1. Python-пакеты (algo + backend)
 make install
-
-# 2. Зависимости фронта
 make install-frontend
+make dev-backend      # uvicorn на http://127.0.0.1:8000
+make dev-frontend     # Vite на http://127.0.0.1:5173 (proxy /api)
+```
 
-# 3. Запустить backend (http://127.0.0.1:8000, OpenAPI на /docs)
-make dev-backend
+### Prod-like (Docker Compose)
 
-# 4. В другом терминале — фронтенд (http://127.0.0.1:5173)
-make dev-frontend
+```bash
+# HPC_SECRET_KEY — обязательный секрет (≥ 32 байт), остальное по умолчанию
+HPC_SECRET_KEY="$(openssl rand -hex 32)" make docker-up
+# → frontend на http://127.0.0.1:8080, backend на 8000, Postgres на 5432
+```
+
+Миграции применяются автоматически при старте backend-контейнера. Для
+ручного прогона против внешней БД:
+
+```bash
+HPC_DATABASE_URL="postgresql+psycopg://user:pass@host/db" make db-upgrade
 ```
 
 ## Проверка
@@ -166,34 +187,36 @@ make analyze   # полный AnalysisResult -> .local/result.json
    Открытые: более богатые эмиссии (multivariate вместо Categorical),
    детализированная 7-state модель (маневры / захваты / хваты /
    обхваты / прихваты / упоры / ВУП).
-2. **Миграция схемы БД.** `TASK_SPEC_003` добавил `sources.mapping_config`.
-   В dev достаточно удалить `storage/app.db` — `create_all` создаст схему
-   заново. Для прода при переходе на Postgres нужен Alembic.
-3. **Синхронный анализ в HTTP-запросе.** Большие Excel могут блокировать
-   uvicorn-worker. Для прод — фоновый воркер (RQ/Dramatiq/Celery).
-3. **Alembic не настроен.** Для MVP используется `Base.metadata.create_all`.
-   При переходе на Postgres — добавить Alembic и первую миграцию.
-4. **История запусков скрыта.** API и UI отдают только последний
-   `AnalysisRun`. История нужна отдельным шагом.
-5. **Нет rate-limit и CSRF защит.** Для dev/MVP это приемлемо, для прода —
-   добавить `slowapi`/reverse-proxy + CSRF-токен для non-idempotent операций.
-6. **Email без верификации.** Пароль ≥ 8 символов, bcrypt, JWT в HttpOnly,
-   но подтверждение email и восстановление пароля отложены.
-7. **`passlib[bcrypt]` предупреждает о `crypt` в Python 3.13.** Это
+2. **Миграция схемы БД.** Закрыто в `TASK_SPEC_006`: есть
+   Alembic + Postgres; dev-SQLite всё ещё работает через `create_all`
+   (если `HPC_USE_ALEMBIC=false`).
+3. **Фоновый анализ.** Закрыто в `TASK_SPEC_006`: `POST
+   /sources/{id}/analyze` асинхронный (возвращает `state=pending`),
+   `GET /sources/{id}/runs/{run_id}` отдаёт прогресс. Для CLI и тестов
+   остаётся синхронный режим `?wait=true`. Распределённая очередь
+   (RQ/Dramatiq) — только если потребуется горизонтальное
+   масштабирование.
+4. **CSRF + rate-limit.** Закрыто в `TASK_SPEC_006`. Включаются env-
+   флагами (`HPC_CSRF_REQUIRED`, `HPC_RATE_LIMIT_ENABLED`) — в
+   docker-compose они `true` по умолчанию.
+5. **docker-compose.** Закрыто в `TASK_SPEC_006`: `make docker-up`
+   поднимает db + backend + frontend с healthcheck'ами.
+6. **История запусков пока не выводится в UI.** API `/runs/{run_id}`
+   есть, но интерфейс показывает только последний `done`-run. Timeline
+   истории — задача UX-этапа.
+7. **Email без верификации.** Пароль ≥ 8 символов, bcrypt, JWT в
+   HttpOnly, но подтверждение email и восстановление пароля отложены.
+8. **`passlib[bcrypt]` предупреждает о `crypt` в Python 3.13.** Это
    зависимость `passlib`; при апгрейде Python >=3.13 заменить на
    `bcrypt`-only адаптер.
-8. **Frontend bundle 599 KB** (Recharts + React + TanStack). Для MVP ok;
-   code-split по маршрутам — задача следующего этапа.
-9. **Тестов фронтенда нет.** Только TypeScript + Vite build. Добавить
-   Vitest + Testing Library после стабилизации UI.
-10. **Нет docker-compose.** Пока всё поднимается через `make dev-backend` /
-    `make dev-frontend`. Контейнеризацию соберу, когда будем переходить на
-    Postgres.
-11. **UI группирует `audit.suspicious`, но на реальном Excel warnings всё
-    равно многословны.** Это следствие реальной структуры данных; после
-    column mapping шум уйдёт сам.
-12. **CORS настроен только для `http://localhost:5173`.** Для прода
-    перечень Origin'ов нужно вынести в `HPC_ALLOWED_ORIGINS` env.
+9. **Frontend bundle ≈615 KB** (Recharts + React + TanStack). Code-split
+   по маршрутам — оптимизация следующего этапа.
+10. **Тестов фронтенда нет.** Только TypeScript + Vite build. Vitest +
+    Testing Library — отдельный UX-этап.
+11. **Rate-limit in-memory.** Не подходит для multi-worker. Для прода
+    на нескольких воркерах заменить на Redis-based реализацию.
+12. **CORS**. Настраивается через `HPC_ALLOWED_ORIGINS` env (список
+    origin'ов через запятую).
 
 ## Архитектурные границы (напоминание)
 

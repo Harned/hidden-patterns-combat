@@ -17,17 +17,37 @@ export class ApiError extends Error {
   }
 }
 
+function readCsrfTokenFromCookie(): string | null {
+  const match = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith("hpc_csrf="));
+  return match ? decodeURIComponent(match.split("=")[1]) : null;
+}
+
+const MUTATING = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+
+function withCsrfHeader(
+  method: string | undefined,
+  headers: HeadersInit
+): HeadersInit {
+  if (!method || !MUTATING.has(method.toUpperCase())) return headers;
+  const token = readCsrfTokenFromCookie();
+  if (!token) return headers;
+  return { ...headers, "X-CSRF-Token": token };
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
+  const baseHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    ...(init.headers as Record<string, string> | undefined),
+  };
   const res = await fetch(`${BASE}${path}`, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(init.headers || {}),
-    },
+    headers: withCsrfHeader(init.method, baseHeaders),
     ...init,
   });
   if (!res.ok) {
@@ -77,9 +97,13 @@ export const api = {
   async uploadSource(file: File): Promise<SourceSummary> {
     const form = new FormData();
     form.append("file", file);
+    const headers: Record<string, string> = {};
+    const csrf = readCsrfTokenFromCookie();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
     const res = await fetch(`${BASE}/sources`, {
       method: "POST",
       credentials: "include",
+      headers,
       body: form,
     });
     if (!res.ok) {

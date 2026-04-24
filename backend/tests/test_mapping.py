@@ -81,7 +81,9 @@ def test_analyze_with_saved_mapping_returns_baseline_only(
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
 
-    run = client.post(f"/api/sources/{sid}/analyze").json()
+    run = client.post(
+        f"/api/sources/{sid}/analyze", params={"wait": "true"}
+    ).json()
     assert run["status"] == "baseline_only"
 
     full = client.get(f"/api/sources/{sid}/result").json()
@@ -108,7 +110,9 @@ def test_analyze_with_binary_zap_exposes_events_by_channel(
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
 
-    run = client.post(f"/api/sources/{sid}/analyze").json()
+    run = client.post(
+        f"/api/sources/{sid}/analyze", params={"wait": "true"}
+    ).json()
     assert run["status"] == "baseline_only"
 
     full = client.get(f"/api/sources/{sid}/result").json()

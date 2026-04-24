@@ -72,7 +72,14 @@ class Source(Base):
 
 
 class AnalysisRun(Base):
-    """Результат вызова :func:`hpc_algo.analyze_source`."""
+    """Результат вызова :func:`hpc_algo.analyze_source`.
+
+    `state` — жизненный цикл фоновой задачи
+    (``pending`` → ``running`` → ``done`` / ``failed``). `status` — это
+    предметный статус результата (``baseline_only`` / ``hmm_ready`` / …)
+    из AnalysisResult. Разделение важно: `state=done` не означает
+    успешную диагностику.
+    """
 
     __tablename__ = "analysis_runs"
 
@@ -80,11 +87,25 @@ class AnalysisRun(Base):
     source_id: Mapped[int] = mapped_column(
         ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="pending",
+        doc="pending | running | done | failed",
+    )
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     algo_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    result_json: Mapped[str] = mapped_column(Text, nullable=False)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hmm_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     source: Mapped[Source] = relationship(back_populates="analysis_runs")
