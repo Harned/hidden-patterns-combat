@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { Suspense, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import type { AnalysisRunFull, HMMMode, SourceSummary } from "@/api/types";
@@ -8,9 +8,20 @@ import { WarningsList } from "./WarningsList";
 import { AuditTable } from "./AuditTable";
 import { DetectedColumns } from "./DetectedColumns";
 import { ChartsGrid } from "./ChartsGrid";
-import { MappingEditor } from "./MappingEditor";
 import { ZapChannelsCard } from "./ZapChannelsCard";
-import { HMMView } from "./HMMView";
+
+// Code-split: редактор mapping и HMM-вьюха грузятся только когда
+// пользователь открывает соответствующие секции интерфейса.
+const MappingEditor = React.lazy(() =>
+  import("./MappingEditor").then((m) => ({ default: m.MappingEditor }))
+);
+const HMMView = React.lazy(() =>
+  import("./HMMView").then((m) => ({ default: m.HMMView }))
+);
+
+const SectionFallback: React.FC<{ label: string }> = ({ label }) => (
+  <Card className="px-6 py-8 text-center text-brand-700/70">{label}</Card>
+);
 
 type Tab = "result" | "mapping";
 
@@ -123,7 +134,11 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         </div>
       )}
 
-      {tab === "mapping" && <MappingEditor sourceId={sourceId} />}
+      {tab === "mapping" && (
+        <Suspense fallback={<SectionFallback label="Загрузка редактора mapping..." />}>
+          <MappingEditor sourceId={sourceId} />
+        </Suspense>
+      )}
 
       {tab === "result" && (
         <>
@@ -179,7 +194,11 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
               </Section>
 
               {result.hmm && result.status === "hmm_ready" && (
-                <HMMView hmm={result.hmm} />
+                <Suspense
+                  fallback={<SectionFallback label="Загрузка HMM-диагностики..." />}
+                >
+                  <HMMView hmm={result.hmm} />
+                </Suspense>
               )}
               <ZapChannelsCard baseline={result.basic_statistics} />
               <AuditTable audit={result.data_audit} />
