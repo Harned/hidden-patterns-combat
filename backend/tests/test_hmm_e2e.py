@@ -58,3 +58,40 @@ def test_analyze_blocks_hmm_on_thin_data(
     assert result["hmm"] is None
     codes = {w["code"] for w in result["warnings"]}
     assert "hmm.guards_failed" in codes
+
+
+def test_analyze_rejects_unknown_mode(
+    client: TestClient, dense_hmm_xlsx_bytes: bytes
+) -> None:
+    sid = _register_upload(client, "hmm-mode@example.com", dense_hmm_xlsx_bytes)
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    resp = client.post(f"/api/sources/{sid}/analyze", params={"mode": "xyz"})
+    assert resp.status_code == 400
+
+
+def test_analyze_detailed_mode_on_dense_data(
+    client: TestClient, very_dense_xlsx_bytes: bytes
+) -> None:
+    sid = _register_upload(client, "hmm-detailed@example.com", very_dense_xlsx_bytes)
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    run = client.post(
+        f"/api/sources/{sid}/analyze", params={"mode": "detailed"}
+    ).json()
+    assert run["status"] == "hmm_ready", run
+
+    result = client.get(f"/api/sources/{sid}/result").json()["result"]
+    assert result["hmm"] is not None
+    assert result["hmm"]["parameters"]["variant"] == "detailed_7state"
+    assert result["hmm"]["parameters"]["n_states"] == 7
+    labels = result["hmm"]["parameters"]["state_labels"]
+    assert labels == [
+        "маневры",
+        "захваты",
+        "хваты",
+        "обхваты",
+        "прихваты",
+        "упоры",
+        "ВУП",
+    ]

@@ -40,6 +40,9 @@ class MappingResponse(BaseModel):
     mapping: dict[str, Any] | None
 
 
+_VALID_HMM_MODES = {"auto", "detailed", "basic", "off"}
+
+
 @router.post(
     "/analyze",
     response_model=AnalysisRunSummary,
@@ -47,10 +50,19 @@ class MappingResponse(BaseModel):
 )
 def analyze(
     source_id: int,
+    mode: str = "auto",
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     storage: LocalStorage = Depends(get_storage),
 ) -> AnalysisRunSummary:
+    if mode not in _VALID_HMM_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Неизвестный mode='{mode}'. Допустимые: "
+                + ", ".join(sorted(_VALID_HMM_MODES))
+            ),
+        )
     try:
         source = sources_service.get_owned_source(db, user, source_id)
     except SourceError as exc:
@@ -58,7 +70,7 @@ def analyze(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
 
-    run = analysis_service.run_and_persist(db, source, storage.resolve)
+    run = analysis_service.run_and_persist(db, source, storage.resolve, hmm_mode=mode)
     return AnalysisRunSummary.model_validate(run)
 
 

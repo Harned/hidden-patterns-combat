@@ -119,10 +119,17 @@ const TrajectoriesTable: React.FC<{ hmm: HMMResult }> = ({ hmm }) => {
 
 export const HMMView: React.FC<{ hmm: HMMResult }> = ({ hmm }) => (
   <Section
-    title="HMM-диагностика"
-    description="3-state модель: маневрирование / КФВ / ВУП. Все выводы вероятностные и ограничены данными."
+    title={
+      hmm.parameters.variant === "detailed_7state"
+        ? "HMM-диагностика (7 состояний: маневры / захваты / хваты / обхваты / прихваты / упоры / ВУП)"
+        : "HMM-диагностика (3 состояния: маневрирование / КФВ / ВУП)"
+    }
+    description="Все выводы вероятностные и ограничены данными."
   >
     <div className="flex flex-wrap gap-2 mb-5">
+      <Badge tone={hmm.parameters.variant === "detailed_7state" ? "info" : "neutral"}>
+        variant: {hmm.parameters.variant}
+      </Badge>
       <Badge tone={hmm.parameters.converged ? "success" : "warning"}>
         converged: {String(hmm.parameters.converged)}
       </Badge>
@@ -130,6 +137,9 @@ export const HMMView: React.FC<{ hmm: HMMResult }> = ({ hmm }) => (
       <Badge tone="info">
         log L = {fmt(hmm.parameters.log_likelihood, 2)}
       </Badge>
+      {hmm.parameters.bic !== null && (
+        <Badge tone="info">BIC = {fmt(hmm.parameters.bic, 2)}</Badge>
+      )}
       <Badge tone="neutral">seed: {hmm.parameters.random_seed}</Badge>
       <Badge tone="neutral">
         состояний: {hmm.parameters.n_states}

@@ -45,7 +45,7 @@ OpenAPI: http://127.0.0.1:8000/docs
 | PUT   | `/api/sources/{id}/mapping`        | сохранить mapping (валидация)      |
 | DELETE| `/api/sources/{id}/mapping`        | сбросить mapping                   |
 | GET   | `/api/sources/{id}/sheets/{sheet}/columns` | полный список flatten-колонок листа |
-| POST  | `/api/sources/{id}/analyze`        | запустить анализ (mapping если есть)|
+| POST  | `/api/sources/{id}/analyze?mode=auto` | запустить анализ (mapping если есть). `mode` ∈ {`auto`, `detailed`, `basic`, `off`} |
 | GET   | `/api/sources/{id}/result`         | последний результат                |
 
 ## Тесты

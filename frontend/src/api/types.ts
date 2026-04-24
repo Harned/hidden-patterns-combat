@@ -159,6 +159,9 @@ export interface SheetColumnsResponse {
   columns: SheetColumnInfo[];
 }
 
+export type HMMVariant = "basic_3state" | "detailed_7state";
+export type HMMMode = "auto" | "detailed" | "basic" | "off";
+
 export interface HMMParameters {
   n_states: number;
   n_observations: number;
@@ -171,6 +174,8 @@ export interface HMMParameters {
   n_iter: number;
   converged: boolean;
   log_likelihood: number;
+  variant: HMMVariant;
+  bic: number | null;
 }
 
 export interface HMMTrajectory {

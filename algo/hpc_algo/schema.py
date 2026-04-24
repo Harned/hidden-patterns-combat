@@ -371,6 +371,14 @@ class HMMParameters(BaseModel):
     n_iter: int
     converged: bool
     log_likelihood: float
+    variant: str = Field(
+        default="basic_3state",
+        description="Какая вариация HMM была использована: basic_3state или detailed_7state.",
+    )
+    bic: float | None = Field(
+        default=None,
+        description="Bayesian Information Criterion; ниже — лучше при сравнении вариантов.",
+    )
 
 
 class HMMTrajectory(BaseModel):

@@ -35,6 +35,7 @@ def run_and_persist(
     db: Session,
     source: Source,
     storage_resolve,
+    hmm_mode: str = "auto",
 ) -> AnalysisRun:
     """Выполнить анализ и сохранить JSON-результат."""
 
@@ -42,7 +43,7 @@ def run_and_persist(
 
     absolute: Path = storage_resolve(source.stored_path)
     mapping = _load_mapping_from_source(source)
-    config = AnalyzeConfig(column_mapping=mapping)
+    config = AnalyzeConfig(column_mapping=mapping, hmm_mode=hmm_mode)
 
     result = analyze_source(absolute, config)
 

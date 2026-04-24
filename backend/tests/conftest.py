@@ -192,6 +192,65 @@ def dense_hmm_xlsx_bytes() -> bytes:
 
 
 @pytest.fixture
+def very_dense_xlsx_bytes() -> bytes:
+    """Плотная фикстура для e2e detailed-HMM (TASK_SPEC_005)."""
+
+    import random
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "all"
+    ws.append(
+        [
+            "ФИО борца",
+            "Технико-тактический эпизод",
+            None,
+            "Завершающие атаку приемы (n)",
+            None,
+            None,
+            None,
+            None,
+        ]
+    )
+    ws.append([None, None, None, None, "Болевой прием", None, None, None])
+    ws.append(
+        [
+            None,
+            "№ эпизода",
+            "Время эпизода, с.",
+            "Удержание",
+            "На руку",
+            "На ногу",
+            "ЗАП-Р",
+            "ЗАП-Т",
+        ]
+    )
+
+    rng = random.Random(0)
+    names = ["Иванов", "Петров", "Сидоров", "Кузнецов", "Смирнов", "Попов"]
+    for i in range(1, 181):
+        name = rng.choice(names)
+        ws.append(
+            [
+                name,
+                i,
+                rng.randint(10, 40),
+                1 if rng.random() < 0.35 else 0,
+                1 if rng.random() < 0.25 else 0,
+                1 if rng.random() < 0.2 else 0,
+                1 if rng.random() < 0.25 else 0,
+                1 if rng.random() < 0.2 else 0,
+            ]
+        )
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@pytest.fixture
 def multirow_binary_xlsx_bytes() -> bytes:
     """Multi-row header с бинарной ЗАП-кодировкой для e2e-теста TASK_SPEC_003_1."""
 

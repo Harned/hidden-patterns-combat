@@ -94,8 +94,9 @@ export const api = {
     }
     return (await res.json()) as SourceSummary;
   },
-  analyze(sourceId: number) {
-    return request<AnalysisRunSummary>(`/sources/${sourceId}/analyze`, {
+  analyze(sourceId: number, mode: "auto" | "detailed" | "basic" | "off" = "auto") {
+    const qs = `?mode=${encodeURIComponent(mode)}`;
+    return request<AnalysisRunSummary>(`/sources/${sourceId}/analyze${qs}`, {
       method: "POST",
     });
   },

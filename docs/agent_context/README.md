@@ -44,6 +44,7 @@ Use the user request and current repository stage to choose the relevant `TASK_S
 - Use `TASK_SPEC_003_1_ZAP_ENCODING.md` for handling binary / count ZAP columns (not just categorical labels). Extends the baseline output with `zap_events_by_channel` and per-column classification. Still forbids HMM.
 - Use `TASK_SPEC_003_2_SHEET_COLUMNS.md` for exposing the full flatten-column list of a selected sheet to the mapping editor, so the user can assign roles to columns that preflight did not pick up. Still forbids HMM.
 - Use `TASK_SPEC_004_HMM.md` for the first HMM diagnostic pass (3-state: маневрирование / КФВ / ВУП, observations = ЗАП). HMM only runs when strict data-quality guards pass; otherwise baseline stays untouched and the algorithm returns an honest warning. Hidden state names, observation schema and `fighter_style` prohibition must be preserved.
+- Use `TASK_SPEC_005_DETAILED_HMM.md` for the detailed 7-state HMM (маневры / захваты / хваты / обхваты / прихваты / упоры / ВУП) gated by stronger data-quality guards and a BIC comparison against the 3-state baseline. `hmm_mode` in AnalyzeConfig controls selection (`auto` / `detailed` / `basic` / `off`). Invariants from TASK_SPEC_004 remain unchanged.
 
 If more than one task spec appears relevant, stop and clarify before implementation.
 

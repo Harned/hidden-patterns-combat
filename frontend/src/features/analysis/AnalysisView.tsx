@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
-import type { AnalysisRunFull, SourceSummary } from "@/api/types";
+import type { AnalysisRunFull, HMMMode, SourceSummary } from "@/api/types";
 import { Button, Card, Section } from "@/components/ui";
 import { StatusBadge } from "./StatusBadge";
 import { WarningsList } from "./WarningsList";
@@ -17,6 +17,7 @@ type Tab = "result" | "mapping";
 export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("result");
+  const [hmmMode, setHmmMode] = useState<HMMMode>("auto");
 
   const sourceQuery = useQuery<SourceSummary>({
     queryKey: ["source", sourceId],
@@ -30,7 +31,7 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   });
 
   const runAnalyze = useMutation({
-    mutationFn: () => api.analyze(sourceId),
+    mutationFn: () => api.analyze(sourceId, hmmMode),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["result", sourceId] });
       void qc.invalidateQueries({ queryKey: ["source", sourceId] });
@@ -68,6 +69,17 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <select
+            value={hmmMode}
+            onChange={(e) => setHmmMode(e.target.value as HMMMode)}
+            className="h-10 rounded-md border border-brand-200 px-2 text-sm"
+            title="Режим HMM"
+          >
+            <option value="auto">HMM: auto (BIC)</option>
+            <option value="detailed">HMM: 7-state (detailed)</option>
+            <option value="basic">HMM: 3-state (basic)</option>
+            <option value="off">HMM: off</option>
+          </select>
           <Button
             onClick={() => runAnalyze.mutate()}
             disabled={runAnalyze.isPending}

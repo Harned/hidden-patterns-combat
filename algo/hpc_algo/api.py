@@ -48,11 +48,14 @@ class AnalyzeConfig:
     max_preview_rows: int = 5
     column_mapping: ColumnMappingConfig | None = None
 
-    # HMM-ветка (TASK_SPEC_004).
+    # HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005).
     enable_hmm: bool = True
+    hmm_mode: str = "auto"  # auto | detailed | basic | off
     hmm_seed: int = 42
     hmm_min_episodes: int = 30
     hmm_min_zap_events: int = 20
+    hmm_min_episodes_detailed: int = 120
+    hmm_min_zap_events_detailed: int = 60
     hmm_n_iter: int = 50
 
     extra: dict[str, Any] = field(default_factory=dict)
@@ -60,8 +63,11 @@ class AnalyzeConfig:
     def hmm_run_config(self) -> HMMRunConfig:
         return HMMRunConfig(
             enable_hmm=self.enable_hmm,
+            mode=self.hmm_mode if self.enable_hmm else "off",
             min_episodes=self.hmm_min_episodes,
             min_zap_events=self.hmm_min_zap_events,
+            min_episodes_detailed=self.hmm_min_episodes_detailed,
+            min_zap_events_detailed=self.hmm_min_zap_events_detailed,
             n_iter=self.hmm_n_iter,
             random_seed=self.hmm_seed,
         )
@@ -331,9 +337,9 @@ def _build_report(
             "характеристики. Диагностика скрытой траектории не выполнена."
         ),
         AnalysisStatus.HMM_READY: (
-            "Статус: hmm_ready — обучена 3-state HMM (маневрирование / КФВ / "
-            "ВУП), прошли guard-ы по числу эпизодов/событий и sanity-check "
-            "матрицы переходов. Все выводы остаются вероятностными."
+            "Статус: hmm_ready — обучена HMM (см. applied variant), прошли "
+            "guard-ы по числу эпизодов/событий, sanity-check матрицы переходов "
+            "и BIC-гейт. Все выводы остаются вероятностными."
         ),
         AnalysisStatus.FAILED: "Статус: failed — см. errors.",
     }
@@ -495,47 +501,27 @@ def _analyze_with_mapping(
         if guard_warnings:
             warnings.extend(guard_warnings)
         elif run_cfg.enable_hmm:
-            fit_result = hmm_mod.fit_hmm(sequences, alphabet, run_cfg)
+            fit_result = hmm_mod.fit_hmm(
+                sequences, alphabet, run_cfg, baseline=baseline
+            )
             if fit_result is None:
                 warnings.append(
                     WarningItem(
                         code="hmm.fit_failed",
                         message=(
-                            "HMM не запустилась: не удалось обучить модель "
-                            "или отсутствует зависимость 'hmmlearn'. "
-                            "Статус остаётся baseline_only."
+                            "HMM не запустилась: не удалось обучить модель, "
+                            "BIC-гейт/sanity не пройдены, или отсутствует "
+                            "зависимость 'hmmlearn'. Статус остаётся baseline_only."
                         ),
                         severity=WarningSeverity.WARNING,
+                        context={"mode": run_cfg.mode},
                     )
                 )
             else:
-                result_obj, sanity = fit_result
-                if sanity.get("transition_dominance_ok"):
-                    hmm_result = result_obj
-                    hmm_charts = _build_hmm_charts(result_obj)
-                    status = AnalysisStatus.HMM_READY
-                else:
-                    warnings.append(
-                        WarningItem(
-                            code="hmm.sanity_failed",
-                            message=(
-                                "HMM обучилась, но sanity-check матрицы переходов "
-                                "не пройден: состояния после обучения не "
-                                "соответствуют предметной цепочке "
-                                "маневрирование → КФВ → ВУП. Статус оставлен "
-                                "baseline_only."
-                            ),
-                            severity=WarningSeverity.WARNING,
-                            context={
-                                "transition_diagonal_mass": sanity.get(
-                                    "transition_diagonal_mass"
-                                ),
-                                "transition_forward_mass": sanity.get(
-                                    "transition_forward_mass"
-                                ),
-                            },
-                        )
-                    )
+                result_obj, _sanity = fit_result
+                hmm_result = result_obj
+                hmm_charts = _build_hmm_charts(result_obj)
+                status = AnalysisStatus.HMM_READY
 
     source_meta = SourceMetadata(
         filename=loaded.path.name,

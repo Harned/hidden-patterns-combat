@@ -306,3 +306,66 @@ def thin_excel(tmp_path: Path) -> Path:
     ws.append(["Петров", 1, 10, 0])
     wb.save(path)
     return path
+
+
+@pytest.fixture
+def very_dense_excel(tmp_path: Path) -> Path:
+    """Плотная фикстура (≥150 эпизодов) для 7-state HMM.
+
+    Алфавит специально богатый, чтобы guards detailed проходили.
+    """
+
+    import random
+
+    import openpyxl
+
+    path = tmp_path / "very_dense.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "all"
+
+    ws.append(
+        [
+            "ФИО борца",
+            "Технико-тактический эпизод",
+            None,
+            "Завершающие атаку приемы (n)",
+            None,
+            None,
+            None,
+            None,
+        ]
+    )
+    ws.append([None, None, None, None, "Болевой прием", None, None, None])
+    ws.append(
+        [
+            None,
+            "№ эпизода",
+            "Время эпизода, с.",
+            "Удержание",
+            "На руку",
+            "На ногу",
+            "ЗАП-Р",
+            "ЗАП-Т",
+        ]
+    )
+
+    rng = random.Random(0)
+    names = ["Иванов", "Петров", "Сидоров", "Кузнецов", "Смирнов", "Попов"]
+    for i in range(1, 181):
+        name = rng.choice(names)
+        ws.append(
+            [
+                name,
+                i,
+                rng.randint(10, 40),
+                1 if rng.random() < 0.35 else 0,
+                1 if rng.random() < 0.25 else 0,
+                1 if rng.random() < 0.2 else 0,
+                1 if rng.random() < 0.25 else 0,
+                1 if rng.random() < 0.2 else 0,
+            ]
+        )
+
+    wb.save(path)
+    return path
