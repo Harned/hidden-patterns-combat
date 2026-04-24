@@ -3,6 +3,7 @@ import type {
   AnalysisRunSummary,
   ColumnMappingConfig,
   SheetColumnsResponse,
+  SheetPreview,
   SourceSummary,
   UserPublic,
 } from "./types";
@@ -161,6 +162,30 @@ export const api = {
         : "";
     return request<SheetColumnsResponse>(
       `/sources/${sourceId}/sheets/${encodeURIComponent(sheetName)}/columns${qs}`
+    );
+  },
+  sheetPreview(
+    sourceId: number,
+    sheetName: string,
+    headerRows: number[],
+    rows = 10
+  ) {
+    const parts: string[] = [];
+    if (headerRows.length > 0) parts.push(`header_rows=${headerRows.join(",")}`);
+    parts.push(`rows=${rows}`);
+    const qs = parts.length ? `?${parts.join("&")}` : "";
+    return request<SheetPreview>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(sheetName)}/preview${qs}`
+    );
+  },
+  listRuns(sourceId: number, limit = 20) {
+    return request<AnalysisRunSummary[]>(
+      `/sources/${sourceId}/runs?limit=${limit}`
+    );
+  },
+  getRunResult(sourceId: number, runId: number) {
+    return request<AnalysisRunFull>(
+      `/sources/${sourceId}/runs/${runId}/result`
     );
   },
 };

@@ -9,6 +9,7 @@ import { AuditTable } from "./AuditTable";
 import { DetectedColumns } from "./DetectedColumns";
 import { ChartsGrid } from "./ChartsGrid";
 import { ZapChannelsCard } from "./ZapChannelsCard";
+import { RunsHistory } from "./RunsHistory";
 
 // Code-split: редактор mapping и HMM-вьюха грузятся только когда
 // пользователь открывает соответствующие секции интерфейса.
@@ -23,28 +24,40 @@ const SectionFallback: React.FC<{ label: string }> = ({ label }) => (
   <Card className="px-6 py-8 text-center text-brand-700/70">{label}</Card>
 );
 
-type Tab = "result" | "mapping";
+type Tab = "result" | "mapping" | "history";
 
 export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("result");
   const [hmmMode, setHmmMode] = useState<HMMMode>("auto");
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 
   const sourceQuery = useQuery<SourceSummary>({
     queryKey: ["source", sourceId],
     queryFn: () => api.getSource(sourceId),
   });
 
-  const resultQuery = useQuery<AnalysisRunFull, ApiError>({
+  const latestQuery = useQuery<AnalysisRunFull, ApiError>({
     queryKey: ["result", sourceId],
     queryFn: () => api.latestResult(sourceId),
     retry: false,
   });
 
+  const selectedRunQuery = useQuery<AnalysisRunFull, ApiError>({
+    queryKey: ["runResult", sourceId, selectedRunId],
+    queryFn: () => api.getRunResult(sourceId, selectedRunId as number),
+    enabled: selectedRunId !== null,
+    retry: false,
+  });
+
+  const resultQuery = selectedRunId !== null ? selectedRunQuery : latestQuery;
+
   const runAnalyze = useMutation({
     mutationFn: () => api.analyze(sourceId, hmmMode),
     onSuccess: () => {
+      setSelectedRunId(null);
       void qc.invalidateQueries({ queryKey: ["result", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["runs", sourceId] });
       void qc.invalidateQueries({ queryKey: ["source", sourceId] });
       void qc.invalidateQueries({ queryKey: ["sources"] });
     },
@@ -109,6 +122,7 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
           [
             ["result", "Результат"],
             ["mapping", "Сопоставление колонок"],
+            ["history", "История запусков"],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -123,6 +137,14 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
             {label}
           </button>
         ))}
+        {selectedRunId !== null && (
+          <button
+            onClick={() => setSelectedRunId(null)}
+            className="ml-auto text-xs text-brand-600 hover:text-brand-700"
+          >
+            ← к последнему запуску
+          </button>
+        )}
       </div>
 
       {runAnalyze.isError && (
@@ -138,6 +160,24 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         <Suspense fallback={<SectionFallback label="Загрузка редактора mapping..." />}>
           <MappingEditor sourceId={sourceId} />
         </Suspense>
+      )}
+
+      {tab === "history" && (
+        <Card className="p-4">
+          <RunsHistory
+            sourceId={sourceId}
+            selectedRunId={selectedRunId ?? undefined}
+            onSelect={(r) => {
+              if (r.state === "done") {
+                setSelectedRunId(r.id);
+                setTab("result");
+              }
+            }}
+          />
+          <p className="mt-3 text-xs text-brand-700/60">
+            Клик по завершённому запуску откроет его результат в вкладке «Результат».
+          </p>
+        </Card>
       )}
 
       {tab === "result" && (

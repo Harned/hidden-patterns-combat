@@ -1,6 +1,7 @@
 import React from "react";
 import type { WarningItem, WarningSeverity } from "@/api/types";
 import { Section } from "@/components/ui";
+import { translateWarning } from "@/i18n/warnings";
 
 const severityStyles: Record<WarningSeverity, string> = {
   info: "border-sky-200 bg-sky-50 text-sky-900",
@@ -14,12 +15,10 @@ const severityLabels: Record<WarningSeverity, string> = {
   error: "error",
 };
 
-// Несколько `audit.suspicious` подряд читать тяжело — группируем по code.
 function groupByCode(items: WarningItem[]): Record<string, WarningItem[]> {
   const grouped: Record<string, WarningItem[]> = {};
   for (const it of items) {
-    if (!grouped[it.code]) grouped[it.code] = [];
-    grouped[it.code].push(it);
+    (grouped[it.code] ??= []).push(it);
   }
   return grouped;
 }
@@ -42,18 +41,19 @@ export const WarningsList: React.FC<{
       <div className="space-y-3">
         {Object.entries(grouped).map(([code, items]) => {
           const severity = items[0].severity;
+          const translation = translateWarning(code);
+          const title = translation?.short ?? items[0].message;
           return (
             <details
               key={code}
               className={`rounded-md border px-4 py-3 ${severityStyles[severity]}`}
             >
-              <summary className="cursor-pointer text-sm font-medium flex items-center gap-2">
+              <summary className="cursor-pointer text-sm font-medium flex items-center gap-2 flex-wrap">
                 <span className="uppercase text-[10px] tracking-wide">
                   {severityLabels[severity]}
                 </span>
-                <span className="font-mono text-xs bg-white/70 rounded px-1.5 py-0.5">
-                  {code}
-                </span>
+                <span>{title}</span>
+                <span className="font-mono text-[11px] opacity-70">{code}</span>
                 <span className="text-xs opacity-70">×{items.length}</span>
               </summary>
               <ul className="mt-2 space-y-1 text-sm">

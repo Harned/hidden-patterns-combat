@@ -103,6 +103,19 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
     retry: false,
   });
 
+  const previewQuery = useQuery({
+    queryKey: ["sheetPreview", sourceId, activeSheet, headerRowsKey],
+    queryFn: () =>
+      api.sheetPreview(
+        sourceId,
+        activeSheet!,
+        sheetMapping?.header_rows ?? [0],
+        8
+      ),
+    enabled: Boolean(activeSheet && sheetMapping),
+    retry: false,
+  });
+
   const preflightMut = useMutation({
     mutationFn: () => api.preflight(sourceId),
     onSuccess: (res) => {
@@ -336,6 +349,54 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
                   текущих header_rows — они будут проигнорированы при анализе
                   (warning <code>mapping.unknown_column</code>).
                 </div>
+              )}
+
+              {previewQuery.data && (
+                <details className="rounded-md border border-brand-100 bg-white">
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-brand-900">
+                    Примеры данных (первые {previewQuery.data.preview.length} строк)
+                  </summary>
+                  <div className="overflow-x-auto max-h-64 overflow-y-auto border-t border-brand-100">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-brand-700/70 bg-brand-50">
+                          {previewQuery.data.columns.slice(0, 12).map((c) => (
+                            <th
+                              key={c}
+                              className="py-1.5 px-2 font-medium whitespace-nowrap max-w-[200px] truncate"
+                              title={c}
+                            >
+                              {c}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewQuery.data.preview.map((row, i) => (
+                          <tr key={i} className="border-t border-brand-100 align-top">
+                            {previewQuery.data.columns.slice(0, 12).map((c) => {
+                              const v = row[c];
+                              return (
+                                <td
+                                  key={c}
+                                  className="py-1.5 px-2 font-mono max-w-[200px] truncate"
+                                  title={v == null ? "" : String(v)}
+                                >
+                                  {v == null ? "—" : String(v)}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {previewQuery.data.columns.length > 12 && (
+                    <div className="px-3 py-1.5 text-[11px] text-brand-700/60">
+                      Показаны первые 12 колонок из {previewQuery.data.columns.length}.
+                    </div>
+                  )}
+                </details>
               )}
 
               <div className="overflow-x-auto rounded-md border border-brand-100">

@@ -223,9 +223,21 @@ export interface AnalysisRunFull {
 export interface AnalysisRunSummary {
   id: number;
   source_id: number;
-  status: AnalysisStatus;
+  state: "pending" | "running" | "done" | "failed";
+  status: AnalysisStatus | "";
   algo_version: string;
+  hmm_mode: string;
   created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface SheetPreview {
+  sheet: string;
+  header_rows: number[];
+  columns: string[];
+  preview: Record<string, unknown>[];
 }
 
 export interface ApiError {

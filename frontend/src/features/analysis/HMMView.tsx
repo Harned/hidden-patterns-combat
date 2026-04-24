@@ -1,6 +1,7 @@
 import React from "react";
 import type { HMMResult } from "@/api/types";
 import { Badge, Section } from "@/components/ui";
+import { ViterbiTimeline } from "./ViterbiTimeline";
 
 const fmt = (v: number, digits = 3) => Number.isFinite(v) ? v.toFixed(digits) : "—";
 
@@ -178,9 +179,13 @@ export const HMMView: React.FC<{ hmm: HMMResult }> = ({ hmm }) => (
 
     <div className="mt-6">
       <div className="text-sm font-medium text-brand-900 mb-2">
-        Скрытые траектории по эпизодам
+        Скрытые траектории по эпизодам (табличный вид)
       </div>
       <TrajectoriesTable hmm={hmm} />
+    </div>
+
+    <div className="mt-6">
+      <ViterbiTimeline hmm={hmm} />
     </div>
   </Section>
 );

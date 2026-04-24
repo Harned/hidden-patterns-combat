@@ -77,6 +77,15 @@ Excel, списком источников и русскоязычным инт�
   `hpc_csrf` + заголовок `X-CSRF-Token`, включается
   `HPC_CSRF_REQUIRED=true` в проде); простой in-memory rate-limit
   на `/auth/login` и `/auth/register` (5 попыток/минуту).
+- [x] **TASK_SPEC_007** — UX: вкладка «История запусков» c опросом
+  состояний и открытием прошлых `done`-run'ов
+  (`GET /sources/{id}/runs` + `/runs/{id}/result`); preview первых
+  строк листа в редакторе mapping
+  (`GET /sources/{id}/sheets/{name}/preview`); визуализация
+  Viterbi-траектории по эпизодам с цветовой легендой; code-split
+  `MappingEditor` / `HMMView` через `React.lazy`; Vitest + Testing
+  Library scaffolding (`npm run test:unit`); русская локализация
+  warning-кодов (`translateWarning`).
 
 ## Структура репозитория
 
