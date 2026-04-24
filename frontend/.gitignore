@@ -3,3 +3,8 @@ dist
 .vite
 .turbo
 *.log
+*.tsbuildinfo
+
+# tsc-генерируемые артефакты соседей vite.config.ts — держим только .ts-исходник.
+vite.config.d.ts
+vite.config.js
