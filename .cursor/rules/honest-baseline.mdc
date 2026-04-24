@@ -1,0 +1,28 @@
+---
+description: Require Excel audit, explicit mapping checks, and honest baseline or warnings when data is insufficient for HMM
+alwaysApply: true
+---
+
+# Honest Baseline
+
+Always audit Excel inputs before analysis:
+
+- sheets
+- shape
+- columns
+- dtypes
+- missing values
+- suspicious values
+- candidate mappings for hidden states, `ЗАП`, and time
+
+If mapping is unreliable or data is insufficient:
+
+- return `baseline`, `audit`, and `warnings`
+- expose detected columns and assumptions
+- do not fabricate hidden states, trajectories, confidence, or HMM outputs
+- do not claim that diagnosis was completed
+
+Example:
+
+- Bad: return a fake Viterbi path when column mapping is unknown.
+- Good: return `baseline_only` or `needs_column_mapping` with explicit warnings.

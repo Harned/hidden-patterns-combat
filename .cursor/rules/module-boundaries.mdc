@@ -1,0 +1,18 @@
+---
+description: Keep the processing algorithm independent and prevent research logic from leaking into backend or frontend
+alwaysApply: true
+---
+
+# Module Boundaries
+
+- The algorithm must remain an independent processing module.
+- Backend may orchestrate uploads, auth, persistence, and algorithm calls.
+- Frontend may render tables, charts, warnings, and reports.
+- Do not place research or modeling logic inside API endpoints.
+- Do not place research or modeling logic inside UI components.
+- Keep the processing module callable from backend, CLI, tests, and notebooks.
+
+Example:
+
+- Bad: infer hidden states directly inside a route handler or React component.
+- Good: call the processing module and render its structured result.

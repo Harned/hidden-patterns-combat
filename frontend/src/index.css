@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: theme("fontFamily.sans");
+  color: #1a1f2e;
+  background-color: #f6f7fb;
+}

@@ -1,0 +1,18 @@
+---
+description: Preserve domain semantics: observations are ZAP, hidden states reflect combat activity, and conclusions must remain methodologically honest
+alwaysApply: true
+---
+
+# Domain Semantics
+
+- Observations are `ЗАП`.
+- Hidden states must reflect combat activity, not arbitrary technical labels.
+- Use the domain chain `маневрирование -> КФВ -> ВУП -> ЗАП`.
+- Do not replace observations with athlete actions when the task is to infer causes from `ЗАП`.
+- Do not center the main analysis around `fighter_style`.
+- Do not treat a trained model as valid unless it is methodologically aligned with the domain.
+
+Example:
+
+- Bad: use action labels as observations and call the result a diagnostic HMM.
+- Good: keep `ЗАП` as observations and describe any unsupported inference as a limitation.

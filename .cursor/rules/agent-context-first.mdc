@@ -1,0 +1,19 @@
+---
+description: Read docs/agent_context and identify the active TASK_SPEC before planning or coding
+alwaysApply: true
+---
+
+# Agent Context First
+
+Before architecture, implementation, refactor, or review:
+
+- Read `docs/agent_context/README.md` first.
+- Then read the relevant files in `docs/agent_context`.
+- Always read `PROJECT_CONTEXT.md`, `DOMAIN_SPEC.md`, `AGENT_RULES.md`, `DATA_SPEC.md`, `PRODUCT_SPEC.md`, `ALGORITHM_SPEC.md`, `DEFINITION_OF_DONE.md`, and `REPOSITORY_NOTES.md`.
+- Inspect `TASK_SPEC_*.md` and identify the active task before coding.
+- If the active `TASK_SPEC` is unclear, ask instead of guessing.
+- If the current spec says analysis first or architecture first, do not start coding.
+
+Example:
+
+- For architecture work, analyze the current `TASK_SPEC` and stop at plan/proposal if the spec says not to code yet.

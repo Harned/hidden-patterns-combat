@@ -1,0 +1,60 @@
+"""E2E для HMM-ветки (TASK_SPEC_004) через HTTP."""
+
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+
+def _register_upload(client: TestClient, email: str, data: bytes) -> int:
+    client.post("/api/auth/register", json={"email": email, "password": "supersecret123"})
+    resp = client.post(
+        "/api/sources",
+        files={
+            "file": (
+                "source.xlsx",
+                data,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def test_analyze_returns_hmm_ready_on_dense_data(
+    client: TestClient, dense_hmm_xlsx_bytes: bytes
+) -> None:
+    sid = _register_upload(client, "hmm-dense@example.com", dense_hmm_xlsx_bytes)
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    run = client.post(f"/api/sources/{sid}/analyze").json()
+    assert run["status"] == "hmm_ready", run
+
+    result = client.get(f"/api/sources/{sid}/result").json()["result"]
+    assert result["status"] == "hmm_ready"
+    assert result["hmm"] is not None
+    labels = result["hmm"]["parameters"]["state_labels"]
+    assert labels == ["маневрирование", "КФВ", "ВУП"]
+
+    # Все Viterbi-состояния из доменного списка.
+    assert result["hmm"]["trajectories"]
+    for tr in result["hmm"]["trajectories"]:
+        for s in tr["state_path"]:
+            assert s in set(labels)
+
+
+def test_analyze_blocks_hmm_on_thin_data(
+    client: TestClient, multirow_xlsx_bytes: bytes
+) -> None:
+    sid = _register_upload(client, "hmm-thin@example.com", multirow_xlsx_bytes)
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    run = client.post(f"/api/sources/{sid}/analyze").json()
+    # Thin-data: guard должен заблокировать HMM.
+    assert run["status"] == "baseline_only"
+
+    result = client.get(f"/api/sources/{sid}/result").json()["result"]
+    assert result["status"] == "baseline_only"
+    assert result["hmm"] is None
+    codes = {w["code"] for w in result["warnings"]}
+    assert "hmm.guards_failed" in codes

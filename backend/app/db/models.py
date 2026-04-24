@@ -1,0 +1,90 @@
+"""ORM-модели для auth, sources и сохранённых AnalysisResult."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.session import Base
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    sources: Mapped[list[Source]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )
+
+
+class Source(Base):
+    """Загруженный пользователем Excel-источник."""
+
+    __tablename__ = "sources"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "id", name="uq_sources_owner_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    original_filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    stored_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    # JSON-сериализованный ColumnMappingConfig (TASK_SPEC_003). None, если
+    # пользователь ещё не подтвердил сопоставление колонок.
+    mapping_config: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    owner: Mapped[User] = relationship(back_populates="sources")
+    analysis_runs: Mapped[list[AnalysisRun]] = relationship(
+        back_populates="source",
+        cascade="all, delete-orphan",
+        order_by="AnalysisRun.id.desc()",
+    )
+
+
+class AnalysisRun(Base):
+    """Результат вызова :func:`hpc_algo.analyze_source`."""
+
+    __tablename__ = "analysis_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    algo_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    result_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    source: Mapped[Source] = relationship(back_populates="analysis_runs")
