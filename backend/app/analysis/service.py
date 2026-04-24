@@ -155,3 +155,70 @@ def describe_sheet_columns(
         "header_rows": used_rows,
         "columns": columns,
     }
+
+
+def sheet_preview(
+    source: Source,
+    storage_resolve,
+    sheet_name: str,
+    header_rows: list[int] | None,
+    rows: int,
+) -> dict[str, Any]:
+    """Первые ``rows`` строк листа после применения header_rows.
+
+    Используется в UI-редакторе mapping, чтобы пользователь видел
+    примерные значения колонок и понимал, какую роль им назначить.
+    """
+
+    import math
+
+    import pandas as pd
+    from hpc_algo.mapping import (
+        column_levels,
+        guess_header_rows,
+    )
+
+    absolute: Path = storage_resolve(source.stored_path)
+    if header_rows is None:
+        raw = pd.read_excel(
+            absolute, sheet_name=sheet_name, header=None, engine="openpyxl"
+        )
+        header_rows = guess_header_rows(raw)
+
+    header_arg = (
+        header_rows if len(header_rows) > 1 else (header_rows[0] if header_rows else 0)
+    )
+    df = pd.read_excel(
+        absolute, sheet_name=sheet_name, header=header_arg, engine="openpyxl"
+    )
+    flat_names = [
+        " | ".join(column_levels(col, idx))
+        for idx, col in enumerate(df.columns)
+    ]
+    df.columns = flat_names
+
+    def _safe(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        if isinstance(value, (str, int, bool)):
+            return value
+        if isinstance(value, float):
+            return value
+        # datetimes / Timestamps / numpy scalars — сериализуем как строку.
+        try:
+            return value.isoformat()  # pd.Timestamp / datetime
+        except Exception:  # noqa: BLE001
+            return str(value)
+
+    preview: list[dict[str, Any]] = []
+    for _, row in df.head(max(0, int(rows))).iterrows():
+        preview.append({str(k): _safe(v) for k, v in row.items()})
+
+    return {
+        "sheet": sheet_name,
+        "header_rows": list(header_rows),
+        "columns": flat_names,
+        "preview": preview,
+    }

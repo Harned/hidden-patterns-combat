@@ -115,6 +115,52 @@ def get_run(
     return AnalysisRunSummary.model_validate(run)
 
 
+@router.get("/runs", response_model=list[AnalysisRunSummary])
+def list_runs(
+    source_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[AnalysisRunSummary]:
+    source = _get_owned_source_or_404(db, user, source_id)
+    runs = source.analysis_runs[:limit]
+    return [AnalysisRunSummary.model_validate(r) for r in runs]
+
+
+@router.get("/runs/{run_id}/result", response_model=AnalysisRunFull)
+def get_run_result(
+    source_id: int,
+    run_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> AnalysisRunFull:
+    source = _get_owned_source_or_404(db, user, source_id)
+    run = db.get(AnalysisRun, run_id)
+    if run is None or run.source_id != source.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Запуск анализа не найден.",
+        )
+    if run.state != "done":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Запуск в состоянии '{run.state}', результат ещё не готов.",
+        )
+    return AnalysisRunFull(
+        id=run.id,
+        source_id=run.source_id,
+        state=run.state,
+        status=run.status,
+        algo_version=run.algo_version,
+        hmm_mode=run.hmm_mode,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        error=run.error,
+        result=json.loads(run.result_json) if run.result_json else {},
+    )
+
+
 @router.get("/result", response_model=AnalysisRunFull)
 def latest_result(
     source_id: int,
@@ -249,4 +295,29 @@ def list_sheet_columns(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Не удалось описать лист '{sheet_name}': {exc}",
+        ) from exc
+
+
+@router.get("/sheets/{sheet_name}/preview")
+def get_sheet_preview(
+    source_id: int,
+    sheet_name: str,
+    header_rows: str | None = None,
+    rows: int = Query(default=10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Первые `rows` строк листа после применения header_rows."""
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    parsed_rows = _parse_header_rows(header_rows)
+    try:
+        return analysis_service.sheet_preview(
+            source, storage.resolve, sheet_name, parsed_rows, rows
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось получить preview листа '{sheet_name}': {exc}",
         ) from exc
