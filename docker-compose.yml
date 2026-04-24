@@ -25,6 +25,9 @@ services:
       HPC_SECRET_KEY: ${HPC_SECRET_KEY:-change-me-to-long-random-secret-32b}
       HPC_CSRF_REQUIRED: "true"
       HPC_RATE_LIMIT_ENABLED: "true"
+      HPC_RATE_LIMIT_BACKEND: ${HPC_RATE_LIMIT_BACKEND:-memory}
+      HPC_REDIS_URL: ${HPC_REDIS_URL:-}
+      HPC_REQUIRE_EMAIL_VERIFIED: ${HPC_REQUIRE_EMAIL_VERIFIED:-false}
       HPC_ALLOWED_ORIGINS: ${HPC_ALLOWED_ORIGINS:-http://localhost:8080}
       HPC_STORAGE_ROOT: /var/hpc/uploads
     volumes:

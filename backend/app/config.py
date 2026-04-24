@@ -37,8 +37,10 @@ class Settings(BaseSettings):
         default="dev-only-change-me",
         description="Секрет для подписи JWT. В проде задать через HPC_SECRET_KEY.",
     )
-    access_token_expires_minutes: int = 60 * 24  # 24 часа
+    access_token_expires_minutes: int = 15  # короткий access
+    refresh_token_expires_minutes: int = 60 * 24 * 14  # 14 дней
     cookie_name: str = "hpc_session"
+    refresh_cookie_name: str = "hpc_refresh"
     cookie_secure: bool = False  # включить True в проде под HTTPS
     cookie_samesite: str = "lax"
 
@@ -51,6 +53,13 @@ class Settings(BaseSettings):
     # Rate-limit на auth-эндпоинты.
     rate_limit_enabled: bool = False  # в dev/test — False
     rate_limit_auth_per_minute: int = 5
+    rate_limit_backend: str = "memory"  # memory | redis
+    redis_url: str | None = None
+
+    # Email verification. Реальная SMTP-отправка не реализована —
+    # токены логируются через stdout. См. `TASK_SPEC_009`.
+    require_email_verified: bool = False
+    email_verification_token_minutes: int = 60 * 24  # сутки
 
     # Фоновая задача analyze: верхняя граница времени, после которой
     # внешний watcher может пометить run как stuck (не используется

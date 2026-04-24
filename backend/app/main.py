@@ -16,7 +16,12 @@ from app.db.session import init_schema
 from app.sources.router import router as sources_router
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-_CSRF_EXEMPT_PATHS = ("/api/auth/login", "/api/auth/register")
+_CSRF_EXEMPT_PATHS = (
+    "/api/auth/login",
+    "/api/auth/register",
+    "/api/auth/refresh",
+    "/api/auth/verify-email",
+)
 
 
 def _csrf_guard(request: Request, settings: Settings) -> JSONResponse | None:

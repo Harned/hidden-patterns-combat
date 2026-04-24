@@ -48,6 +48,7 @@ Use the user request and current repository stage to choose the relevant `TASK_S
 - Use `TASK_SPEC_006_INFRA.md` for production infrastructure: PostgreSQL, Alembic migrations, docker-compose, background analyze via BackgroundTasks with run states, double-submit-cookie CSRF, and simple token-bucket rate-limit on `/auth/login` and `/auth/register`. The domain algorithm is unchanged.
 - Use `TASK_SPEC_007_UX.md` for user-facing improvements: runs history panel, Viterbi timeline, sheet-data preview inside the mapping editor, code-split SPA, Vitest smoke tests, and Russian i18n of warning codes. Domain invariants unchanged.
 - Use `TASK_SPEC_008_EMISSIONS_CV.md` for richer observation emissions (multivariate Bernoulli over ZAP channels as an alternative to Categorical) and a cross-validation helper (k-fold over sheets / weight categories) to compare model variants honestly. Domain invariants unchanged; no UI-level changes required.
+- Use `TASK_SPEC_009_PROD_RELIABILITY.md` for pre-pilot production hardening: pluggable rate-limit backend (in-memory / Redis), email verification scaffolding (column + endpoint + Alembic migration, SMTP stubbed), short-lived access tokens with a refresh endpoint. Domain algorithm unchanged.
 
 If more than one task spec appears relevant, stop and clarify before implementation.
 

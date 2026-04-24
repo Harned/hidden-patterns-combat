@@ -82,10 +82,18 @@ class _Bucket:
 
 
 class RateLimiter:
-    """Очень простой in-memory rate-limiter (minutely window per IP + bucket_key).
+    """Протокол для rate-limiter'а. Реализации ниже (in-memory / Redis)
+    предоставляют одинаковый метод :meth:`check`."""
 
-    Не предназначен для многопроцессного backend'а. Для прода с несколькими
-    воркерами подключить Redis-based реализацию (вне MVP).
+    def check(self, ip: str, bucket_key: str) -> bool:
+        raise NotImplementedError
+
+
+class InMemoryRateLimiter(RateLimiter):
+    """In-memory token bucket per (ip, bucket_key) за минуту.
+
+    Не предназначен для многопроцессного backend'а. Для horizontal
+    scaling используйте Redis-адаптер.
     """
 
     def __init__(self, max_hits_per_minute: int) -> None:
@@ -104,6 +112,30 @@ class RateLimiter:
                 return False
             bucket.hits += 1
             return True
+
+
+class RedisRateLimiter(RateLimiter):
+    """Атомарный INCR+EXPIRE per-minute по ключу `rl:{bucket}:{ip}:{minute}`."""
+
+    def __init__(self, redis_url: str, max_hits_per_minute: int) -> None:
+        import redis  # локальный импорт: зависимость optional
+
+        self.max = max_hits_per_minute
+        self.client = redis.Redis.from_url(
+            redis_url, decode_responses=True, socket_connect_timeout=2
+        )
+        # проверим соединение раньше, чтобы фабрика могла упасть
+        # на in-memory fallback.
+        self.client.ping()
+
+    def check(self, ip: str, bucket_key: str) -> bool:
+        now_minute = int(time.time() // 60)
+        key = f"rl:{bucket_key}:{ip}:{now_minute}"
+        pipe = self.client.pipeline()
+        pipe.incr(key, 1)
+        pipe.expire(key, 65)
+        hits, _ = pipe.execute()
+        return int(hits) <= self.max
 
 
 def client_ip(request: Request) -> str:

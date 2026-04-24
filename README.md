@@ -92,6 +92,14 @@ Excel, списком источников и русскоязычным инт�
   forward-backward/Viterbi/EM (без SciPy); `hpc_algo/cv.py` с
   `cross_validate(frames, config, run_config, k)` поверх листов —
   честное сравнение вариантов модели.
+- [x] **TASK_SPEC_009** — продовая надёжность: pluggable rate-limit
+  backend (`memory` / `redis`, `HPC_RATE_LIMIT_BACKEND` +
+  `HPC_REDIS_URL`); короткий access-токен (15 мин) +
+  refresh-токен (14 дней) с `POST /api/auth/refresh`;
+  email-верификация (`users.email_verified_at` + `GET /auth/verify-email`
+  + `POST /auth/request-verification`, SMTP пока заглушен через
+  stdout); Alembic `0002_email_verified_at`; опциональный жёсткий
+  режим через `HPC_REQUIRE_EMAIL_VERIFIED=true`.
 
 ## Структура репозитория
 

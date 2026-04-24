@@ -36,6 +36,9 @@ OpenAPI: http://127.0.0.1:8000/docs
 | POST  | `/api/auth/login`                  | вход                               |
 | POST  | `/api/auth/logout`                 | выход                              |
 | GET   | `/api/auth/me`                     | текущий пользователь               |
+| POST  | `/api/auth/refresh`                | обновить access-cookie по refresh  |
+| POST  | `/api/auth/request-verification`   | выдать токен подтверждения email   |
+| GET   | `/api/auth/verify-email?token=…`   | подтвердить email                  |
 | GET   | `/api/sources`                     | список моих источников             |
 | POST  | `/api/sources`                     | загрузить `.xlsx` / `.xls`         |
 | GET   | `/api/sources/{id}`                | карточка источника                 |
@@ -64,7 +67,7 @@ ruff check .
 валидацию upload (расширение, макросы), запуск анализа и проверку
 инвариантов `AnalysisResult` (observations = ЗАП, HMM-поля отсутствуют).
 
-## Инфраструктура (TASK_SPEC_006)
+## Инфраструктура (TASK_SPEC_006 / 009)
 
 - **Alembic** (`backend/alembic`) — первая миграция `0001_initial`
   описывает `users / sources / analysis_runs` и все текущие поля
@@ -78,9 +81,20 @@ ruff check .
   `GET /runs/{run_id}`. `?wait=true` — синхронный режим для CLI/тестов.
 - **CSRF** — double-submit cookie `hpc_csrf` + заголовок `X-CSRF-Token`.
   Включается `HPC_CSRF_REQUIRED=true` (dev/test — `false`).
-- **Rate-limit** — простой in-memory token bucket для `/auth/login` и
-  `/auth/register`; лимит задаётся `HPC_RATE_LIMIT_AUTH_PER_MINUTE`
-  (по умолчанию 5). Включается `HPC_RATE_LIMIT_ENABLED=true`.
+- **Rate-limit** — token bucket для `/auth/login` и `/auth/register`.
+  Включается `HPC_RATE_LIMIT_ENABLED=true`; лимит —
+  `HPC_RATE_LIMIT_AUTH_PER_MINUTE` (по умолчанию 5).
+  `HPC_RATE_LIMIT_BACKEND=redis` + `HPC_REDIS_URL` переключает на
+  Redis (требует `pip install -e backend[redis]`); если Redis
+  недоступен, backend падает к in-memory и логирует ошибку.
+- **Refresh-токен** — короткий access (15 мин) + refresh (14 дней).
+  `POST /api/auth/refresh` по refresh-cookie выдаёт новую
+  access-cookie и CSRF. Refresh хранится как HttpOnly-cookie на пути
+  `/api/auth`.
+- **Email verification** — поле `users.email_verified_at`. Регистрация
+  логирует верификационный токен в stdout (SMTP не реализован).
+  Жёсткий режим — `HPC_REQUIRE_EMAIL_VERIFIED=true` — блокирует
+  `/auth/login` до подтверждения.
 
 ## Известные ограничения
 

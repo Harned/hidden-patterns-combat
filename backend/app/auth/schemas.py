@@ -27,6 +27,7 @@ class UserPublic(BaseModel):
     id: int
     email: EmailStr
     created_at: datetime
-    # Выдаётся при register/login для double-submit CSRF. В ответе /auth/me
-    # остаётся None (токен хранится в отдельной cookie).
+    email_verified_at: datetime | None = None
+    # Выдаётся при register/login/refresh для double-submit CSRF.
+    # В /auth/me остаётся None (токен хранится в отдельной cookie).
     csrf_token: str | None = None
