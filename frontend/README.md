@@ -33,10 +33,22 @@ npm run dev
 - `src/features/analysis/AnalysisView.tsx` — рендер AnalysisResult:
   StatusBadge, AuditTable, DetectedColumns, ChartsGrid, WarningsList.
 
+## Маршруты
+
+| Путь | Назначение |
+|------|------------|
+| `/login` | вход (ссылка на `/forgot-password`, `/register`) |
+| `/register` | регистрация с двумя обязательными согласиями (LEGAL-REG-1) |
+| `/verify-email` | ввод кода подтверждения, кнопка «Отправить код снова» |
+| `/forgot-password` | запрос кода восстановления (нейтральное сообщение) |
+| `/reset-password` | ввод кода + новый пароль |
+| `/legal/:slug` | три документа-плейсхолдера (`terms` / `privacy` / `pdn-consent`) |
+| `/profile` | статус email, документы, выход, удаление аккаунта (PROFILE-1) |
+| `/app` | рабочая область (только подтверждённый email + onboarding) |
+
 ## Ограничения MVP
 
-- Нет реальных charts-heatmap (расширим при включении HMM).
-- Нет UI-редактора column mapping — это задача `TASK_SPEC_003`.
-- Анализ сейчас синхронный: для больших файлов UI блокируется на время POST.
+- Анализ синхронный/фоновый, но UI пока опрашивает `/runs/{id}` без WebSocket.
 - Нет i18n-переключателя: UI только на русском.
-- ESLint-конфиг минимален, тесты UI пока не написаны.
+- Юридические тексты в `src/copy/legal.ts` — плейсхолдеры; реальные документы предоставляет владелец.
+- ESLint-конфиг минимальный; для smoke-проверки используется Vitest.

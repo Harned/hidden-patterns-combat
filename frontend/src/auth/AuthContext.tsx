@@ -9,10 +9,16 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  register: (email: string, password: string) => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    acceptTerms: boolean,
+    acceptPdn: boolean
+  ) => Promise<UserPublic>;
+  login: (email: string, password: string) => Promise<UserPublic>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  setUser: (u: UserPublic | null) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -41,11 +47,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     void refresh();
   }, []);
 
-  const register = async (email: string, password: string) => {
+  const register = async (
+    email: string,
+    password: string,
+    acceptTerms: boolean,
+    acceptPdn: boolean
+  ) => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
-      const user = await api.register(email, password);
+      const user = await api.register(email, password, acceptTerms, acceptPdn);
       setState({ user, loading: false, error: null });
+      return user;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Ошибка регистрации";
       setState({ user: null, loading: false, error: msg });
@@ -58,6 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const user = await api.login(email, password);
       setState({ user, loading: false, error: null });
+      return user;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Ошибка входа";
       setState({ user: null, loading: false, error: msg });
@@ -73,8 +86,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const setUser = (u: UserPublic | null) =>
+    setState((s) => ({ ...s, user: u, error: null }));
+
   return (
-    <AuthContext.Provider value={{ ...state, register, login, logout, refresh }}>
+    <AuthContext.Provider
+      value={{ ...state, register, login, logout, refresh, setUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

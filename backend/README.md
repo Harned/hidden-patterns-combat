@@ -32,13 +32,17 @@ OpenAPI: http://127.0.0.1:8000/docs
 
 | Метод | Путь                               | Описание                           |
 |------:|------------------------------------|------------------------------------|
-| POST  | `/api/auth/register`               | регистрация (email + password)     |
-| POST  | `/api/auth/login`                  | вход                               |
+| POST  | `/api/auth/register`               | регистрация (email + пароль + 2 обязательных согласия) |
+| POST  | `/api/auth/login`                  | вход (рабочая зона блокируется до подтверждения email) |
 | POST  | `/api/auth/logout`                 | выход                              |
 | GET   | `/api/auth/me`                     | текущий пользователь               |
+| DELETE| `/api/auth/me`                     | удалить аккаунт (каскад на источники) |
 | POST  | `/api/auth/refresh`                | обновить access-cookie по refresh  |
-| POST  | `/api/auth/request-verification`   | выдать токен подтверждения email   |
-| GET   | `/api/auth/verify-email?token=…`   | подтвердить email                  |
+| POST  | `/api/auth/verify-email`           | подтвердить email коротким кодом   |
+| POST  | `/api/auth/resend-verification`    | переотправить код подтверждения    |
+| POST  | `/api/auth/forgot-password`        | запросить код восстановления (нейтральный ответ) |
+| POST  | `/api/auth/reset-password`         | задать новый пароль по коду        |
+| POST  | `/api/auth/onboarding-complete`    | подтвердить, что пользователь увидел дисклеймер |
 | GET   | `/api/sources`                     | список моих источников             |
 | POST  | `/api/sources`                     | загрузить `.xlsx` / `.xls`         |
 | GET   | `/api/sources/{id}`                | карточка источника                 |

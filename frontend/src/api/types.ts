@@ -5,6 +5,11 @@ export interface UserPublic {
   id: number;
   email: string;
   created_at: string;
+  email_verified_at: string | null;
+  terms_accepted_at: string | null;
+  pdn_accepted_at: string | null;
+  onboarding_completed_at: string | null;
+  csrf_token?: string | null;
 }
 
 export interface SourceSummary {

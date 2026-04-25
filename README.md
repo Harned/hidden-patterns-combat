@@ -100,6 +100,22 @@ Excel, списком источников и русскоязычным инт�
   + `POST /auth/request-verification`, SMTP пока заглушен через
   stdout); Alembic `0002_email_verified_at`; опциональный жёсткий
   режим через `HPC_REQUIRE_EMAIL_VERIFIED=true`.
+- [x] **TASK_SPEC_010** — закрытый исследовательский стенд (локальный
+  MVP): саморегистрация по email/паролю с двумя обязательными
+  согласиями (LEGAL-REG-1) и подтверждением email коротким кодом
+  (AUTH-REG-1); login пускает в систему всегда, но рабочая зона
+  доступна только подтверждённым (`current_verified_user`); восстановление
+  пароля по коду из email с нейтральным ответом (AUTH-PWRESET-1);
+  страницы трёх документов-плейсхолдеров и согласованные строки бренда
+  (UI-BRAND-1, LEGAL-DOCS-1, LEGAL-COPY-1); первичный дисклеймер при
+  входе в рабочую зону (LEGAL-ONBOARD-1) + постоянный баннер
+  (UI-DISCLAIMER-1); upload-gate с обязательным `confirm_upload`
+  (UPLOAD-GATE-1); раздел «Профиль» со статусом email, документами,
+  выходом и удалением аккаунта (PROFILE-1); меню «⋯» у источников с
+  удалением файла и результатов (SOURCE-MENU-1, SOURCE-DEL-1).
+  Доставка кодов — через локальный mail-sink (`HPC_MAIL_SINK=log|file`,
+  `storage/devmail/`); реальный SMTP вне эпика. Alembic
+  `0003_user_consents_and_codes`.
 
 ## Структура репозитория
 

@@ -68,10 +68,20 @@ async function request<T>(
 }
 
 export const api = {
-  register(email: string, password: string) {
+  register(
+    email: string,
+    password: string,
+    accept_terms: boolean,
+    accept_pdn: boolean
+  ) {
     return request<UserPublic>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({
+        email,
+        password,
+        accept_terms,
+        accept_pdn,
+      }),
     });
   },
   login(email: string, password: string) {
@@ -86,6 +96,48 @@ export const api = {
   me() {
     return request<UserPublic>("/auth/me");
   },
+  verifyEmail(code: string) {
+    return request<UserPublic>("/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+  },
+  resendVerification() {
+    return request<{ status: string }>("/auth/resend-verification", {
+      method: "POST",
+    });
+  },
+  forgotPassword(email: string) {
+    return request<{ status: string; message: string }>(
+      "/auth/forgot-password",
+      {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      }
+    );
+  },
+  resetPassword(
+    email: string,
+    code: string,
+    new_password: string,
+    new_password_repeat: string
+  ) {
+    return request<{ status: string }>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        code,
+        new_password,
+        new_password_repeat,
+      }),
+    });
+  },
+  onboardingComplete() {
+    return request<UserPublic>("/auth/onboarding-complete", { method: "POST" });
+  },
+  deleteAccount() {
+    return request<void>("/auth/me", { method: "DELETE" });
+  },
   listSources() {
     return request<SourceSummary[]>("/sources");
   },
@@ -95,9 +147,13 @@ export const api = {
   deleteSource(id: number) {
     return request<void>(`/sources/${id}`, { method: "DELETE" });
   },
-  async uploadSource(file: File): Promise<SourceSummary> {
+  async uploadSource(
+    file: File,
+    confirmUpload: boolean
+  ): Promise<SourceSummary> {
     const form = new FormData();
     form.append("file", file);
+    form.append("confirm_upload", confirmUpload ? "true" : "false");
     const headers: Record<string, string> = {};
     const csrf = readCsrfTokenFromCookie();
     if (csrf) headers["X-CSRF-Token"] = csrf;
