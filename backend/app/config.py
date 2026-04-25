@@ -57,9 +57,18 @@ class Settings(BaseSettings):
     redis_url: str | None = None
 
     # Email verification. Реальная SMTP-отправка не реализована —
-    # токены логируются через stdout. См. `TASK_SPEC_009`.
+    # для локального MVP коды доставляются через mail-sink (логи + опцион.
+    # файлы в storage/devmail). См. `TASK_SPEC_009` / `TASK_SPEC_010`.
     require_email_verified: bool = False
-    email_verification_token_minutes: int = 60 * 24  # сутки
+    email_verification_token_minutes: int = 60 * 24  # сутки (старый JWT-flow)
+    # TASK_SPEC_010: короткий код (numeric)
+    email_code_length: int = 6
+    email_code_ttl_minutes: int = 30
+    password_reset_code_ttl_minutes: int = 30
+    # mail sink: ``log`` — только в стандартный logger; ``file`` —
+    # дополнительно складывает копию письма в storage/devmail/<user>.log.
+    mail_sink: str = "log"
+    mail_dir: Path = PROJECT_ROOT / "storage" / "devmail"
 
     # Фоновая задача analyze: верхняя граница времени, после которой
     # внешний watcher может пометить run как stuck (не используется

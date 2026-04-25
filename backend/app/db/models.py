@@ -35,6 +35,41 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # --- TASK_SPEC_010: согласия и коды ---
+
+    # Время принятия двух согласий при регистрации (LEGAL-REG-1).
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    pdn_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Email verification code (короткий код, не JWT). Активен один за раз.
+    email_verification_code_hash: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    email_verification_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    email_verification_code_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Password reset code (отдельный сценарий, не путаем с verification).
+    password_reset_code_hash: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    password_reset_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Онбординг-дисклеймер при первом входе после подтверждения email
+    # (LEGAL-ONBOARD-1). NULL = ещё не показан / не подтверждён.
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     sources: Mapped[list[Source]] = relationship(
         back_populates="owner",
         cascade="all, delete-orphan",
