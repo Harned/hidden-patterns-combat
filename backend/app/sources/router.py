@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.auth.deps import current_user
+from app.auth.deps import current_verified_user
 from app.config import Settings, get_settings
 from app.db.models import User
 from app.db.session import get_db
@@ -24,7 +24,7 @@ def get_storage(settings: Settings = Depends(get_settings)) -> LocalStorage:
 @router.get("", response_model=list[SourceSummary])
 def list_sources(
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(current_verified_user),
 ) -> list[SourceSummary]:
     return service.list_user_sources(db, user)
 
@@ -32,11 +32,27 @@ def list_sources(
 @router.post("", response_model=SourceSummary, status_code=status.HTTP_201_CREATED)
 async def upload_source(
     file: UploadFile = File(..., description="Excel-источник (.xlsx или .xls)."),
+    confirm_upload: bool = Form(
+        False,
+        description=(
+            "UPLOAD-GATE-1: подтверждение пользователя, что данные обезличены, "
+            "загрузка правомерна и сервис используется в исследовательском режиме."
+        ),
+    ),
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(current_verified_user),
     storage: LocalStorage = Depends(get_storage),
     settings: Settings = Depends(get_settings),
 ) -> SourceSummary:
+    if not confirm_upload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Загрузка возможна только после подтверждения, что вы "
+                "удалили персональные данные и подтверждаете правомерность "
+                "загрузки. Установите флаг `confirm_upload=true`."
+            ),
+        )
     data = await file.read()
     try:
         source = service.create_source(
@@ -69,7 +85,7 @@ async def upload_source(
 def get_source(
     source_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(current_verified_user),
 ) -> SourceSummary:
     try:
         source = service.get_owned_source(db, user, source_id)
@@ -95,7 +111,7 @@ def get_source(
 def delete_source(
     source_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(current_verified_user),
     storage: LocalStorage = Depends(get_storage),
 ) -> None:
     try:

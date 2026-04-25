@@ -54,6 +54,44 @@ def client(tmp_settings: Settings) -> Iterator[TestClient]:
 
 
 @pytest.fixture
+def register_verified(client: TestClient):
+    """Зарегистрировать пользователя с согласиями и сразу подтвердить email.
+
+    Удобно для тестов, где TASK_SPEC_010 не сам объект проверки. Возвращает
+    тело ответа `/auth/register` (содержит `csrf_token` и id).
+    """
+
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.db.models import User
+    from app.db.session import get_sessionmaker
+
+    def _register(email: str, password: str = "supersecret123") -> dict:
+        resp = client.post(
+            "/api/auth/register",
+            json={
+                "email": email,
+                "password": password,
+                "accept_terms": True,
+                "accept_pdn": True,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        SessionLocal = get_sessionmaker()
+        with SessionLocal() as db:
+            user = db.execute(
+                select(User).where(User.email == email.lower())
+            ).scalar_one()
+            user.email_verified_at = datetime.now(UTC)
+            db.commit()
+        return resp.json()
+
+    return _register
+
+
+@pytest.fixture
 def sample_xlsx_bytes() -> bytes:
     """Маленький валидный Excel с ЗАП-колонкой для e2e."""
 

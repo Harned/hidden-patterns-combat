@@ -5,11 +5,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def _setup(client: TestClient, email: str, data: bytes) -> int:
-    client.post(
-        "/api/auth/register",
-        json={"email": email, "password": "supersecret123"},
-    )
+def _setup(client: TestClient, register_verified, email: str, data: bytes) -> int:
+    register_verified(email)
     resp = client.post(
         "/api/sources",
         files={
@@ -19,15 +16,16 @@ def _setup(client: TestClient, email: str, data: bytes) -> int:
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     assert resp.status_code == 201
     return resp.json()["id"]
 
 
 def test_runs_history_lists_all_runs(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _setup(client, "history@example.com", multirow_xlsx_bytes)
+    sid = _setup(client, register_verified, "history@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
 
@@ -43,14 +41,13 @@ def test_runs_history_lists_all_runs(
     assert len(runs) >= 2
     ids = {r["id"] for r in runs}
     assert run1["id"] in ids and run2["id"] in ids
-    # сортировка в обратном порядке (свежие — первыми)
     assert runs[0]["id"] >= runs[-1]["id"]
 
 
 def test_run_result_endpoint_returns_done_run(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _setup(client, "runres@example.com", multirow_xlsx_bytes)
+    sid = _setup(client, register_verified, "runres@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     run = client.post(
@@ -64,9 +61,9 @@ def test_run_result_endpoint_returns_done_run(
 
 
 def test_run_result_endpoint_rejects_non_done(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _setup(client, "runconflict@example.com", multirow_xlsx_bytes)
+    sid = _setup(client, register_verified, "runconflict@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     run = client.post(
@@ -89,9 +86,9 @@ def test_run_result_endpoint_rejects_non_done(
 
 
 def test_sheet_preview_returns_rows_and_columns(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _setup(client, "preview@example.com", multirow_xlsx_bytes)
+    sid = _setup(client, register_verified, "preview@example.com", multirow_xlsx_bytes)
     resp = client.get(
         f"/api/sources/{sid}/sheets/48/preview",
         params={"header_rows": "0,1,2", "rows": "3"},
@@ -102,20 +99,16 @@ def test_sheet_preview_returns_rows_and_columns(
     assert body["header_rows"] == [0, 1, 2]
     assert "Баллы | ЗАП" in body["columns"]
     assert len(body["preview"]) <= 3
-    # Все значения JSON-сериализуемы.
     for row in body["preview"]:
         for value in row.values():
             assert value is None or isinstance(value, (str, int, float, bool))
 
 
 def test_sheet_preview_enforces_ownership(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _setup(client, "preview-owner@example.com", multirow_xlsx_bytes)
+    sid = _setup(client, register_verified, "preview-owner@example.com", multirow_xlsx_bytes)
     client.cookies.clear()
-    client.post(
-        "/api/auth/register",
-        json={"email": "preview-stranger@example.com", "password": "supersecret123"},
-    )
+    register_verified("preview-stranger@example.com")
     resp = client.get(f"/api/sources/{sid}/sheets/48/preview")
     assert resp.status_code == 404

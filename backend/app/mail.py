@@ -20,7 +20,6 @@ from pathlib import Path
 
 from app.config import Settings
 
-
 logger = logging.getLogger(__name__)
 
 

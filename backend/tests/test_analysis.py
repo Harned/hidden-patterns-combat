@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def _setup_source(client: TestClient, email: str, data: bytes) -> int:
-    client.post("/api/auth/register", json={"email": email, "password": "supersecret123"})
+def _setup_source(client: TestClient, register_verified, email: str, data: bytes) -> int:
+    register_verified(email)
     resp = client.post(
         "/api/sources",
         files={
@@ -14,13 +14,16 @@ def _setup_source(client: TestClient, email: str, data: bytes) -> int:
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
-def test_analyze_and_fetch_result(client: TestClient, sample_xlsx_bytes: bytes) -> None:
-    source_id = _setup_source(client, "alice@example.com", sample_xlsx_bytes)
+def test_analyze_and_fetch_result(
+    client: TestClient, register_verified, sample_xlsx_bytes: bytes
+) -> None:
+    source_id = _setup_source(client, register_verified, "alice@example.com", sample_xlsx_bytes)
 
     run = client.post(f"/api/sources/{source_id}/analyze", params={"wait": "true"})
     assert run.status_code == 200, run.text
@@ -42,20 +45,22 @@ def test_analyze_and_fetch_result(client: TestClient, sample_xlsx_bytes: bytes) 
         assert forbidden not in algo_result
 
 
-def test_result_absent_until_analyze(client: TestClient, sample_xlsx_bytes: bytes) -> None:
-    source_id = _setup_source(client, "bob@example.com", sample_xlsx_bytes)
+def test_result_absent_until_analyze(
+    client: TestClient, register_verified, sample_xlsx_bytes: bytes
+) -> None:
+    source_id = _setup_source(client, register_verified, "bob@example.com", sample_xlsx_bytes)
 
     resp = client.get(f"/api/sources/{source_id}/result")
     assert resp.status_code == 404
 
 
 def test_analyze_isolated_between_users(
-    client: TestClient, sample_xlsx_bytes: bytes
+    client: TestClient, register_verified, sample_xlsx_bytes: bytes
 ) -> None:
-    source_id = _setup_source(client, "owner@example.com", sample_xlsx_bytes)
+    source_id = _setup_source(client, register_verified, "owner@example.com", sample_xlsx_bytes)
 
     client.cookies.clear()
-    client.post("/api/auth/register", json={"email": "foe@example.com", "password": "supersecret123"})
+    register_verified("foe@example.com")
 
     resp = client.post(f"/api/sources/{source_id}/analyze")
     assert resp.status_code == 404

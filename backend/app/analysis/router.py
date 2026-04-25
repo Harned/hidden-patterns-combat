@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.analysis import service as analysis_service
-from app.auth.deps import current_user
+from app.auth.deps import current_verified_user as current_user
 from app.db.models import AnalysisRun, User
 from app.db.session import get_db
 from app.sources import service as sources_service

@@ -3,10 +3,14 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def _upload(client: TestClient, email: str, data: bytes, name: str = "m.xlsx") -> int:
-    client.post(
-        "/api/auth/register", json={"email": email, "password": "supersecret123"}
-    )
+def _upload(
+    client: TestClient,
+    register_verified,
+    email: str,
+    data: bytes,
+    name: str = "m.xlsx",
+) -> int:
+    register_verified(email)
     resp = client.post(
         "/api/sources",
         files={
@@ -16,13 +20,15 @@ def _upload(client: TestClient, email: str, data: bytes, name: str = "m.xlsx") -
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
-def test_preflight_returns_roles(client: TestClient, multirow_xlsx_bytes: bytes) -> None:
-    sid = _upload(client, "alice@example.com", multirow_xlsx_bytes)
+def test_preflight_returns_roles(
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes) -> None:
+    sid = _upload(client, register_verified, "alice@example.com", multirow_xlsx_bytes)
     resp = client.post(f"/api/sources/{sid}/preflight")
     assert resp.status_code == 200, resp.text
     mapping = resp.json()["mapping"]
@@ -36,9 +42,9 @@ def test_preflight_returns_roles(client: TestClient, multirow_xlsx_bytes: bytes)
 
 
 def test_put_get_mapping_roundtrip(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "bob@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "bob@example.com", multirow_xlsx_bytes)
 
     # Возьмём preflight как базу и сохраним его.
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
@@ -53,8 +59,9 @@ def test_put_get_mapping_roundtrip(
     assert card["has_mapping"] is True
 
 
-def test_delete_mapping(client: TestClient, multirow_xlsx_bytes: bytes) -> None:
-    sid = _upload(client, "carol@example.com", multirow_xlsx_bytes)
+def test_delete_mapping(
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes) -> None:
+    sid = _upload(client, register_verified, "carol@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
 
@@ -65,9 +72,9 @@ def test_delete_mapping(client: TestClient, multirow_xlsx_bytes: bytes) -> None:
 
 
 def test_put_mapping_rejects_invalid_payload(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "dave@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "dave@example.com", multirow_xlsx_bytes)
     resp = client.put(
         f"/api/sources/{sid}/mapping", json={"sheets": "not-an-object"}
     )
@@ -75,9 +82,9 @@ def test_put_mapping_rejects_invalid_payload(
 
 
 def test_analyze_with_saved_mapping_returns_baseline_only(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "eve@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "eve@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
 
@@ -102,10 +109,14 @@ def test_analyze_with_saved_mapping_returns_baseline_only(
 
 
 def test_analyze_with_binary_zap_exposes_events_by_channel(
-    client: TestClient, multirow_binary_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_binary_xlsx_bytes: bytes
 ) -> None:
     sid = _upload(
-        client, "binary@example.com", multirow_binary_xlsx_bytes, "binary.xlsx"
+        client,
+        register_verified,
+        "binary@example.com",
+        multirow_binary_xlsx_bytes,
+        "binary.xlsx",
     )
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
@@ -136,9 +147,9 @@ def test_analyze_with_binary_zap_exposes_events_by_channel(
 
 
 def test_sheet_columns_endpoint_returns_all_columns(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "sc@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "sc@example.com", multirow_xlsx_bytes)
     resp = client.get(
         f"/api/sources/{sid}/sheets/48/columns",
         params={"header_rows": "0,1,2"},
@@ -158,9 +169,9 @@ def test_sheet_columns_endpoint_returns_all_columns(
 
 
 def test_sheet_columns_endpoint_rejects_bad_header_rows(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "sc2@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "sc2@example.com", multirow_xlsx_bytes)
     resp = client.get(
         f"/api/sources/{sid}/sheets/48/columns",
         params={"header_rows": "abc"},
@@ -169,27 +180,22 @@ def test_sheet_columns_endpoint_rejects_bad_header_rows(
 
 
 def test_sheet_columns_endpoint_ownership(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "owner-sc@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "owner-sc@example.com", multirow_xlsx_bytes)
     client.cookies.clear()
-    client.post(
-        "/api/auth/register",
-        json={"email": "stranger-sc@example.com", "password": "supersecret123"},
-    )
+    register_verified("stranger-sc@example.com")
     resp = client.get(f"/api/sources/{sid}/sheets/48/columns")
     assert resp.status_code == 404
 
 
 def test_mapping_endpoints_enforce_ownership(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _upload(client, "owner@example.com", multirow_xlsx_bytes)
+    sid = _upload(client, register_verified, "owner@example.com", multirow_xlsx_bytes)
 
     client.cookies.clear()
-    client.post(
-        "/api/auth/register", json={"email": "stranger@example.com", "password": "supersecret123"}
-    )
+    register_verified("stranger@example.com")
     for method, path in (
         ("post", f"/api/sources/{sid}/preflight"),
         ("get", f"/api/sources/{sid}/mapping"),

@@ -3,25 +3,32 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from app.auth import service
 from app.auth.deps import current_user
-from app.auth.schemas import LoginRequest, RegisterRequest, UserPublic
+from app.auth.schemas import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    UserPublic,
+    VerifyEmailRequest,
+)
 from app.auth.security import (
     create_access_token,
-    create_email_verification_token,
     create_refresh_token,
-    decode_email_verification_token,
     decode_refresh_token,
 )
 from app.config import Settings, get_settings
 from app.db.models import User
 from app.db.session import get_db
+from app.mail import (
+    send_email_verification_code,
+    send_password_reset_code,
+)
 from app.rate_limit import get_auth_rate_limiter
 from app.security import (
     RateLimiter,
@@ -33,6 +40,11 @@ from app.security import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+# ---------------------------------------------------------------------------
+# cookie / csrf / rate-limit helpers
+# ---------------------------------------------------------------------------
 
 
 def _set_session_cookie(response: Response, token: str, settings: Settings) -> None:
@@ -96,6 +108,11 @@ def _issue_session(
     return _user_to_public(user, csrf)
 
 
+# ---------------------------------------------------------------------------
+# Registration & login
+# ---------------------------------------------------------------------------
+
+
 @router.post("/register", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
 def register(
     request: Request,
@@ -107,13 +124,21 @@ def register(
 ) -> UserPublic:
     _enforce_rate_limit(request, settings, limiter, "register")
     try:
-        user = service.register_user(db, payload.email, payload.password)
+        user = service.register_user(
+            db,
+            payload.email,
+            payload.password,
+            accept_terms=payload.accept_terms,
+            accept_pdn=payload.accept_pdn,
+        )
     except service.AuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
 
-    _issue_verification_email(user, settings)
+    # Сразу выдаём код подтверждения; UI откроет экран ввода кода.
+    code = service.issue_email_verification_code(db, user, settings)
+    send_email_verification_code(settings, user.email, code)
     return _issue_session(response, settings, user)
 
 
@@ -134,11 +159,9 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
         ) from exc
 
-    if settings.require_email_verified and user.email_verified_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email не подтверждён. Проверьте почту.",
-        )
+    # AUTH-LOGIN-1: сессия выдаётся всегда; решение о доступе к рабочей
+    # области принимается роут-гардами (current_verified_user) и UI'ем
+    # на основе `email_verified_at`.
     return _issue_session(response, settings, user)
 
 
@@ -158,8 +181,28 @@ def me(user: User = Depends(current_user)) -> UserPublic:
     return _user_to_public(user)
 
 
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_me(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Самостоятельное удаление аккаунта (PROFILE-1).
+
+    Каскадно удаляет источники пользователя (через ondelete=CASCADE).
+    Сбрасывает session/refresh/csrf cookies.
+    """
+
+    service.delete_account(db, user)
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    resp.delete_cookie(key=settings.cookie_name, path="/")
+    resp.delete_cookie(key=settings.csrf_cookie_name, path="/")
+    resp.delete_cookie(key=settings.refresh_cookie_name, path="/api/auth")
+    return resp
+
+
 # ---------------------------------------------------------------------------
-# Refresh token (TASK_SPEC_009)
+# Refresh token
 # ---------------------------------------------------------------------------
 
 
@@ -199,63 +242,125 @@ def refresh(
 
 
 # ---------------------------------------------------------------------------
-# Email verification (TASK_SPEC_009)
+# Email verification (TASK_SPEC_010)
 # ---------------------------------------------------------------------------
 
 
-def _issue_verification_email(user: User, settings: Settings) -> None:
-    """Заглушка отправки email: логируем ссылку в stdout.
-
-    Реальная SMTP-отправка — вне MVP, добавим в отдельном таске.
-    """
-
-    token = create_email_verification_token(user.id, settings)
-    logger.info(
-        "[email-stub] verification_link user=%s token=%s",
-        user.email,
-        token,
-    )
-
-
-@router.post("/request-verification", status_code=status.HTTP_202_ACCEPTED)
-def request_verification(
-    settings: Settings = Depends(get_settings),
-    user: User = Depends(current_user),
-) -> dict[str, str]:
-    if user.email_verified_at is not None:
-        return {"status": "already_verified"}
-    _issue_verification_email(user, settings)
-    return {"status": "sent"}
-
-
-@router.get("/verify-email", response_model=UserPublic)
+@router.post("/verify-email", response_model=UserPublic)
 def verify_email(
-    token: str,
+    payload: VerifyEmailRequest,
     response: Response,
     db: Session = Depends(get_db),
+    user: User = Depends(current_user),
     settings: Settings = Depends(get_settings),
 ) -> UserPublic:
     try:
-        payload = decode_email_verification_token(token, settings)
-    except InvalidTokenError as exc:
+        service.confirm_email_verification(db, user, payload.code, settings)
+    except service.AuthError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Неверный или просроченный токен подтверждения.",
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
-    try:
-        user_id = int(payload.get("sub", ""))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Некорректный токен подтверждения.",
-        ) from exc
-
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь не найден."
-        )
-    if user.email_verified_at is None:
-        user.email_verified_at = datetime.now(UTC)
-        db.commit()
     return _issue_session(response, settings, user)
+
+
+@router.post("/resend-verification", status_code=status.HTTP_202_ACCEPTED)
+def resend_verification(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+    limiter: RateLimiter = Depends(get_auth_rate_limiter),
+) -> dict[str, str]:
+    if user.email_verified_at is not None:
+        return {"status": "already_verified"}
+    _enforce_rate_limit(request, settings, limiter, "resend_verification")
+    try:
+        code = service.issue_email_verification_code(db, user, settings)
+    except service.AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    send_email_verification_code(settings, user.email, code)
+    return {"status": "sent"}
+
+
+# ---------------------------------------------------------------------------
+# Password reset (TASK_SPEC_010)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+def forgot_password(
+    request: Request,
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    limiter: RateLimiter = Depends(get_auth_rate_limiter),
+) -> dict[str, str]:
+    """Запросить код восстановления.
+
+    Ответ всегда **нейтральный**, даже если email не зарегистрирован.
+    Это требование AUTH-PWRESET-1 — не утечь, существует ли учётная запись.
+    """
+
+    _enforce_rate_limit(request, settings, limiter, "forgot_password")
+    user = service.get_user_by_email(db, payload.email)
+    if user is not None:
+        code = service.issue_password_reset_code(db, user, settings)
+        send_password_reset_code(settings, user.email, code)
+    else:
+        logger.info(
+            "[mail/skip] forgot-password requested for non-existent email"
+        )
+    return {
+        "status": "ok",
+        "message": (
+            "Если аккаунт с таким email существует, мы отправили код "
+            "восстановления."
+        ),
+    }
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+def reset_password(
+    request: Request,
+    payload: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    limiter: RateLimiter = Depends(get_auth_rate_limiter),
+) -> dict[str, str]:
+    if payload.new_password != payload.new_password_repeat:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароли не совпадают.",
+        )
+    _enforce_rate_limit(request, settings, limiter, "reset_password")
+    try:
+        service.reset_password_with_code(
+            db, payload.email, payload.code, payload.new_password, settings
+        )
+    except service.AuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Onboarding (LEGAL-ONBOARD-1)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/onboarding-complete", response_model=UserPublic)
+def onboarding_complete(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> UserPublic:
+    """Отметить, что пользователь увидел и принял первичный дисклеймер.
+
+    Не привязано к согласиям из регистрации — это отдельный шаг
+    (LEGAL-ONBOARD-1) о тестовой природе сервиса.
+    """
+
+    service.mark_onboarding_complete(db, user)
+    return _user_to_public(user)

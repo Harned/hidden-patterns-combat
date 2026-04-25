@@ -61,3 +61,19 @@ def current_user(
             detail="Пользователь не найден.",
         )
     return user
+
+
+def current_verified_user(user: User = Depends(current_user)) -> User:
+    """Зависимость для рабочих маршрутов: требует подтверждённый email.
+
+    Используется на загрузке/анализе/удалении источников и т.п.
+    Auth-сценарии (verify, resend, refresh, profile) живут с
+    :func:`current_user`, чтобы пользователь мог пройти подтверждение.
+    """
+
+    if user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email не подтверждён.",
+        )
+    return user

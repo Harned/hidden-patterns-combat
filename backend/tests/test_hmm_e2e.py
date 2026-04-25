@@ -5,8 +5,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
-def _register_upload(client: TestClient, email: str, data: bytes) -> int:
-    client.post("/api/auth/register", json={"email": email, "password": "supersecret123"})
+def _register_upload(
+    client: TestClient, register_verified, email: str, data: bytes
+) -> int:
+    register_verified(email)
     resp = client.post(
         "/api/sources",
         files={
@@ -16,15 +18,16 @@ def _register_upload(client: TestClient, email: str, data: bytes) -> int:
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
 def test_analyze_returns_hmm_ready_on_dense_data(
-    client: TestClient, dense_hmm_xlsx_bytes: bytes
+    client: TestClient, register_verified, dense_hmm_xlsx_bytes: bytes
 ) -> None:
-    sid = _register_upload(client, "hmm-dense@example.com", dense_hmm_xlsx_bytes)
+    sid = _register_upload(client, register_verified, "hmm-dense@example.com", dense_hmm_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     run = client.post(
@@ -47,9 +50,9 @@ def test_analyze_returns_hmm_ready_on_dense_data(
 
 
 def test_analyze_blocks_hmm_on_thin_data(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    sid = _register_upload(client, "hmm-thin@example.com", multirow_xlsx_bytes)
+    sid = _register_upload(client, register_verified, "hmm-thin@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     run = client.post(
@@ -67,9 +70,9 @@ def test_analyze_blocks_hmm_on_thin_data(
 
 
 def test_analyze_rejects_unknown_mode(
-    client: TestClient, dense_hmm_xlsx_bytes: bytes
+    client: TestClient, register_verified, dense_hmm_xlsx_bytes: bytes
 ) -> None:
-    sid = _register_upload(client, "hmm-mode@example.com", dense_hmm_xlsx_bytes)
+    sid = _register_upload(client, register_verified, "hmm-mode@example.com", dense_hmm_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     resp = client.post(
@@ -79,9 +82,9 @@ def test_analyze_rejects_unknown_mode(
 
 
 def test_analyze_detailed_mode_on_dense_data(
-    client: TestClient, very_dense_xlsx_bytes: bytes
+    client: TestClient, register_verified, very_dense_xlsx_bytes: bytes
 ) -> None:
-    sid = _register_upload(client, "hmm-detailed@example.com", very_dense_xlsx_bytes)
+    sid = _register_upload(client, register_verified, "hmm-detailed@example.com", very_dense_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
     run = client.post(

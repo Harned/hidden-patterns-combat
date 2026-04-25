@@ -6,24 +6,25 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 
+_REG_PAYLOAD = {
+    "password": "supersecret123",
+    "accept_terms": True,
+    "accept_pdn": True,
+}
+
 
 def _register(client: TestClient, email: str) -> None:
     resp = client.post(
         "/api/auth/register",
-        json={"email": email, "password": "supersecret123"},
+        json={"email": email, **_REG_PAYLOAD},
     )
     assert resp.status_code == 201
-
-
-# ---------------------------------------------------------------------------
-# CSRF token выдаётся и уважается
-# ---------------------------------------------------------------------------
 
 
 def test_register_returns_csrf_token(client: TestClient) -> None:
     resp = client.post(
         "/api/auth/register",
-        json={"email": "csrf@example.com", "password": "supersecret123"},
+        json={"email": "csrf@example.com", **_REG_PAYLOAD},
     )
     assert resp.status_code == 201
     body = resp.json()
@@ -32,14 +33,16 @@ def test_register_returns_csrf_token(client: TestClient) -> None:
 
 
 def test_csrf_required_blocks_mutations(
-    tmp_settings: Settings, client: TestClient, multirow_xlsx_bytes: bytes
+    tmp_settings: Settings,
+    client: TestClient,
+    register_verified,
+    multirow_xlsx_bytes: bytes,
 ) -> None:
     """В prod-режиме (csrf_required=True) мутирующий запрос без
     заголовка X-CSRF-Token должен получать 403."""
 
     tmp_settings.csrf_required = True
-    _register(client, "csrf-strict@example.com")
-    # Cookie с CSRF есть, заголовка — нет.
+    register_verified("csrf-strict@example.com")
     resp = client.post(
         "/api/sources",
         files={
@@ -49,19 +52,21 @@ def test_csrf_required_blocks_mutations(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     assert resp.status_code == 403
 
 
 def test_csrf_passes_with_matching_header(
-    tmp_settings: Settings, client: TestClient, multirow_xlsx_bytes: bytes
+    tmp_settings: Settings,
+    client: TestClient,
+    register_verified,
+    multirow_xlsx_bytes: bytes,
 ) -> None:
     tmp_settings.csrf_required = True
-    register_resp = client.post(
-        "/api/auth/register",
-        json={"email": "csrf-ok@example.com", "password": "supersecret123"},
-    )
-    csrf = register_resp.json()["csrf_token"]
+    register_verified("csrf-ok@example.com")
+    csrf = client.cookies.get("hpc_csrf")
+    assert csrf
 
     resp = client.post(
         "/api/sources",
@@ -73,13 +78,9 @@ def test_csrf_passes_with_matching_header(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     assert resp.status_code == 201
-
-
-# ---------------------------------------------------------------------------
-# Rate-limit на auth endpoints
-# ---------------------------------------------------------------------------
 
 
 def test_rate_limit_login_returns_429(
@@ -87,7 +88,6 @@ def test_rate_limit_login_returns_429(
 ) -> None:
     tmp_settings.rate_limit_enabled = True
     tmp_settings.rate_limit_auth_per_minute = 3
-    # Сбросим глобальный limiter-кэш, чтобы тест был изолирован.
     from app import rate_limit
 
     rate_limit._build_auth_limiter.cache_clear()  # type: ignore[attr-defined]
@@ -104,18 +104,10 @@ def test_rate_limit_login_returns_429(
     assert resp.status_code == 429
 
 
-# ---------------------------------------------------------------------------
-# Фоновый analyze через BackgroundTasks
-# ---------------------------------------------------------------------------
-
-
 def test_background_analyze_reaches_done(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    client.post(
-        "/api/auth/register",
-        json={"email": "bg@example.com", "password": "supersecret123"},
-    )
+    register_verified("bg@example.com")
     up = client.post(
         "/api/sources",
         files={
@@ -125,6 +117,7 @@ def test_background_analyze_reaches_done(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     sid = up.json()["id"]
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
@@ -134,20 +127,15 @@ def test_background_analyze_reaches_done(
     assert resp.status_code == 200
     run = resp.json()
     run_id = run["id"]
-    # В TestClient BackgroundTasks запускаются синхронно после ответа,
-    # поэтому последующий GET уже должен видеть done.
     polled = client.get(f"/api/sources/{sid}/runs/{run_id}").json()
     assert polled["state"] == "done", polled
     assert polled["status"] == "baseline_only"
 
 
 def test_latest_result_ignores_failed_runs(
-    client: TestClient, multirow_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    client.post(
-        "/api/auth/register",
-        json={"email": "noresult@example.com", "password": "supersecret123"},
-    )
+    register_verified("noresult@example.com")
     up = client.post(
         "/api/sources",
         files={
@@ -157,15 +145,13 @@ def test_latest_result_ignores_failed_runs(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         },
+        data={"confirm_upload": "true"},
     )
     sid = up.json()["id"]
-    # Нет mapping — analyze запускается, результат state=done + baseline_only
-    # Для проверки «нет result при state != done» прямо в БД выставим state=failed.
     resp = client.post(f"/api/sources/{sid}/analyze", params={"wait": "true"})
     assert resp.status_code == 200
     run_id = resp.json()["id"]
 
-    # Помечаем единственный run как failed, чтобы latest_result вернул 404.
     from app.db.models import AnalysisRun
     from app.db.session import get_sessionmaker
 
