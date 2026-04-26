@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 
 
@@ -33,6 +34,26 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, (int, float, str)):
         return value
     return str(value)
+
+
+def _ensure_writable_cell(ws, row: int, col: int):
+    """Для :class:`MergedCell` (все ячейки кроме master) — **снять** merge с
+    диапазоном, чтобы можно было писать в *эту* строку. Иначе перенос в
+    master (часто нижняя часть объединения) портит смысл «ФИО к эпизодам».
+    """
+
+    c = ws.cell(row=row, column=col)
+    if not isinstance(c, MergedCell):
+        return c
+    for mrange in list(ws.merged_cells.ranges):
+        if mrange.min_row <= row <= mrange.max_row and mrange.min_col <= col <= mrange.max_col:
+            a1 = (
+                f"{get_column_letter(mrange.min_col)}{mrange.min_row}"
+                f":{get_column_letter(mrange.max_col)}{mrange.max_row}"
+            )
+            ws.unmerge_cells(a1)
+            return ws.cell(row=row, column=col)
+    return c
 
 
 def _coerce_for_excel(value: Any) -> Any:
@@ -174,13 +195,61 @@ def apply_cell_edits(
                 raise ValueError(
                     f"Координаты ячейки должны быть >= 1, получено: {edit}"
                 )
-            cell = ws.cell(row=edit.row, column=edit.col)
+            cell = _ensure_writable_cell(ws, edit.row, edit.col)
             cell.value = _coerce_for_excel(edit.value)
             applied += 1
         wb.save(str(path))
     finally:
         wb.close()
     return applied
+
+
+def count_empty_rows(
+    path: str | Path,
+    sheet_name: str,
+    *,
+    header_rows: list[int] | None = None,
+) -> int:
+    """Сосчитать data-строки, у которых все ячейки пустые.
+
+    Использует ту же логику, что и :func:`remove_empty_rows`, но открывает
+    workbook в режиме ``read_only`` и не модифицирует файл, чтобы UI мог
+    дешёво показать пользователю «обнаружено N пустых строк».
+    """
+
+    wb = load_workbook(filename=str(path), data_only=True, read_only=True)
+    try:
+        if sheet_name not in wb.sheetnames:
+            raise KeyError(f"Лист '{sheet_name}' не найден.")
+        ws = wb[sheet_name]
+
+        header_set = set(header_rows or [0])
+        first_data_row_1based = (max(header_set) + 1) + 1
+        max_row = int(ws.max_row or 0)
+        if max_row < first_data_row_1based:
+            return 0
+        max_col = int(ws.max_column or 0)
+        if max_col < 1:
+            return 0
+
+        # Один проход по диапазону: отдельный iter_rows на каждую строку
+        # на крупных листах (1000+ строк) даёт минуты ожидания в UI.
+        count = 0
+        for row_values in ws.iter_rows(
+            min_row=first_data_row_1based,
+            max_row=max_row,
+            min_col=1,
+            max_col=max_col,
+            values_only=True,
+        ):
+            if all(
+                v is None or (isinstance(v, str) and v.strip() == "")
+                for v in row_values
+            ):
+                count += 1
+        return count
+    finally:
+        wb.close()
 
 
 def remove_empty_rows(
@@ -206,12 +275,24 @@ def remove_empty_rows(
         first_data_row_1based = (max(header_set) + 1) + 1
 
         to_delete: list[int] = []
-        for row_idx in range(first_data_row_1based, (ws.max_row or 0) + 1):
-            row_values = next(
-                ws.iter_rows(min_row=row_idx, max_row=row_idx, values_only=True),
-                tuple(),
-            )
-            if all(v is None or (isinstance(v, str) and v.strip() == "") for v in row_values):
+        max_r = int(ws.max_row or 0)
+        max_c = int(ws.max_column or 0)
+        if max_c < 1 or max_r < first_data_row_1based:
+            return 0
+        for row_idx, row_values in enumerate(
+            ws.iter_rows(
+                min_row=first_data_row_1based,
+                max_row=max_r,
+                min_col=1,
+                max_col=max_c,
+                values_only=True,
+            ),
+            start=first_data_row_1based,
+        ):
+            if all(
+                v is None or (isinstance(v, str) and v.strip() == "")
+                for v in row_values
+            ):
                 to_delete.append(row_idx)
 
         # Удаляем снизу вверх, чтобы индексы не сдвигались.
@@ -229,6 +310,7 @@ __all__ = [
     "CellEdit",
     "GridFragment",
     "apply_cell_edits",
+    "count_empty_rows",
     "read_grid",
     "remove_empty_rows",
 ]

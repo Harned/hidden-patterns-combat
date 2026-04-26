@@ -9,6 +9,7 @@ from hpc_algo.mapping import (
     describe_sheet_columns,
     flatten_columns,
     guess_header_rows,
+    suggest_header_rows,
 )
 from hpc_algo.schema import AnalysisStatus, ColumnMappingConfig, HiddenGroup, SheetMapping
 
@@ -33,6 +34,28 @@ def test_guess_header_rows_detects_three_rows(multirow_header_excel: Path) -> No
     # Первые три строки — заголовки, затем идут числовые данные.
     assert 0 in rows and 1 in rows and 2 in rows
     assert 3 not in rows
+
+
+def test_suggest_header_rows_returns_preview_and_matches_current(
+    multirow_header_excel: Path,
+) -> None:
+    s = suggest_header_rows(multirow_header_excel, "48", current_header_rows=[0, 1, 2])
+    assert s.suggested == [0, 1, 2]
+    assert s.matches_current is True
+    assert len(s.preview) > 0
+    # Превью имён содержит хотя бы одно flatten-имя с разделителем " | "
+    assert any(" | " in item["name"] for item in s.preview)
+    # raw_preview ограничен 5 строками.
+    assert len(s.raw_preview) <= 5
+
+
+def test_suggest_header_rows_flags_disagreement_with_current(
+    multirow_header_excel: Path,
+) -> None:
+    s = suggest_header_rows(multirow_header_excel, "48", current_header_rows=[0])
+    assert s.suggested == [0, 1, 2]
+    assert s.current == [0]
+    assert s.matches_current is False
 
 
 def test_preflight_detects_zap_and_manevr(multirow_header_excel: Path) -> None:

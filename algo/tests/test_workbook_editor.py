@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 from hpc_algo.workbook_editor import (
     CellEdit,
     apply_cell_edits,
+    count_empty_rows,
     read_grid,
     remove_empty_rows,
 )
@@ -84,6 +85,31 @@ def test_apply_cell_edits_writes_values(grid_excel: Path) -> None:
     assert fragment.cells[3][2] is None
 
 
+def test_apply_cell_edits_merged_range_unmerges_and_writes_target_cell(
+    tmp_path: Path,
+) -> None:
+    """MergedCell: снять merge и записать в запрошенную (row, col), не в master."""
+
+    from openpyxl import Workbook
+
+    path = tmp_path / "merged.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "H"
+    ws["A2"] = "old"
+    ws.merge_cells("A2:B3")
+    wb.save(path)
+    wb.close()
+    n = apply_cell_edits(
+        path, "Sheet", [CellEdit(row=3, col=2, value="new")]
+    )
+    assert n == 1
+    wb2 = load_workbook(path, data_only=True)
+    assert wb2.active["A2"].value == "old"
+    assert wb2.active["B3"].value == "new"
+    wb2.close()
+
+
 def test_remove_empty_rows_keeps_header(grid_with_empty_rows: Path) -> None:
     deleted = remove_empty_rows(grid_with_empty_rows, "Sheet1", header_rows=[0])
     assert deleted == 2
@@ -103,6 +129,28 @@ def test_remove_empty_rows_keeps_header(grid_with_empty_rows: Path) -> None:
 def test_remove_empty_rows_skips_when_none_empty(grid_excel: Path) -> None:
     deleted = remove_empty_rows(grid_excel, "Sheet1", header_rows=[0])
     assert deleted == 0
+
+
+def test_count_empty_rows_matches_remove(grid_with_empty_rows: Path) -> None:
+    """count_empty_rows должен возвращать ту же цифру, что и remove_empty_rows."""
+
+    expected = count_empty_rows(grid_with_empty_rows, "Sheet1", header_rows=[0])
+    assert expected == 2
+
+    deleted = remove_empty_rows(grid_with_empty_rows, "Sheet1", header_rows=[0])
+    assert deleted == expected
+
+    after = count_empty_rows(grid_with_empty_rows, "Sheet1", header_rows=[0])
+    assert after == 0
+
+
+def test_count_empty_rows_zero_when_clean(grid_excel: Path) -> None:
+    assert count_empty_rows(grid_excel, "Sheet1", header_rows=[0]) == 0
+
+
+def test_count_empty_rows_unknown_sheet_raises(grid_excel: Path) -> None:
+    with pytest.raises(KeyError):
+        count_empty_rows(grid_excel, "MissingSheet")
 
 
 def test_apply_cell_edits_unknown_sheet_raises(grid_excel: Path) -> None:

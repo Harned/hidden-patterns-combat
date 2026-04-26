@@ -256,6 +256,89 @@ def preflight(path, sheet_names: list[str] | None = None) -> ColumnMappingConfig
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class HeaderRowsSuggestion:
+    """Подсказка по строкам шапки для одного листа.
+
+    * ``suggested`` — рекомендованные ``header_rows`` (эвристика
+      :func:`guess_header_rows`);
+    * ``current`` — текущие ``header_rows`` (если переданы);
+    * ``preview`` — flatten-имена колонок, которые получатся, если применить
+      ``suggested``;
+    * ``raw_preview`` — первые непустые ячейки из верхних 5 строк листа,
+      чтобы пользователь видел структуру.
+    """
+
+    suggested: list[int]
+    current: list[int] | None
+    preview: list[dict[str, object]]
+    raw_preview: list[list[object]]
+
+    @property
+    def matches_current(self) -> bool:
+        if self.current is None:
+            return False
+        return list(self.suggested) == list(self.current)
+
+
+def suggest_header_rows(
+    path,
+    sheet_name: str,
+    current_header_rows: list[int] | None = None,
+    *,
+    raw_preview_rows: int = 5,
+) -> HeaderRowsSuggestion:
+    """Вернуть рекомендованные ``header_rows`` и предпросмотр flatten-имён.
+
+    Логика:
+    * читаем лист без шапки (``header=None``);
+    * запускаем :func:`guess_header_rows` на полученном raw-DataFrame;
+    * читаем лист уже с подобранной шапкой и собираем flatten-имена через
+      :func:`column_levels`/``" | ".join``;
+    * возвращаем ``HeaderRowsSuggestion`` с превью первых ``raw_preview_rows``
+      строк (чтобы UI мог показать структуру).
+    """
+
+    raw = pd.read_excel(
+        path, sheet_name=sheet_name, header=None, engine="openpyxl"
+    )
+    suggested = guess_header_rows(raw)
+
+    raw_preview: list[list[object]] = []
+    for i in range(min(raw_preview_rows, len(raw))):
+        row = raw.iloc[i].tolist()
+        raw_preview.append(
+            [
+                None if (isinstance(v, float) and pd.isna(v)) or v is pd.NA else v
+                for v in row
+            ]
+        )
+
+    header_arg = (
+        suggested if len(suggested) > 1 else (suggested[0] if suggested else 0)
+    )
+    df = pd.read_excel(
+        path, sheet_name=sheet_name, header=header_arg, engine="openpyxl"
+    )
+    preview: list[dict[str, object]] = []
+    for idx, col in enumerate(df.columns):
+        levels = column_levels(col, idx)
+        preview.append(
+            {
+                "index": idx,
+                "name": " | ".join(levels),
+                "levels": levels,
+            }
+        )
+
+    return HeaderRowsSuggestion(
+        suggested=list(suggested),
+        current=list(current_header_rows) if current_header_rows is not None else None,
+        preview=preview,
+        raw_preview=raw_preview,
+    )
+
+
 def describe_sheet_columns(
     path,
     sheet_name: str,
