@@ -303,7 +303,6 @@ def _build_report(
     }
 
     lines: list[str] = []
-    lines.append(status_messages.get(status, f"Статус: {status.value}."))
 
     if mapping_applied:
         totals = baseline.hidden_group_totals
@@ -343,6 +342,9 @@ def _build_report(
                 + ", ".join(g.value for g in detection.missing_groups)
                 + "."
             )
+
+    lines.append("")
+    lines.append(status_messages.get(status, f"Статус: {status.value}."))
 
     lines.append("")
     lines.append("Сводка по данным (аудит):")
