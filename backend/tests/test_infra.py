@@ -32,6 +32,33 @@ def test_register_returns_csrf_token(client: TestClient) -> None:
     assert "hpc_csrf" in resp.cookies
 
 
+def test_csrf_forgot_and_reset_work_without_token_when_csrf_on(
+    tmp_settings: Settings,
+    client: TestClient,
+) -> None:
+    """Сброс пароля — без сессии; нельзя требовать X-CSRF-Token (cookie нет)."""
+
+    tmp_settings.csrf_required = True
+    _register(client, "forgot-csrf@example.com")
+    client.cookies.clear()
+    r1 = client.post(
+        "/api/auth/forgot-password", json={"email": "forgot-csrf@example.com"}
+    )
+    assert r1.status_code == 202, r1.text
+    r2 = client.post(
+        "/api/auth/reset-password",
+        json={
+            "email": "forgot-csrf@example.com",
+            "code": "000000",
+            "new_password": "nope-fail-11",
+            "new_password_repeat": "nope-fail-11",
+        },
+    )
+    # Код неверный — важен не 403 CSRF, а 400 с доменной ошибкой.
+    assert r2.status_code == 400, r2.text
+    assert "недейств" in r2.json()["detail"].lower()
+
+
 def test_csrf_required_blocks_mutations(
     tmp_settings: Settings,
     client: TestClient,
@@ -122,6 +149,7 @@ def test_background_analyze_reaches_done(
     sid = up.json()["id"]
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
 
     resp = client.post(f"/api/sources/{sid}/analyze")
     assert resp.status_code == 200
@@ -148,6 +176,9 @@ def test_latest_result_ignores_failed_runs(
         data={"confirm_upload": "true"},
     )
     sid = up.json()["id"]
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     resp = client.post(f"/api/sources/{sid}/analyze", params={"wait": "true"})
     assert resp.status_code == 200
     run_id = resp.json()["id"]

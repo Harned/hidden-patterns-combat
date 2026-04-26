@@ -1,7 +1,22 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "@/api/client";
 import { Button, Card, Input, Label } from "@/components/ui";
+
+const RESET_AUTOSEND_KEY = "hpc_pwdreset_autosent";
+
+function shouldDedupePwdResetAutosend(email: string): boolean {
+  const key = `${RESET_AUTOSEND_KEY}_${email.toLowerCase()}`;
+  try {
+    const last = sessionStorage.getItem(key);
+    const now = Date.now();
+    if (last && now - Number(last) < 2500) return true;
+    sessionStorage.setItem(key, String(now));
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
 
 export const ResetPasswordPage: React.FC = () => {
   const [params] = useSearchParams();
@@ -14,6 +29,29 @@ export const ResetPasswordPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  const emailFromUrl = (params.get("email") ?? "").trim();
+
+  useEffect(() => {
+    if (!emailFromUrl) return;
+    if (shouldDedupePwdResetAutosend(emailFromUrl)) return;
+    setResending(true);
+    setError(null);
+    void (async () => {
+      try {
+        const resp = await api.forgotPassword(emailFromUrl);
+        setInfo(resp.message);
+      } catch (err) {
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Не удалось автоматически отправить код"
+        );
+      } finally {
+        setResending(false);
+      }
+    })();
+  }, [emailFromUrl]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +108,8 @@ export const ResetPasswordPage: React.FC = () => {
         </h1>
         <p className="mt-2 text-sm text-brand-700/80">
           Это код <b>восстановления</b> пароля; не путайте с кодом
-          подтверждения регистрации.
+          подтверждения регистрации. Если в ссылке есть email, запрос кода
+          делаем при открытии страницы; кнопка ниже — повторная отправка.
         </p>
 
         <form onSubmit={submit} className="mt-6 space-y-4">

@@ -12,6 +12,8 @@ export interface UserPublic {
   csrf_token?: string | null;
 }
 
+export type PreparationState = "draft" | "ready";
+
 export interface SourceSummary {
   id: number;
   original_filename: string;
@@ -21,6 +23,7 @@ export interface SourceSummary {
   has_analysis: boolean;
   last_analysis_status: string | null;
   has_mapping: boolean;
+  preparation_state: PreparationState;
 }
 
 export type AnalysisStatus =
@@ -243,6 +246,25 @@ export interface SheetPreview {
   header_rows: number[];
   columns: string[];
   preview: Record<string, unknown>[];
+}
+
+export type GridCellValue = string | number | boolean | null;
+
+export interface SheetGridFragment {
+  sheet: string;
+  start_row: number;
+  start_col: number;
+  n_rows: number;
+  n_cols: number;
+  total_rows: number;
+  total_cols: number;
+  cells: GridCellValue[][];
+}
+
+export interface CellEdit {
+  row: number;
+  col: number;
+  value: GridCellValue;
 }
 
 export interface ApiError {

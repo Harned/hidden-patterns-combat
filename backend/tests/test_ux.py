@@ -28,6 +28,7 @@ def test_runs_history_lists_all_runs(
     sid = _setup(client, register_verified, "history@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
 
     run1 = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true", "mode": "basic"}
@@ -50,6 +51,7 @@ def test_run_result_endpoint_returns_done_run(
     sid = _setup(client, register_verified, "runres@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     run = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true"}
     ).json()
@@ -66,6 +68,7 @@ def test_run_result_endpoint_rejects_non_done(
     sid = _setup(client, register_verified, "runconflict@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     run = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true"}
     ).json()

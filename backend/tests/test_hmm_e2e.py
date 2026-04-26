@@ -30,6 +30,7 @@ def test_analyze_returns_hmm_ready_on_dense_data(
     sid = _register_upload(client, register_verified, "hmm-dense@example.com", dense_hmm_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     run = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true"}
     ).json()
@@ -55,6 +56,7 @@ def test_analyze_blocks_hmm_on_thin_data(
     sid = _register_upload(client, register_verified, "hmm-thin@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     run = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true"}
     ).json()
@@ -75,6 +77,7 @@ def test_analyze_rejects_unknown_mode(
     sid = _register_upload(client, register_verified, "hmm-mode@example.com", dense_hmm_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     resp = client.post(
         f"/api/sources/{sid}/analyze", params={"mode": "xyz", "wait": "true"}
     )
@@ -87,6 +90,7 @@ def test_analyze_detailed_mode_on_dense_data(
     sid = _register_upload(client, register_verified, "hmm-detailed@example.com", very_dense_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
     run = client.post(
         f"/api/sources/{sid}/analyze",
         params={"mode": "detailed", "wait": "true"},

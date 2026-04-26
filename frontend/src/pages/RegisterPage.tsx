@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth/AuthContext";
 import { Button, Card, Input, Label } from "@/components/ui";
+import { ApiError } from "@/api/client";
 import { BRAND, REGISTRATION_CONSENTS } from "@/copy/legal";
 
 export const RegisterPage: React.FC = () => {
@@ -29,7 +30,13 @@ export const RegisterPage: React.FC = () => {
       await register(email, password, acceptTerms, acceptPdn);
       navigate("/verify-email");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка регистрации");
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+          ? err.message
+          : "Ошибка регистрации"
+      );
     } finally {
       setSubmitting(false);
     }

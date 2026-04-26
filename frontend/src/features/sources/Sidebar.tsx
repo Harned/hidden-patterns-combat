@@ -6,6 +6,7 @@ import type { SourceSummary } from "@/api/types";
 import { Badge, Button } from "@/components/ui";
 import { useAuth } from "@/auth/AuthContext";
 import { UploadGateModal } from "./UploadGateModal";
+import { DisclaimerBanner } from "@/features/onboarding/DisclaimerBanner";
 
 interface Props {
   selectedId: number | null;
@@ -20,12 +21,18 @@ const statusTone = (s: string | null): "neutral" | "info" | "warning" | "danger"
   return "neutral";
 };
 
+const initialFor = (email: string | undefined): string => {
+  if (!email) return "·";
+  const ch = email.trim().charAt(0).toUpperCase();
+  return ch || "·";
+};
+
 export const Sidebar: React.FC<Props> = ({ selectedId, onSelect }) => {
   const qc = useQueryClient();
-  const { user } = useAuth();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [uploadGateOpen, setUploadGateOpen] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
   const { data, isLoading } = useQuery<SourceSummary[]>({
@@ -37,8 +44,9 @@ export const Sidebar: React.FC<Props> = ({ selectedId, onSelect }) => {
     mutationFn: (file: File) => api.uploadSource(file, true),
     onSuccess: (created) => {
       void qc.invalidateQueries({ queryKey: ["sources"] });
-      onSelect(created.id);
-      setPendingFile(null);
+      // Только что загруженный источник всегда draft — отправляем в мастер
+      // предобработки. После finalize пользователь вернётся в /app.
+      navigate(`/sources/${created.id}/prepare`);
     },
   });
 
@@ -59,46 +67,65 @@ export const Sidebar: React.FC<Props> = ({ selectedId, onSelect }) => {
     return () => window.removeEventListener("click", onClick);
   }, [openMenuId]);
 
-  const handleFile = (f: File | null) => {
-    if (!f) return;
-    setPendingFile(f);
+  // Шаг 1: пользователь подтвердил условия в модалке -> открываем системный
+  // диалог выбора файла. Шаг 2: onChange у input — собственно загрузка.
+  const onGateConfirmed = () => {
+    setUploadGateOpen(false);
+    fileInputRef.current?.click();
+  };
+
+  const onFileChosen = (f: File | null) => {
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!f) return;
+    upload.mutate(f);
   };
 
   return (
     <aside className="h-full w-80 shrink-0 border-r border-brand-200 bg-white flex flex-col">
       <div className="px-5 py-4 border-b border-brand-100">
-        <div className="text-base font-semibold text-brand-900">Источники</div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-brand-700/70">
-          <span className="truncate" title={user?.email}>
-            {user?.email}
-          </span>
-          {user?.email_verified_at ? (
-            <Badge tone="success">подтверждён</Badge>
-          ) : (
-            <Badge tone="warning">не подтверждён</Badge>
-          )}
-        </div>
-        <div className="mt-2">
-          <Link
-            to="/profile"
-            className="text-xs text-brand-600 hover:text-brand-700"
+        <Link
+          to="/profile"
+          className="flex items-center gap-3 rounded-md -mx-1 px-1 py-1 hover:bg-brand-50 focus:outline-none focus:ring-2 focus:ring-brand-300"
+          aria-label="Профиль"
+        >
+          <span
+            aria-hidden
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-100 text-brand-700 text-sm font-semibold"
           >
-            Перейти в профиль →
-          </Link>
-        </div>
+            {initialFor(user?.email)}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span
+              className="block truncate text-sm font-medium text-brand-900"
+              title={user?.email}
+            >
+              {user?.email}
+            </span>
+            <span className="mt-0.5 block">
+              {user?.email_verified_at ? (
+                <Badge tone="success">подтверждён</Badge>
+              ) : (
+                <Badge tone="warning">не подтверждён</Badge>
+              )}
+            </span>
+          </span>
+        </Link>
       </div>
 
-      <div className="px-5 py-3 border-b border-brand-100">
+      <div className="px-5 pt-4 pb-2">
+        <div className="text-base font-semibold text-brand-900">Источники</div>
+      </div>
+
+      <div className="px-5 pb-3">
         <input
           ref={fileInputRef}
           type="file"
           accept=".xlsx,.xls"
           className="hidden"
-          onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+          onChange={(e) => onFileChosen(e.target.files?.[0] ?? null)}
         />
         <Button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => setUploadGateOpen(true)}
           className="w-full"
           disabled={upload.isPending}
         >
@@ -129,16 +156,23 @@ export const Sidebar: React.FC<Props> = ({ selectedId, onSelect }) => {
         {data?.map((s) => {
           const active = s.id === selectedId;
           const menuOpen = openMenuId === s.id;
+          const isDraft = s.preparation_state === "draft";
           return (
             <div
               key={s.id}
-              className={`relative rounded-md ${
+              className={`relative rounded-md flex items-center ${
                 active ? "bg-brand-100" : "hover:bg-brand-50"
               }`}
             >
               <button
-                onClick={() => onSelect(s.id)}
-                className="w-full text-left px-3 py-2 pr-10"
+                onClick={() => {
+                  if (isDraft) {
+                    navigate(`/sources/${s.id}/prepare`);
+                    return;
+                  }
+                  onSelect(s.id);
+                }}
+                className="flex-1 min-w-0 text-left px-3 py-2"
               >
                 <div
                   className={`text-sm font-medium truncate ${
@@ -148,78 +182,86 @@ export const Sidebar: React.FC<Props> = ({ selectedId, onSelect }) => {
                 >
                   {s.original_filename}
                 </div>
-                <div className="mt-1 flex items-center gap-2">
-                  <Badge tone={statusTone(s.last_analysis_status)}>
-                    {s.last_analysis_status ?? "не анализирован"}
-                  </Badge>
+                <div className="mt-1 flex items-center gap-2 flex-wrap">
+                  {isDraft ? (
+                    <Badge tone="warning">черновик</Badge>
+                  ) : (
+                    <Badge tone={statusTone(s.last_analysis_status)}>
+                      {s.last_analysis_status ?? "не анализирован"}
+                    </Badge>
+                  )}
                   <span className="text-[11px] text-brand-700/60">
                     {(s.size_bytes / 1024).toFixed(1)} KB
                   </span>
                 </div>
               </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOpenMenuId(menuOpen ? null : s.id);
-                }}
-                className="absolute top-2 right-2 rounded px-1.5 text-brand-700/70 hover:text-brand-900 hover:bg-brand-100"
-                aria-label="Меню источника"
-                title="Меню источника"
-              >
-                ⋯
-              </button>
-              {menuOpen && (
-                <div
-                  className="absolute right-2 top-9 z-10 rounded-md border border-brand-200 bg-white shadow-lg w-44 py-1 text-sm"
-                  onClick={(e) => e.stopPropagation()}
+              <div className="relative shrink-0 pr-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMenuId(menuOpen ? null : s.id);
+                  }}
+                  className="rounded px-1.5 py-0.5 text-brand-700/70 hover:text-brand-900 hover:bg-brand-100"
+                  aria-label="Меню источника"
+                  title="Меню источника"
                 >
-                  <button
-                    className="w-full text-left px-3 py-2 hover:bg-brand-50"
-                    onClick={() => {
-                      onSelect(s.id);
-                      setOpenMenuId(null);
-                    }}
+                  ⋯
+                </button>
+                {menuOpen && (
+                  <div
+                    className="absolute right-0 top-full mt-1 z-10 rounded-md border border-brand-200 bg-white shadow-lg w-52 py-1 text-sm"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    Открыть
-                  </button>
-                  <button
-                    className="w-full text-left px-3 py-2 text-red-700 hover:bg-red-50"
-                    onClick={() => {
-                      if (
-                        confirm(
-                          `Удалить источник «${s.original_filename}» и все связанные результаты?`
-                        )
-                      ) {
-                        remove.mutate(s.id);
-                      }
-                    }}
-                    disabled={remove.isPending}
-                  >
-                    Удалить файл и результаты
-                  </button>
-                </div>
-              )}
+                    {isDraft ? (
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-brand-50"
+                        onClick={() => {
+                          navigate(`/sources/${s.id}/prepare`);
+                          setOpenMenuId(null);
+                        }}
+                      >
+                        Продолжить подготовку
+                      </button>
+                    ) : (
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-brand-50"
+                        onClick={() => {
+                          onSelect(s.id);
+                          setOpenMenuId(null);
+                        }}
+                      >
+                        Открыть
+                      </button>
+                    )}
+                    <button
+                      className="w-full text-left px-3 py-2 text-red-700 hover:bg-red-50"
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Удалить источник «${s.original_filename}» и все связанные результаты?`
+                          )
+                        ) {
+                          remove.mutate(s.id);
+                        }
+                      }}
+                      disabled={remove.isPending}
+                    >
+                      Удалить файл и результаты
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
       </div>
 
-      <div className="border-t border-brand-100 px-5 py-3 text-xs text-brand-700/70">
-        Управление аккаунтом —{" "}
-        <button
-          onClick={() => navigate("/profile")}
-          className="text-brand-600 hover:text-brand-700 underline"
-        >
-          в профиле
-        </button>
-        .
-      </div>
+      <DisclaimerBanner variant="footer" />
 
-      {pendingFile && (
+      {uploadGateOpen && (
         <UploadGateModal
-          fileName={pendingFile.name}
-          onCancel={() => setPendingFile(null)}
-          onConfirm={() => upload.mutate(pendingFile)}
+          onCancel={() => setUploadGateOpen(false)}
+          onConfirm={onGateConfirmed}
         />
       )}
     </aside>

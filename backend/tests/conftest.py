@@ -29,6 +29,7 @@ def tmp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
         storage_root=storage_root,
         secret_key="test-secret-long-enough-for-hs256-32b",
         cookie_secure=False,
+        use_alembic=False,
     )
 
     # Сбрасываем lru_cache engine-а, чтобы тест не делил движок с другим.

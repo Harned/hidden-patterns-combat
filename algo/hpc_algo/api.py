@@ -653,16 +653,33 @@ def analyze_source(
     )
 
 
-def preflight_mapping(source_path: str | Path) -> ColumnMappingConfig:
+def preflight_mapping(
+    source_path: str | Path,
+    sheet_names: list[str] | None = None,
+) -> ColumnMappingConfig:
     """Вернуть предполагаемый :class:`ColumnMappingConfig`.
 
     Функция нейтральная: эвристически угадывает ``header_rows``,
     делает flatten колонок и предлагает роли. Пользователь обязан
     подтвердить результат перед использованием.
+
+    ``sheet_names`` — опциональный whitelist листов (используется мастером
+    предобработки, когда пользователь явно исключил часть листов из
+    анализа). Если ``None`` — preflight проходит по всем листам файла.
     """
 
     path = Path(source_path)
-    return mapping_mod.preflight(path)
+    return mapping_mod.preflight(path, sheet_names=sheet_names)
+
+
+def list_workbook_sheets(source_path: str | Path) -> list[str]:
+    """Вернуть список листов Excel-файла без полного парсинга содержимого."""
+
+    import pandas as pd
+
+    path = Path(source_path)
+    xl = pd.ExcelFile(path, engine="openpyxl")
+    return list(xl.sheet_names)
 
 
 def analysis_summary(result: AnalysisResult) -> dict[str, Any]:

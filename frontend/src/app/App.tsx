@@ -9,8 +9,8 @@ import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage";
 import { ResetPasswordPage } from "@/pages/ResetPasswordPage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { LegalPage } from "@/pages/LegalPage";
+import { SourcePrepPage } from "@/pages/SourcePrepPage";
 import { OnboardingModal } from "@/features/onboarding/OnboardingModal";
-import { DisclaimerBanner } from "@/features/onboarding/DisclaimerBanner";
 
 const Loader: React.FC = () => (
   <div className="h-full flex items-center justify-center text-brand-700/70">
@@ -34,10 +34,10 @@ const RequireVerified: React.FC<{ children: React.ReactNode }> = ({ children }) 
   return <>{children}</>;
 };
 
-/** Layout для рабочих экранов — баннер + onboarding. */
+/** Layout для рабочих экранов — onboarding. Баннер тестового режима
+ * рендерится внутри сайдбара (см. `Sidebar`). */
 const WorkLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="h-full flex flex-col">
-    <DisclaimerBanner />
     <div className="flex-1 min-h-0">{children}</div>
     <OnboardingModal />
   </div>
@@ -79,6 +79,14 @@ export const App: React.FC = () => (
             <WorkLayout>
               <DashboardPage />
             </WorkLayout>
+          </RequireVerified>
+        }
+      />
+      <Route
+        path="/sources/:sourceId/prepare"
+        element={
+          <RequireVerified>
+            <SourcePrepPage />
           </RequireVerified>
         }
       />

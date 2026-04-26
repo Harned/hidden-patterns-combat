@@ -1,8 +1,10 @@
 import type {
   AnalysisRunFull,
   AnalysisRunSummary,
+  CellEdit,
   ColumnMappingConfig,
   SheetColumnsResponse,
+  SheetGridFragment,
   SheetPreview,
   SourceSummary,
   UserPublic,
@@ -184,10 +186,62 @@ export const api = {
   latestResult(sourceId: number) {
     return request<AnalysisRunFull>(`/sources/${sourceId}/result`);
   },
-  preflight(sourceId: number) {
+  preflight(sourceId: number, sheetNames?: string[]) {
+    const body =
+      sheetNames && sheetNames.length > 0
+        ? JSON.stringify({ sheet_names: sheetNames })
+        : undefined;
     return request<{ mapping: ColumnMappingConfig | null }>(
       `/sources/${sourceId}/preflight`,
-      { method: "POST" }
+      { method: "POST", body }
+    );
+  },
+  finalizeSource(sourceId: number) {
+    return request<SourceSummary>(`/sources/${sourceId}/finalize`, {
+      method: "POST",
+    });
+  },
+  listSheetNames(sourceId: number) {
+    return request<{ sheet_names: string[] }>(`/sources/${sourceId}/sheets`);
+  },
+  readSheetGrid(
+    sourceId: number,
+    sheetName: string,
+    params: { startRow: number; startCol: number; nRows: number; nCols: number }
+  ) {
+    const qs = new URLSearchParams({
+      start_row: String(params.startRow),
+      start_col: String(params.startCol),
+      n_rows: String(params.nRows),
+      n_cols: String(params.nCols),
+    }).toString();
+    return request<SheetGridFragment>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(sheetName)}/grid?${qs}`
+    );
+  },
+  applySheetGridEdits(
+    sourceId: number,
+    sheetName: string,
+    edits: CellEdit[]
+  ) {
+    return request<{ applied: number }>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(sheetName)}/grid`,
+      { method: "PUT", body: JSON.stringify({ edits }) }
+    );
+  },
+  removeEmptyRows(
+    sourceId: number,
+    sheetName: string,
+    headerRows?: number[]
+  ) {
+    return request<{ deleted: number }>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(
+        sheetName
+      )}/remove-empty-rows`,
+      {
+        method: "POST",
+        body: JSON.stringify({ header_rows: headerRows ?? null }),
+      }
     );
   },
   getMapping(sourceId: number) {

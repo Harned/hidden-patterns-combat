@@ -87,6 +87,15 @@ def analyze(
         )
     source = _get_owned_source_or_404(db, user, source_id)
 
+    if source.preparation_state != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Источник ещё не подтверждён. Завершите мастер предобработки "
+                "(выбор листов, column mapping) перед запуском анализа."
+            ),
+        )
+
     if wait:
         run = analysis_service.run_and_persist_sync(
             db, source, storage.resolve, hmm_mode=mode
@@ -196,16 +205,28 @@ def latest_result(
 # ---------------------------------------------------------------------------
 
 
+class PreflightRequest(BaseModel):
+    """Опциональный фильтр листов для preflight'а."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sheet_names: list[str] | None = None
+
+
 @router.post("/preflight", response_model=MappingResponse)
 def preflight(
     source_id: int,
+    payload: PreflightRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     storage: LocalStorage = Depends(get_storage),
 ) -> MappingResponse:
     source = _get_owned_source_or_404(db, user, source_id)
+    sheet_names = payload.sheet_names if payload else None
     try:
-        mapping_json = analysis_service.run_preflight(source, storage.resolve)
+        mapping_json = analysis_service.run_preflight(
+            source, storage.resolve, sheet_names=sheet_names
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -213,6 +234,27 @@ def preflight(
         ) from exc
 
     return MappingResponse(mapping=json.loads(mapping_json))
+
+
+@router.get("/sheets")
+def list_sheets(
+    source_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Вернуть список листов Excel-файла (без чтения содержимого)."""
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    try:
+        names = analysis_service.list_sheets(source, storage.resolve)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось прочитать список листов: {exc}",
+        ) from exc
+
+    return {"sheet_names": names}
 
 
 @router.get("/mapping", response_model=MappingResponse)
@@ -321,3 +363,140 @@ def get_sheet_preview(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Не удалось получить preview листа '{sheet_name}': {exc}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Grid I/O для мастера предобработки (виртуализированная таблица в UI)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_draft(source) -> None:
+    if source.preparation_state != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Редактирование данных доступно только в режиме черновика. "
+                "Источник уже подтверждён."
+            ),
+        )
+
+
+@router.get("/sheets/{sheet_name}/grid")
+def get_sheet_grid(
+    source_id: int,
+    sheet_name: str,
+    start_row: int = Query(default=1, ge=1),
+    start_col: int = Query(default=1, ge=1),
+    n_rows: int = Query(default=100, ge=0, le=500),
+    n_cols: int = Query(default=50, ge=0, le=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    source = _get_owned_source_or_404(db, user, source_id)
+    try:
+        return analysis_service.read_grid_fragment(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            start_row=start_row,
+            start_col=start_col,
+            n_rows=n_rows,
+            n_cols=n_cols,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось прочитать сетку листа '{sheet_name}': {exc}",
+        ) from exc
+
+
+class CellEditPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row: int
+    col: int
+    value: Any | None = None
+
+
+class GridEditsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    edits: list[CellEditPayload]
+
+
+@router.put("/sheets/{sheet_name}/grid")
+def put_sheet_grid_edits(
+    source_id: int,
+    sheet_name: str,
+    payload: GridEditsRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    source = _get_owned_source_or_404(db, user, source_id)
+    _ensure_draft(source)
+    try:
+        applied = analysis_service.apply_grid_edits(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            edits=[e.model_dump() for e in payload.edits],
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось применить правки к '{sheet_name}': {exc}",
+        ) from exc
+
+    sources_service.refresh_storage_metadata(db, storage, source)
+    return {"applied": applied}
+
+
+class RemoveEmptyRowsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    header_rows: list[int] | None = None
+
+
+@router.post("/sheets/{sheet_name}/remove-empty-rows")
+def remove_empty_rows(
+    source_id: int,
+    sheet_name: str,
+    payload: RemoveEmptyRowsRequest | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    source = _get_owned_source_or_404(db, user, source_id)
+    _ensure_draft(source)
+    header_rows = payload.header_rows if payload else None
+    try:
+        deleted = analysis_service.remove_empty_rows_in_sheet(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            header_rows=header_rows,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Не удалось удалить пустые строки на листе '{sheet_name}': {exc}"
+            ),
+        ) from exc
+
+    sources_service.refresh_storage_metadata(db, storage, source)
+    return {"deleted": deleted}

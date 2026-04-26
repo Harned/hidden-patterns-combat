@@ -97,6 +97,12 @@ class Source(Base):
     # JSON-сериализованный ColumnMappingConfig (TASK_SPEC_003). None, если
     # пользователь ещё не подтвердил сопоставление колонок.
     mapping_config: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Жизненный цикл загрузки: ``draft`` — пользователь ещё в мастере
+    # предобработки (выбор листов, column mapping, очистка/правка данных);
+    # ``ready`` — источник подтверждён и доступен для анализа.
+    preparation_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="draft"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

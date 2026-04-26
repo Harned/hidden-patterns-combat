@@ -1,4 +1,5 @@
 import React, { Suspense, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import type { AnalysisRunFull, HMMMode, SourceSummary } from "@/api/types";
@@ -66,6 +67,7 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const source = sourceQuery.data;
   const run = resultQuery.data;
   const result = run?.result;
+  const isDraft = source?.preparation_state === "draft";
 
   return (
     <div className="max-w-6xl w-full mx-auto px-6 py-6 space-y-6">
@@ -77,7 +79,13 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
           <div className="text-lg font-semibold text-brand-900 truncate">
             {source?.original_filename ?? "..."}
           </div>
-          {run && (
+          {isDraft && (
+            <div className="mt-2 text-xs text-amber-700">
+              Источник в статусе «черновик»: завершите предобработку, чтобы
+              запустить анализ.
+            </div>
+          )}
+          {run && !isDraft && (
             <div className="mt-2 flex items-center gap-2 flex-wrap">
               <StatusBadge status={run.status} />
               <span className="text-xs text-brand-700/60">
@@ -93,27 +101,38 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={hmmMode}
-            onChange={(e) => setHmmMode(e.target.value as HMMMode)}
-            className="h-10 rounded-md border border-brand-200 px-2 text-sm"
-            title="Режим HMM"
-          >
-            <option value="auto">HMM: auto (BIC)</option>
-            <option value="detailed">HMM: 7-state (detailed)</option>
-            <option value="basic">HMM: 3-state (basic)</option>
-            <option value="off">HMM: off</option>
-          </select>
-          <Button
-            onClick={() => runAnalyze.mutate()}
-            disabled={runAnalyze.isPending}
-          >
-            {runAnalyze.isPending
-              ? "Анализируем..."
-              : run
-              ? "Перезапустить анализ"
-              : "Запустить анализ"}
-          </Button>
+          {isDraft ? (
+            <Link
+              to={`/sources/${sourceId}/prepare`}
+              className="inline-flex h-10 items-center rounded-md bg-brand-600 px-4 text-sm font-medium text-white hover:bg-brand-700"
+            >
+              Открыть мастер предобработки
+            </Link>
+          ) : (
+            <>
+              <select
+                value={hmmMode}
+                onChange={(e) => setHmmMode(e.target.value as HMMMode)}
+                className="h-10 rounded-md border border-brand-200 px-2 text-sm"
+                title="Режим HMM"
+              >
+                <option value="auto">HMM: auto (BIC)</option>
+                <option value="detailed">HMM: 7-state (detailed)</option>
+                <option value="basic">HMM: 3-state (basic)</option>
+                <option value="off">HMM: off</option>
+              </select>
+              <Button
+                onClick={() => runAnalyze.mutate()}
+                disabled={runAnalyze.isPending}
+              >
+                {runAnalyze.isPending
+                  ? "Анализируем..."
+                  : run
+                  ? "Перезапустить анализ"
+                  : "Запустить анализ"}
+              </Button>
+            </>
+          )}
         </div>
       </Card>
 
@@ -180,7 +199,27 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         </Card>
       )}
 
-      {tab === "result" && (
+      {tab === "result" && isDraft && (
+        <Card className="px-6 py-10 text-center">
+          <div className="text-base font-medium text-brand-900">
+            Источник ещё не подтверждён.
+          </div>
+          <div className="mt-2 text-sm text-brand-700/70">
+            Завершите шаги предобработки в мастере, чтобы появился доступ
+            к анализу.
+          </div>
+          <div className="mt-4">
+            <Link
+              to={`/sources/${sourceId}/prepare`}
+              className="inline-flex h-10 items-center rounded-md bg-brand-600 px-4 text-sm font-medium text-white hover:bg-brand-700"
+            >
+              Открыть мастер предобработки
+            </Link>
+          </div>
+        </Card>
+      )}
+
+      {tab === "result" && !isDraft && (
         <>
           {resultQuery.isLoading && (
             <Card className="px-6 py-10 text-center text-brand-700/70">

@@ -3,16 +3,15 @@ import { Button } from "@/components/ui";
 import { UPLOAD_GATE } from "@/copy/legal";
 
 interface Props {
-  fileName: string;
   onCancel: () => void;
+  /**
+   * Вызывается после подтверждения чекбокса. Дальше сайдбар открывает
+   * системный диалог выбора файла и сам запускает загрузку.
+   */
   onConfirm: () => void;
 }
 
-export const UploadGateModal: React.FC<Props> = ({
-  fileName,
-  onCancel,
-  onConfirm,
-}) => {
+export const UploadGateModal: React.FC<Props> = ({ onCancel, onConfirm }) => {
   const [accepted, setAccepted] = useState(false);
 
   return (
@@ -25,7 +24,7 @@ export const UploadGateModal: React.FC<Props> = ({
           {UPLOAD_GATE.title}
         </h2>
         <p className="mt-2 text-sm text-brand-700/80">
-          Файл: <span className="font-mono">{fileName}</span>
+          Сначала подтвердите условия — затем выберете файл.
         </p>
 
         <ul className="mt-4 space-y-2 text-sm text-brand-900/90">
@@ -52,7 +51,7 @@ export const UploadGateModal: React.FC<Props> = ({
             Отмена
           </Button>
           <Button onClick={onConfirm} disabled={!accepted}>
-            Загрузить файл
+            Выбрать файл
           </Button>
         </div>
       </div>

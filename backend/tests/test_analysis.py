@@ -21,9 +21,14 @@ def _setup_source(client: TestClient, register_verified, email: str, data: bytes
 
 
 def test_analyze_and_fetch_result(
-    client: TestClient, register_verified, sample_xlsx_bytes: bytes
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
 ) -> None:
-    source_id = _setup_source(client, register_verified, "alice@example.com", sample_xlsx_bytes)
+    source_id = _setup_source(
+        client, register_verified, "alice@example.com", multirow_xlsx_bytes
+    )
+    pre = client.post(f"/api/sources/{source_id}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{source_id}/mapping", json=pre)
+    client.post(f"/api/sources/{source_id}/finalize")
 
     run = client.post(f"/api/sources/{source_id}/analyze", params={"wait": "true"})
     assert run.status_code == 200, run.text
@@ -40,7 +45,7 @@ def test_analyze_and_fetch_result(
     algo_result = payload["result"]
     assert algo_result["status"] == "baseline_only"
     # Инвариант: observations = ЗАП, никаких HMM-полей в MVP.
-    assert "ЗАП" in algo_result["detected_columns"]["detected_groups"]
+    assert algo_result["basic_statistics"]["hidden_group_totals"].get("ЗАП", 0) > 0
     for forbidden in ("viterbi_path", "hidden_states", "gamma"):
         assert forbidden not in algo_result
 

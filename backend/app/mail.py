@@ -34,18 +34,36 @@ def send_mail(
     body: str,
     *,
     kind: str = "info",
+    one_time_code_for_dev_log: str | None = None,
 ) -> None:
     """Записать письмо в выбранный sink. Безопасно: исключения подавляются
     и попадают в лог — потеря dev-почты не должна ронять регистрацию."""
 
     timestamp = datetime.now(UTC).isoformat()
-    logger.info(
-        "[mail/%s] to=%s subject=%r\n%s",
+    # WARNING: подробный блок (иногда в docker не виден у дочерних логгеров).
+    logger.warning(
+        "\n%s\n[DEV MAIL | %s] → %s\n%s\n%s\n%s",
+        "=" * 60,
         kind,
         to_email,
         subject,
         body,
+        "=" * 60,
     )
+    # Одна строка с самим кодом: дочерний `app.mail` + многострочные WARNING
+    # часто не видны в консоли uvicorn / из‑за `HPC_DEBUG=false` старый
+    # однострочник не вызывался. Пишем в root + uvicorn.error, без gate на
+    # debug — при `mail_sink=log|file` реальной почты всё равно нет.
+    if one_time_code_for_dev_log is not None and settings.mail_sink in (
+        "log",
+        "file",
+    ):
+        line = (
+            f"hpc dev-mail: kind={kind} to={to_email} "
+            f"код={one_time_code_for_dev_log}"
+        )
+        logging.getLogger().warning("%s", line)
+        logging.getLogger("uvicorn.error").warning("%s", line)
     if settings.mail_sink == "file":
         try:
             settings.mail_dir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +91,7 @@ def send_email_verification_code(
             "Если вы не регистрировались — просто проигнорируйте письмо."
         ),
         kind="email_verification",
+        one_time_code_for_dev_log=code,
     )
 
 
@@ -89,4 +108,5 @@ def send_password_reset_code(
             "Если вы не запрашивали восстановление — проигнорируйте письмо."
         ),
         kind="password_reset",
+        one_time_code_for_dev_log=code,
     )

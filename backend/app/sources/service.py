@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -88,6 +91,7 @@ def create_source(
         size_bytes=stored.size_bytes,
         sha256=stored.sha256,
         content_type=content_type or "",
+        preparation_state="draft",
     )
     db.add(source)
     db.commit()
@@ -112,6 +116,7 @@ def list_user_sources(db: Session, user: User) -> list[SourceSummary]:
                 has_analysis=last_run is not None,
                 last_analysis_status=last_run.status if last_run else None,
                 has_mapping=bool(s.mapping_config),
+                preparation_state=s.preparation_state,
             )
         )
     return summaries
@@ -156,3 +161,56 @@ def save_mapping(db: Session, source: Source, mapping_json: str) -> None:
 def clear_mapping(db: Session, source: Source) -> None:
     source.mapping_config = None
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Жизненный цикл источника: draft → ready
+# ---------------------------------------------------------------------------
+
+
+class FinalizeError(SourceError):
+    """Источник нельзя финализировать в текущем состоянии."""
+
+
+def finalize_source(db: Session, source: Source) -> Source:
+    """Перевести источник из ``draft`` в ``ready``.
+
+    Запретим финализацию, если у пользователя нет ни одного листа,
+    помеченного для анализа: алгоритм использует ``config.sheets`` как
+    whitelist и без него возвращает ``audit_only``. Это явная ошибка,
+    о которой имеет смысл сказать в UI.
+    """
+
+    if not source.mapping_config:
+        raise FinalizeError(
+            "Перед подтверждением выполните preflight и сохраните column mapping."
+        )
+    from hpc_algo import ColumnMappingConfig
+
+    try:
+        cfg = ColumnMappingConfig.model_validate_json(source.mapping_config)
+    except Exception as exc:  # noqa: BLE001
+        raise FinalizeError(f"Сохранённый mapping повреждён: {exc}") from exc
+    if not cfg.sheets:
+        raise FinalizeError(
+            "Выберите хотя бы один лист, который должен участвовать в анализе."
+        )
+
+    source.preparation_state = "ready"
+    db.commit()
+    db.refresh(source)
+    return source
+
+
+def refresh_storage_metadata(
+    db: Session, storage: LocalStorage, source: Source
+) -> Source:
+    """Пересчитать ``size_bytes`` и ``sha256`` после правки файла на диске."""
+
+    absolute: Path = storage.resolve(source.stored_path)
+    data = absolute.read_bytes()
+    source.size_bytes = len(data)
+    source.sha256 = hashlib.sha256(data).hexdigest()
+    db.commit()
+    db.refresh(source)
+    return source

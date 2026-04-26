@@ -29,13 +29,16 @@ class Settings(BaseSettings):
     debug: bool = True
 
     database_url: str = f"sqlite:///{PROJECT_ROOT / 'storage' / 'app.db'}"
-    # Если True, backend не создаёт таблицы через create_all и ожидает,
-    # что Alembic уже применил миграции. В тестах по умолчанию False.
-    use_alembic: bool = False
+    # Если True, схема только через Alembic (см. ``run_alembic_upgrade_to_head``
+    # при старте в ``main``). Если False — ``create_all`` (изолированные
+    # тесты в ``tmp_path``). Для локального dev по умолчанию True, чтобы
+    # новые колонки (миграции) не «застревали» на старом SQLite.
+    use_alembic: bool = True
 
     secret_key: str = Field(
-        default="dev-only-change-me",
-        description="Секрет для подписи JWT. В проде задать через HPC_SECRET_KEY.",
+        # PyJWT (HS256) рекомендует ≥32 байта; иначе InsecureKeyLengthWarning в логах.
+        default="dev-hs256-local-jwt-key-not-for-production",
+        description="Секрет для подписи JWT. В проде задать через HPC_SECRET_KEY (≥32 байта).",
     )
     access_token_expires_minutes: int = 15  # короткий access
     refresh_token_expires_minutes: int = 60 * 24 * 14  # 14 дней

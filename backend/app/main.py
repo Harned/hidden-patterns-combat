@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from contextlib import asynccontextmanager
+
+# Uvicorn не трогает корневой логгер — поднимаем уровень, чтобы
+# INFO-сообщения из app.* (в т.ч. app.mail с кодами) были видны
+# в dev-консоли рядом с uvicorn-запросами.
+logging.basicConfig(level=logging.INFO, format="%(levelname)-8s %(name)s: %(message)s")
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,15 +18,20 @@ from fastapi.responses import JSONResponse
 from app.analysis.router import router as analysis_router
 from app.auth.router import router as auth_router
 from app.config import Settings, get_settings
+from app.db.alembic_runner import run_alembic_upgrade_to_head
 from app.db.session import init_schema
 from app.sources.router import router as sources_router
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# Потоки без сессии (нет cookie hpc_csrf) — CSRF-заголовок недоступен, эндпоинты
+# должны оставаться доступными при ``csrf_required=True`` (см. docker-прод).
 _CSRF_EXEMPT_PATHS = (
     "/api/auth/login",
     "/api/auth/register",
     "/api/auth/refresh",
     "/api/auth/verify-email",
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
 )
 
 
@@ -52,7 +63,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if not settings.use_alembic:
+        if settings.use_alembic:
+            run_alembic_upgrade_to_head(settings)
+        else:
             init_schema(settings)
         settings.storage_root.mkdir(parents=True, exist_ok=True)
         yield

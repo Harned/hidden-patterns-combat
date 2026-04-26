@@ -87,6 +87,7 @@ def test_analyze_with_saved_mapping_returns_baseline_only(
     sid = _upload(client, register_verified, "eve@example.com", multirow_xlsx_bytes)
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
 
     run = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true"}
@@ -120,6 +121,7 @@ def test_analyze_with_binary_zap_exposes_events_by_channel(
     )
     pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
     client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
 
     run = client.post(
         f"/api/sources/{sid}/analyze", params={"wait": "true"}

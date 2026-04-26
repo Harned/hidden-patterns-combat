@@ -20,3 +20,6 @@ class SourceSummary(BaseModel):
     has_analysis: bool = False
     last_analysis_status: str | None = None
     has_mapping: bool = False
+    # ``draft`` — пользователь не завершил мастер предобработки и анализ
+    # запрещён; ``ready`` — источник подтверждён.
+    preparation_state: str = "ready"

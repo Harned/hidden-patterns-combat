@@ -78,6 +78,22 @@ async def upload_source(
         has_analysis=False,
         last_analysis_status=None,
         has_mapping=False,
+        preparation_state=source.preparation_state,
+    )
+
+
+def _summary_for(source) -> SourceSummary:
+    last_run = source.analysis_runs[0] if source.analysis_runs else None
+    return SourceSummary(
+        id=source.id,
+        original_filename=source.original_filename,
+        size_bytes=source.size_bytes,
+        sha256=source.sha256,
+        created_at=source.created_at,
+        has_analysis=last_run is not None,
+        last_analysis_status=last_run.status if last_run else None,
+        has_mapping=bool(source.mapping_config),
+        preparation_state=source.preparation_state,
     )
 
 
@@ -94,17 +110,32 @@ def get_source(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
 
-    last_run = source.analysis_runs[0] if source.analysis_runs else None
-    return SourceSummary(
-        id=source.id,
-        original_filename=source.original_filename,
-        size_bytes=source.size_bytes,
-        sha256=source.sha256,
-        created_at=source.created_at,
-        has_analysis=last_run is not None,
-        last_analysis_status=last_run.status if last_run else None,
-        has_mapping=bool(source.mapping_config),
-    )
+    return _summary_for(source)
+
+
+@router.post("/{source_id}/finalize", response_model=SourceSummary)
+def finalize_source(
+    source_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_verified_user),
+) -> SourceSummary:
+    """Подтвердить источник после прохождения мастера предобработки."""
+
+    try:
+        source = service.get_owned_source(db, user, source_id)
+    except SourceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+
+    try:
+        source = service.finalize_source(db, source)
+    except service.FinalizeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return _summary_for(source)
 
 
 @router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)

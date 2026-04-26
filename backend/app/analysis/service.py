@@ -132,12 +132,82 @@ def run_and_persist_sync(
     return run
 
 
-def run_preflight(source: Source, storage_resolve) -> str:
+def run_preflight(
+    source: Source,
+    storage_resolve,
+    sheet_names: list[str] | None = None,
+) -> str:
     from hpc_algo import preflight_mapping
 
     absolute: Path = storage_resolve(source.stored_path)
-    cfg = preflight_mapping(absolute)
+    cfg = preflight_mapping(absolute, sheet_names=sheet_names)
     return cfg.model_dump_json()
+
+
+def list_sheets(source: Source, storage_resolve) -> list[str]:
+    from hpc_algo import list_workbook_sheets
+
+    absolute: Path = storage_resolve(source.stored_path)
+    return list_workbook_sheets(absolute)
+
+
+def read_grid_fragment(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    start_row: int,
+    start_col: int,
+    n_rows: int,
+    n_cols: int,
+) -> dict[str, Any]:
+    from hpc_algo.workbook_editor import read_grid
+
+    absolute: Path = storage_resolve(source.stored_path)
+    fragment = read_grid(
+        absolute,
+        sheet_name,
+        start_row=start_row,
+        start_col=start_col,
+        n_rows=n_rows,
+        n_cols=n_cols,
+    )
+    return {
+        "sheet": fragment.sheet,
+        "start_row": fragment.start_row,
+        "start_col": fragment.start_col,
+        "n_rows": fragment.n_rows,
+        "n_cols": fragment.n_cols,
+        "total_rows": fragment.total_rows,
+        "total_cols": fragment.total_cols,
+        "cells": fragment.cells,
+    }
+
+
+def apply_grid_edits(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    edits: list[dict[str, Any]],
+) -> int:
+    from hpc_algo.workbook_editor import apply_cell_edits
+
+    absolute: Path = storage_resolve(source.stored_path)
+    return apply_cell_edits(absolute, sheet_name, edits)
+
+
+def remove_empty_rows_in_sheet(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    header_rows: list[int] | None,
+) -> int:
+    from hpc_algo.workbook_editor import remove_empty_rows
+
+    absolute: Path = storage_resolve(source.stored_path)
+    return remove_empty_rows(absolute, sheet_name, header_rows=header_rows)
 
 
 def describe_sheet_columns(

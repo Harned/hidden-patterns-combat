@@ -309,8 +309,11 @@ def forgot_password(
         code = service.issue_password_reset_code(db, user, settings)
         send_password_reset_code(settings, user.email, code)
     else:
-        logger.info(
-            "[mail/skip] forgot-password requested for non-existent email"
+        # Не утечь факт существования адреса; в лог — чтобы в dev было видно,
+        # почему «код не пришёл» (код в этом случае намеренно не генерируется).
+        logger.warning(
+            "forgot-password: записи с таким email нет — код в лог не пишем "
+            "(проверьте написание адреса)"
         )
     return {
         "status": "ok",

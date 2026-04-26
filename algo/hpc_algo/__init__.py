@@ -8,7 +8,12 @@
 для вызова из backend API, CLI, тестов и notebook.
 """
 
-from hpc_algo.api import AnalyzeConfig, analyze_source, preflight_mapping
+from hpc_algo.api import (
+    AnalyzeConfig,
+    analyze_source,
+    list_workbook_sheets,
+    preflight_mapping,
+)
 from hpc_algo.schema import (
     AnalysisResult,
     AnalysisStatus,
@@ -31,6 +36,7 @@ from hpc_algo.schema import (
 __all__ = [
     "analyze_source",
     "preflight_mapping",
+    "list_workbook_sheets",
     "AnalyzeConfig",
     "AnalysisResult",
     "AnalysisStatus",
