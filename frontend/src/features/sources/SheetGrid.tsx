@@ -1,8 +1,22 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import type { CellEdit, GridCellValue, SheetGridFragment } from "@/api/types";
 import { Button } from "@/components/ui";
+
+export interface CellSuggestion {
+  proposed: string;
+  hint: string;
+  /** Опциональный код причины — для будущих типов подсказок. */
+  kind?: string;
+}
 
 interface Props {
   sourceId: number;
@@ -11,6 +25,27 @@ interface Props {
   /** Сколько строк рендерим в окне; виртуализация — оконная пагинация. */
   pageSize?: number;
   onMutated?: () => void;
+  /**
+   * Карта предложений по ячейкам в формате `${row}:${col}` → подсказка.
+   * Используется для подсветки и tooltip; значение в input не подменяется
+   * до явного применения через `applySuggestions` или ручного ввода.
+   */
+  suggestionByCell?: Record<string, CellSuggestion>;
+  /** Уведомление о наличии локальных несохранённых правок. */
+  onDirtyChange?: (count: number) => void;
+}
+
+export interface SheetGridHandle {
+  /**
+   * Применить набор предложений (или иных правок) одним PUT, минуя локальный
+   * draft. Используется кнопкой «Применить предложения» из мастера, чтобы
+   * не требовать второго клика «Сохранить» в сетке.
+   */
+  applyEdits: (edits: CellEdit[]) => Promise<void>;
+  /** Сбросить локальные правки без записи в файл. */
+  discardLocal: () => void;
+  /** Текущее количество локальных несохранённых правок. */
+  dirtyCount: () => number;
 }
 
 interface PendingEdit {
@@ -21,7 +56,6 @@ interface PendingEdit {
 
 const COL_WIDTHS = "minmax(64px, 80px) repeat(var(--cols), minmax(140px, 1fr))";
 const ROW_HEIGHT = 36;
-const SAVE_DEBOUNCE_MS = 600;
 
 const formatValue = (v: GridCellValue): string => {
   if (v === null || v === undefined) return "";
@@ -42,20 +76,29 @@ const parseValue = (raw: string): GridCellValue => {
   return raw;
 };
 
-/** Виртуализированная Excel-подобная сетка: строки листа загружаются окном
- *  через `GET /grid`, правки буферизуются и сохраняются debounced PUT. */
-export const SheetGrid: React.FC<Props> = ({
-  sourceId,
-  sheetName,
-  headerRows,
-  pageSize = 200,
-  onMutated,
-}) => {
+/**
+ * Виртуализированная Excel-подобная сетка. Ввод ведётся **локально** —
+ * никаких автозапросов на сервер на каждый символ; сохранение в файл
+ * выполняется по явной кнопке «Сохранить изменения». Внешний код может
+ * применить пачку правок (например, предложения ФИО) через `ref.applyEdits`,
+ * который пишет в файл одним запросом без участия локального draft.
+ */
+export const SheetGrid = forwardRef<SheetGridHandle, Props>(function SheetGrid(
+  {
+    sourceId,
+    sheetName,
+    headerRows,
+    pageSize = 200,
+    onMutated,
+    suggestionByCell,
+    onDirtyChange,
+  },
+  ref
+) {
   const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [pending, setPending] = useState<Record<string, PendingEdit>>({});
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const saveTimer = useRef<number | null>(null);
 
   const startRow = page * pageSize + 1;
 
@@ -78,13 +121,23 @@ export const SheetGrid: React.FC<Props> = ({
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const headerRowSet = useMemo(() => new Set(headerRows), [headerRows]);
 
+  const dirtyCount = Object.keys(pending).length;
+
+  useEffect(() => {
+    onDirtyChange?.(dirtyCount);
+  }, [dirtyCount, onDirtyChange]);
+
   const saveMut = useMutation({
     mutationFn: async (edits: CellEdit[]) =>
       api.applySheetGridEdits(sourceId, sheetName, edits),
-    onSuccess: () => {
-      setPending({});
-      setStatusMsg("Правки сохранены.");
+    onSuccess: (_data, edits) => {
+      setStatusMsg(
+        edits.length === 1
+          ? "Сохранена 1 ячейка."
+          : `Сохранено ячеек: ${edits.length}.`
+      );
       void qc.invalidateQueries({ queryKey: ["grid", sourceId, sheetName] });
+      void qc.invalidateQueries({ queryKey: ["emptyRows", sourceId] });
       void qc.invalidateQueries({ queryKey: ["source", sourceId] });
       void qc.invalidateQueries({ queryKey: ["sources"] });
       onMutated?.();
@@ -97,33 +150,67 @@ export const SheetGrid: React.FC<Props> = ({
       ),
   });
 
-  useEffect(
-    () => () => {
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    },
-    []
-  );
-
-  const scheduleSave = (next: Record<string, PendingEdit>) => {
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    if (Object.keys(next).length === 0) return;
-    saveTimer.current = window.setTimeout(() => {
-      saveMut.mutate(Object.values(next));
-    }, SAVE_DEBOUNCE_MS);
-  };
-
   const onCellChange = (row: number, col: number, raw: string) => {
-    const next = { ...pending, [`${row}:${col}`]: { row, col, value: parseValue(raw) } };
-    setPending(next);
-    setStatusMsg("Изменения буферизованы, скоро сохраним...");
-    scheduleSave(next);
+    setPending((prev) => ({
+      ...prev,
+      [`${row}:${col}`]: { row, col, value: parseValue(raw) },
+    }));
+    setStatusMsg(null);
   };
 
-  const flushNow = () => {
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    if (Object.keys(pending).length === 0) return;
-    saveMut.mutate(Object.values(pending));
+  const flushNow = async () => {
+    if (dirtyCount === 0) return;
+    const edits = Object.values(pending);
+    try {
+      await saveMut.mutateAsync(edits);
+      setPending({});
+    } catch {
+      // ошибка уже отображена через onError
+    }
   };
+
+  const discardLocal = () => {
+    if (dirtyCount === 0) return;
+    setPending({});
+    setStatusMsg("Локальные правки отменены.");
+  };
+
+  const tryChangePage = (next: number) => {
+    if (dirtyCount > 0) {
+      const ok = window.confirm(
+        `У вас ${dirtyCount} несохранённых правок. Перейти на другую страницу окна без сохранения?`
+      );
+      if (!ok) return;
+      setPending({});
+    }
+    setPage(next);
+  };
+
+  // Сбрасываем локальный draft при смене листа.
+  useEffect(() => {
+    setPending({});
+    setStatusMsg(null);
+    setPage(0);
+  }, [sheetName]);
+
+  const pendingRef = useRef(pending);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      applyEdits: async (edits: CellEdit[]) => {
+        if (edits.length === 0) return;
+        await saveMut.mutateAsync(edits);
+        // Из applyEdits локальный draft не трогаем — это другой источник правок.
+      },
+      discardLocal,
+      dirtyCount: () => Object.keys(pendingRef.current).length,
+    }),
+    [saveMut]
+  );
 
   if (gridQuery.isLoading) {
     return (
@@ -152,16 +239,36 @@ export const SheetGrid: React.FC<Props> = ({
           Окно: {startRow}…{Math.min(startRow + pageSize - 1, totalRows)}.
         </span>
         <span className="ml-auto flex items-center gap-2">
-          {Object.keys(pending).length > 0 && (
-            <Button size="sm" variant="secondary" onClick={flushNow}>
-              Сохранить сейчас ({Object.keys(pending).length})
-            </Button>
+          {dirtyCount > 0 && (
+            <>
+              <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-900">
+                Несохранённых правок: {dirtyCount}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={discardLocal}
+                disabled={saveMut.isPending}
+                title="Откатить все локальные изменения окна и не записывать их в файл."
+              >
+                Отменить
+              </Button>
+            </>
           )}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void flushNow()}
+            disabled={dirtyCount === 0 || saveMut.isPending}
+            title="Записать локальные изменения в Excel-файл одним пакетом."
+          >
+            {saveMut.isPending ? "Сохраняем..." : "Сохранить изменения"}
+          </Button>
           <Button
             size="sm"
             variant="ghost"
             disabled={page === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            onClick={() => tryChangePage(Math.max(0, page - 1))}
           >
             ← Предыдущая
           </Button>
@@ -172,7 +279,7 @@ export const SheetGrid: React.FC<Props> = ({
             size="sm"
             variant="ghost"
             disabled={page + 1 >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
+            onClick={() => tryChangePage(page + 1)}
           >
             Следующая →
           </Button>
@@ -225,9 +332,21 @@ export const SheetGrid: React.FC<Props> = ({
                   const col = cIdx + 1;
                   const key = `${absoluteRow}:${col}`;
                   const pendingEdit = pending[key];
+                  const suggestion = suggestionByCell?.[key];
                   const display = pendingEdit
                     ? formatValue(pendingEdit.value)
                     : formatValue(value);
+                  // Подсветка приоритет: локальная правка > предложение.
+                  const cellClass = pendingEdit
+                    ? "bg-emerald-50"
+                    : suggestion
+                    ? "bg-violet-50"
+                    : "";
+                  const titleParts: string[] = [];
+                  if (suggestion) {
+                    titleParts.push(`Предлагаем: ${suggestion.proposed}`);
+                    if (suggestion.hint) titleParts.push(suggestion.hint);
+                  }
                   return (
                     <input
                       key={key}
@@ -235,11 +354,11 @@ export const SheetGrid: React.FC<Props> = ({
                       onChange={(e) =>
                         onCellChange(absoluteRow, col, e.target.value)
                       }
-                      onBlur={flushNow}
                       readOnly={isHeader}
+                      title={titleParts.join(" — ") || undefined}
                       className={`border-b border-r border-brand-100 px-2 py-1 text-brand-900 outline-none focus:bg-brand-50 ${
                         isHeader ? "bg-amber-50/60 font-semibold" : ""
-                      } ${pendingEdit ? "bg-emerald-50" : ""}`}
+                      } ${cellClass}`}
                       style={{ height: ROW_HEIGHT }}
                     />
                   );
@@ -251,7 +370,7 @@ export const SheetGrid: React.FC<Props> = ({
       </div>
     </div>
   );
-};
+});
 
 /** Excel-style column label: 1 → A, 27 → AA. */
 function colLabel(n: number): string {

@@ -242,6 +242,8 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
 
           {result && (
             <>
+              <WarningsList warnings={result.warnings} errors={result.errors} />
+
               <Section
                 title="Отчёт"
                 description="Краткая сводка с честным статусом. Никаких диагностических утверждений без оснований."
@@ -280,10 +282,9 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
                 </Suspense>
               )}
               <ZapChannelsCard baseline={result.basic_statistics} />
-              <AuditTable audit={result.data_audit} />
               <DetectedColumns detection={result.detected_columns} />
               <ChartsGrid charts={result.charts} />
-              <WarningsList warnings={result.warnings} errors={result.errors} />
+              <AuditTable audit={result.data_audit} />
 
               <p className="text-xs text-brand-700/60 text-center">
                 Алгоритм: v{result.algo_version}. Инварианты: observations =

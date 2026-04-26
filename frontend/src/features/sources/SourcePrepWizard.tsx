@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useMutation,
@@ -8,11 +8,12 @@ import {
 import { api, ApiError } from "@/api/client";
 import type {
   ColumnMappingConfig,
+  HeaderRowsSuggestionResponse,
   SheetMapping,
   SourceSummary,
 } from "@/api/types";
 import { Badge, Button, Card, Section } from "@/components/ui";
-import { SheetGrid } from "./SheetGrid";
+import { SheetGrid, type CellSuggestion, type SheetGridHandle } from "./SheetGrid";
 
 const MappingEditor = React.lazy(() =>
   import("@/features/analysis/MappingEditor").then((m) => ({
@@ -20,7 +21,7 @@ const MappingEditor = React.lazy(() =>
   }))
 );
 
-type Step = "sheets" | "mapping" | "edit" | "finalize";
+type Step = "sheets" | "prepare" | "finalize";
 
 const STEPS: { id: Step; label: string; description: string }[] = [
   {
@@ -29,16 +30,10 @@ const STEPS: { id: Step; label: string; description: string }[] = [
     description: "Выберите листы Excel, которые должны участвовать в анализе.",
   },
   {
-    id: "mapping",
-    label: "Сопоставление колонок",
+    id: "prepare",
+    label: "Данные и колонки",
     description:
-      "Назначьте роли колонкам выбранных листов. Preflight предлагает стартовое сопоставление.",
-  },
-  {
-    id: "edit",
-    label: "Редактирование данных",
-    description:
-      "Удаление пустых строк и точечная правка ячеек. Все правки сохраняются в исходный файл.",
+      "Сначала проверьте и при необходимости подчистите данные листа, затем назначьте роли колонкам. Все правки сохраняются в исходный файл.",
   },
   {
     id: "finalize",
@@ -58,6 +53,7 @@ export const SourcePrepWizard: React.FC = () => {
   const [includedSheets, setIncludedSheets] = useState<Set<string> | null>(
     null
   );
+  const [activeSheet, setActiveSheet] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sourceQuery = useQuery<SourceSummary>({
@@ -97,6 +93,21 @@ export const SourcePrepWizard: React.FC = () => {
     () => sheetNames.filter((s) => includedSheets?.has(s)),
     [sheetNames, includedSheets]
   );
+
+  const mappedSheets = useMemo(
+    () => (mapping ? Object.keys(mapping.sheets) : []),
+    [mapping]
+  );
+
+  useEffect(() => {
+    if (mappedSheets.length === 0) {
+      if (activeSheet !== null) setActiveSheet(null);
+      return;
+    }
+    if (!activeSheet || !mappedSheets.includes(activeSheet)) {
+      setActiveSheet(mappedSheets[0]);
+    }
+  }, [mappedSheets, activeSheet]);
 
   const preflightMut = useMutation({
     mutationFn: (sheets: string[]) => api.preflight(sourceId, sheets),
@@ -149,26 +160,20 @@ export const SourcePrepWizard: React.FC = () => {
         setError("Выберите хотя бы один лист.");
         return;
       }
-      // Запускаем preflight только если у нас ещё нет mapping для выбранных листов.
-      const knownSheets = mapping ? Object.keys(mapping.sheets) : [];
       const sameSet =
-        knownSheets.length === includedList.length &&
-        includedList.every((s) => knownSheets.includes(s));
+        mappedSheets.length === includedList.length &&
+        includedList.every((s) => mappedSheets.includes(s));
       if (!sameSet) {
         await preflightMut.mutateAsync(includedList).catch(() => undefined);
       }
-      setStep("mapping");
+      setStep("prepare");
       return;
     }
-    if (step === "mapping") {
+    if (step === "prepare") {
       if (!mapping || Object.keys(mapping.sheets).length === 0) {
         setError("Сохраните column mapping перед переходом дальше.");
         return;
       }
-      setStep("edit");
-      return;
-    }
-    if (step === "edit") {
       setStep("finalize");
       return;
     }
@@ -326,20 +331,13 @@ export const SourcePrepWizard: React.FC = () => {
           </Section>
         )}
 
-        {step === "mapping" && (
-          <Suspense
-            fallback={
-              <Card className="px-6 py-8 text-center text-brand-700/70">
-                Загрузка редактора mapping...
-              </Card>
-            }
-          >
-            <MappingEditor sourceId={sourceId} />
-          </Suspense>
-        )}
-
-        {step === "edit" && (
-          <SheetEditingStep sourceId={sourceId} mapping={mapping} />
+        {step === "prepare" && (
+          <PrepareStep
+            sourceId={sourceId}
+            mapping={mapping}
+            activeSheet={activeSheet}
+            setActiveSheet={setActiveSheet}
+          />
         )}
 
         {step === "finalize" && (
@@ -379,26 +377,104 @@ export const SourcePrepWizard: React.FC = () => {
   );
 };
 
-const SheetEditingStep: React.FC<{
+const PrepareStep: React.FC<{
   sourceId: number;
   mapping: ColumnMappingConfig | null;
-}> = ({ sourceId, mapping }) => {
+  activeSheet: string | null;
+  setActiveSheet: (s: string | null) => void;
+}> = ({ sourceId, mapping, activeSheet, setActiveSheet }) => {
   const qc = useQueryClient();
   const sheets = mapping ? Object.keys(mapping.sheets) : [];
-  const [active, setActive] = useState<string | null>(sheets[0] ?? null);
-
-  useEffect(() => {
-    if (!active && sheets.length > 0) setActive(sheets[0]);
-  }, [active, sheets]);
+  const gridRef = useRef<SheetGridHandle>(null);
+  const [gridDirty, setGridDirty] = useState(0);
 
   const sheetMapping: SheetMapping | null =
-    active && mapping ? mapping.sheets[active] : null;
+    activeSheet && mapping ? mapping.sheets[activeSheet] : null;
+  const headerRows = sheetMapping?.header_rows ?? [0];
+  const athleteRoleColumns = sheetMapping?.roles?.athlete ?? [];
+  const hasAthleteRole = athleteRoleColumns.length > 0;
+  const hasEpisodeColumn = (sheetMapping?.roles?.episode?.length ?? 0) > 0;
+
+  const emptyCountQuery = useQuery({
+    queryKey: ["emptyRows", sourceId, activeSheet, headerRows.join(",")],
+    queryFn: () =>
+      api.countEmptyRows(sourceId, activeSheet!, headerRows),
+    enabled: Boolean(activeSheet && sheetMapping),
+    retry: 1,
+    staleTime: 0,
+  });
+
+  const athleteSuggestionsQuery = useQuery({
+    queryKey: [
+      "athleteFwdFill",
+      sourceId,
+      activeSheet,
+      headerRows.join(","),
+      athleteRoleColumns.join("|"),
+    ],
+    queryFn: () =>
+      api.athleteForwardFillSuggestions(sourceId, activeSheet!, headerRows),
+    enabled: Boolean(activeSheet && sheetMapping && hasAthleteRole),
+    retry: false,
+    staleTime: 0,
+  });
+
+  const headerRowsKey = headerRows.join(",");
+  const headerSuggestionQuery = useQuery({
+    queryKey: ["headerSuggestion", sourceId, activeSheet, headerRowsKey],
+    queryFn: () =>
+      api.headerRowsSuggestion(
+        sourceId,
+        activeSheet!,
+        sheetMapping?.header_rows ?? [0]
+      ),
+    enabled: Boolean(activeSheet && sheetMapping),
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  const applyHeaderRowsMut = useMutation({
+    mutationFn: async (rows: number[]) => {
+      if (!mapping || !activeSheet) {
+        throw new Error("Нет активного листа или mapping.");
+      }
+      const next: ColumnMappingConfig = JSON.parse(JSON.stringify(mapping));
+      next.sheets[activeSheet] = {
+        ...next.sheets[activeSheet],
+        header_rows: [...rows],
+      };
+      await api.putMapping(sourceId, next);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["mapping", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["sheetColumns", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["sheetPreview", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["grid", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["headerSuggestion", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["emptyRows", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["athleteFwdFill", sourceId] });
+    },
+  });
+
+  const suggestionByCell = useMemo<Record<string, CellSuggestion>>(() => {
+    const map: Record<string, CellSuggestion> = {};
+    for (const s of athleteSuggestionsQuery.data?.suggestions ?? []) {
+      map[`${s.row}:${s.col}`] = {
+        proposed: s.proposed,
+        hint: s.message_ru,
+        kind: "athlete-locf",
+      };
+    }
+    return map;
+  }, [athleteSuggestionsQuery.data]);
 
   const cleanupMut = useMutation({
     mutationFn: () =>
-      api.removeEmptyRows(sourceId, active!, sheetMapping?.header_rows ?? [0]),
+      api.removeEmptyRows(sourceId, activeSheet!, headerRows),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: ["grid", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["emptyRows", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["athleteFwdFill", sourceId] });
       void qc.invalidateQueries({ queryKey: ["source", sourceId] });
       void qc.invalidateQueries({ queryKey: ["sources"] });
       alert(`Удалено пустых строк: ${res.deleted}`);
@@ -411,52 +487,395 @@ const SheetEditingStep: React.FC<{
       ),
   });
 
+  const applyAthleteMut = useMutation({
+    mutationFn: async () => {
+      const items = athleteSuggestionsQuery.data?.suggestions ?? [];
+      if (items.length === 0) return 0;
+      const edits = items.map((s) => ({
+        row: s.row,
+        col: s.col,
+        value: s.proposed,
+      }));
+      await gridRef.current?.applyEdits(edits);
+      return edits.length;
+    },
+    onSuccess: (count) => {
+      void qc.invalidateQueries({ queryKey: ["athleteFwdFill", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["grid", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["emptyRows", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["source", sourceId] });
+      if (count) alert(`Применено предложений ФИО: ${count}.`);
+    },
+    onError: (err) =>
+      alert(
+        err instanceof ApiError
+          ? `Не удалось применить предложения: ${err.message}`
+          : "Не удалось применить предложения."
+      ),
+  });
+
+  const onApplyAthleteSuggestions = () => {
+    const dirty = gridRef.current?.dirtyCount() ?? 0;
+    if (dirty > 0) {
+      const ok = window.confirm(
+        `В сетке есть ${dirty} несохранённых ручных правок. ` +
+          "Применить предложения ФИО сейчас? В файл будут записаны только предложения, " +
+          "ручные правки останутся в локальном черновике."
+      );
+      if (!ok) return;
+    }
+    applyAthleteMut.mutate();
+  };
+
   if (!mapping || sheets.length === 0) {
     return (
       <Card className="px-6 py-8 text-center text-brand-700/70">
-        Сначала выполните column mapping.
+        Сначала выберите листы и подождите, пока preflight предложит начальное
+        сопоставление.
       </Card>
     );
   }
 
+  // Только при последнем успешном ответе: иначе при сетевой ошибке RQ
+  // оставляет прежний { count } и isSuccess=false, и нельзя показывать
+  // устаревшее «обнаружено N пустых».
+  const emptyCount = emptyCountQuery.isSuccess
+    ? (emptyCountQuery.data?.count ?? 0)
+    : 0;
+  const athleteData = athleteSuggestionsQuery.data;
+  const athleteCount = athleteData?.suggestions.length ?? 0;
+
   return (
-    <Section
-      title="Редактирование листа"
-      description="Изменения сохраняются в файл источника. Заголовочные строки выделены и недоступны для редактирования."
-    >
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        {sheets.map((name) => (
-          <button
-            key={name}
-            onClick={() => setActive(name)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium border ${
-              name === active
-                ? "bg-brand-100 text-brand-900 border-brand-300"
-                : "bg-white text-brand-800 border-brand-200 hover:bg-brand-50"
-            }`}
+    <div className="space-y-6">
+      <Section
+        title="Подготовка листа"
+        description="Сверху — данные листа (правки сохраняются в исходный файл). Снизу — назначение ролей колонкам этого же листа. Заголовочные строки выделены и недоступны для редактирования."
+      >
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          {sheets.map((name) => (
+            <button
+              key={name}
+              onClick={() => setActiveSheet(name)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium border ${
+                name === activeSheet
+                  ? "bg-brand-100 text-brand-900 border-brand-300"
+                  : "bg-white text-brand-800 border-brand-200 hover:bg-brand-50"
+              }`}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+
+        <div className="rounded-md border border-brand-100 bg-white px-4 py-3 mb-4 space-y-2 text-sm text-brand-800">
+          <div className="font-semibold text-brand-900">
+            Что обычно стоит проверить руками
+          </div>
+          <ul className="list-disc pl-5 space-y-1 text-brand-700/90">
+            <li>
+              Полностью пустые строки между данными — они мешают подсчётам и
+              разметке (для них есть кнопка ниже).
+            </li>
+            <li>
+              Дублирующиеся «шапки» внутри данных (когда заголовок повторён
+              посреди таблицы) — удалите такие строки вручную или через
+              редактор сетки.
+            </li>
+            <li>
+              «Сводные» строки итогов в данных (всё число — итог, а не запись
+              эпизода) — их тоже стоит убрать перед анализом.
+            </li>
+          </ul>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          {emptyCountQuery.isLoading ? (
+            <span className="text-xs text-brand-700/60">
+              Проверяем пустые строки… на больших листах это может занять
+              несколько секунд.
+            </span>
+          ) : emptyCountQuery.isError ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-red-800">
+              <span>
+                Не удалось проверить пустые строки:{" "}
+                {emptyCountQuery.error instanceof Error
+                  ? emptyCountQuery.error.message
+                  : "ошибка сети"}
+                .
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void emptyCountQuery.refetch()}
+                disabled={emptyCountQuery.isFetching}
+              >
+                {emptyCountQuery.isFetching ? "Запрос…" : "Повторить"}
+              </Button>
+            </div>
+          ) : emptyCount > 0 ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <span>
+                Обнаружено{" "}
+                <b>
+                  {emptyCount} полностью пуст
+                  {pluralEnding(emptyCount, "ая", "ые", "ых")} строк
+                  {pluralEnding(emptyCount, "а", "и", "")}
+                </b>{" "}
+                под заголовком — рекомендуем удалить.
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => activeSheet && cleanupMut.mutate()}
+                disabled={!activeSheet || cleanupMut.isPending}
+              >
+                {cleanupMut.isPending
+                  ? "Удаляем..."
+                  : `Удалить ${emptyCount} строк`}
+              </Button>
+            </div>
+          ) : (
+            <span className="text-xs text-emerald-700">
+              Полностью пустых строк под заголовком не найдено.
+            </span>
+          )}
+
+          <span className="ml-auto" />
+
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => activeSheet && cleanupMut.mutate()}
+            disabled={!activeSheet || cleanupMut.isPending}
+            title="Удалить data-строки, в которых все ячейки пустые. Заголовочные строки не трогаются."
           >
-            {name}
-          </button>
-        ))}
-        <span className="ml-auto" />
-        <Button
-          variant="secondary"
-          onClick={() => active && cleanupMut.mutate()}
-          disabled={!active || cleanupMut.isPending}
+            {cleanupMut.isPending
+              ? "Чистим..."
+              : "Удалить полностью пустые строки"}
+          </Button>
+        </div>
+
+        <AthleteForwardFillBanner
+          hasAthleteRole={hasAthleteRole}
+          hasEpisodeColumn={hasEpisodeColumn}
+          isLoading={athleteSuggestionsQuery.isLoading}
+          isError={athleteSuggestionsQuery.isError}
+          warning={athleteData?.warning ?? null}
+          athleteColumn={athleteData?.athlete_column ?? null}
+          count={athleteCount}
+          isApplying={applyAthleteMut.isPending}
+          onApply={onApplyAthleteSuggestions}
+        />
+
+        {activeSheet && sheetMapping && (
+          <>
+            <HeaderRowsPrepareBanner
+              isLoading={headerSuggestionQuery.isLoading}
+              isError={headerSuggestionQuery.isError}
+              data={headerSuggestionQuery.data}
+              isApplying={applyHeaderRowsMut.isPending}
+              onApply={(rows) => applyHeaderRowsMut.mutate(rows)}
+            />
+            <SheetGrid
+              ref={gridRef}
+              sourceId={sourceId}
+              sheetName={activeSheet}
+              headerRows={sheetMapping.header_rows}
+              suggestionByCell={suggestionByCell}
+              onDirtyChange={setGridDirty}
+            />
+          </>
+        )}
+        {gridDirty > 0 && (
+          <div className="mt-2 text-xs text-brand-700/60">
+            В сетке есть несохранённые ручные правки ({gridDirty}). Не забудьте
+            нажать «Сохранить изменения», иначе они не попадут в файл.
+          </div>
+        )}
+      </Section>
+
+      <Section
+        title="Сопоставление колонок"
+        description="Назначьте роли колонкам активного листа. Изменения header_rows ниже синхронизируются с сеткой данных выше."
+      >
+        <Suspense
+          fallback={
+            <Card className="px-6 py-8 text-center text-brand-700/70">
+              Загрузка редактора mapping...
+            </Card>
+          }
         >
-          {cleanupMut.isPending
-            ? "Чистим..."
-            : "Удалить полностью пустые строки"}
+          <MappingEditor
+            sourceId={sourceId}
+            controlledActiveSheet={activeSheet}
+            onActiveSheetChange={setActiveSheet}
+            hideSheetTabs
+            hideHeader
+          />
+        </Suspense>
+      </Section>
+    </div>
+  );
+};
+
+const HeaderRowsPrepareBanner: React.FC<{
+  isLoading: boolean;
+  isError: boolean;
+  data: HeaderRowsSuggestionResponse | undefined;
+  isApplying: boolean;
+  onApply: (rows: number[]) => void;
+}> = ({ isLoading, isError, data, isApplying, onApply }) => {
+  if (isLoading) {
+    return (
+      <div className="mb-4 text-xs text-brand-700/60">
+        Проверяем многоуровневую шапку (какие строки объединить в заголовок)…
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        Не удалось запросить подсказку по строкам шапки. Укажите{" "}
+        <b>строки заголовка</b> вручную в разделе «Сопоставление колонок» ниже
+        (нумерация с 0).
+      </div>
+    );
+  }
+  if (!data) return null;
+  const { suggested_header_rows: suggested, matches_current: matches } = data;
+  if (matches) {
+    return (
+      <div className="mb-4 rounded-md border border-teal-200 bg-teal-50/90 px-3 py-2 text-sm text-teal-950">
+        <div className="font-semibold">Многострочная шапка</div>
+        <p className="mt-1 text-xs text-teal-900/90">
+          Для читаемых имён колонок (по смыслу — как подсказки по ФИО выше) из
+          файла собирается заголовок из строк{" "}
+          <code className="font-mono text-[11px]">[{suggested.join(", ")}]</code>{" "}
+          (нумерация с 0). Сейчас эта настройка <b>совпадает</b> с эвристикой.
+          Развёрнутое превью flatten-имён — внизу, под полем «Строки заголовка».
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+      <div className="font-semibold">Многострочная шапка</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-amber-900/95">
+        <span>
+          Рекомендованы строки:{" "}
+          <code className="font-mono">[{suggested.join(", ")}]</code>. В mapping
+          сейчас:{" "}
+          <code className="font-mono">
+            [{(data.current_header_rows ?? []).join(", ")}]
+          </code>
+          .
+        </span>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => onApply(suggested)}
+          disabled={isApplying}
+        >
+          {isApplying ? "Сохраняем…" : "Применить в mapping"}
         </Button>
       </div>
-      {active && sheetMapping && (
-        <SheetGrid
-          sourceId={sourceId}
-          sheetName={active}
-          headerRows={sheetMapping.header_rows}
-        />
+    </div>
+  );
+};
+
+const AthleteForwardFillBanner: React.FC<{
+  hasAthleteRole: boolean;
+  hasEpisodeColumn: boolean;
+  isLoading: boolean;
+  isError: boolean;
+  warning: string | null;
+  athleteColumn: string | null;
+  count: number;
+  isApplying: boolean;
+  onApply: () => void;
+}> = ({
+  hasAthleteRole,
+  hasEpisodeColumn,
+  isLoading,
+  isError,
+  warning,
+  athleteColumn,
+  count,
+  isApplying,
+  onApply,
+}) => {
+  if (!hasAthleteRole) {
+    return (
+      <div className="mb-4 rounded-md border border-brand-200 bg-white px-3 py-2 text-xs text-brand-700/70">
+        Чтобы получить предложения по заполнению ФИО, назначьте роль{" "}
+        <b>«спортсмен»</b> хотя бы одной колонке листа в блоке «Сопоставление
+        колонок» ниже.
+      </div>
+    );
+  }
+  if (isLoading) {
+    return (
+      <div className="mb-4 text-xs text-brand-700/60">
+        Ищем пропущенные ФИО...
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+        Не удалось получить предложения по ФИО. Попробуйте обновить страницу.
+      </div>
+    );
+  }
+  if (count === 0) {
+    return (
+      <div className="mb-4 text-xs text-emerald-700">
+        Пропущенных ФИО не найдено
+        {athleteColumn ? ` (по колонке «${athleteColumn}»)` : ""}.
+        {warning && (
+          <span className="ml-2 text-amber-700/90">{warning}</span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900">
+      <div className="flex flex-wrap items-center gap-3">
+        <span>
+          Обнаружено{" "}
+          <b>
+            {count} пропущенн{pluralEnding(count, "ое", "ых", "ых")} ФИО
+          </b>
+          {athleteColumn ? ` в колонке «${athleteColumn}»` : ""}. Ниже в сетке
+          такие ячейки подсвечены — наведите курсор, чтобы увидеть, какое
+          значение будет проставлено.
+        </span>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onApply}
+          disabled={isApplying}
+          title="Скопировать последнее непустое ФИО выше во все подсвеченные ячейки. Запишется в файл одним пакетом, без отдельной кнопки «Сохранить»."
+        >
+          {isApplying ? "Применяем..." : `Применить ${count} предложений`}
+        </Button>
+      </div>
+      <div className="mt-1 text-xs text-violet-800/80">
+        Это <b>копирование вниз</b> ближайшего ФИО сверху, а не «угадывание»
+        спортсмена по эпизоду. Если в файле строки перемешаны — отмените
+        применение и поправьте ФИО вручную.
+        {hasEpisodeColumn && (
+          <>
+            {" "}
+            Подсветка и подстановка — только для строк, где в колонке
+            с ролью «эпизод» есть значение, и не для полностью пустых строк.
+          </>
+        )}
+      </div>
+      {warning && (
+        <div className="mt-1 text-xs text-amber-700/90">{warning}</div>
       )}
-    </Section>
+    </div>
   );
 };
 
@@ -467,7 +886,7 @@ const FinalizeSummary: React.FC<{
   if (!mapping) {
     return (
       <div className="text-sm text-red-700">
-        Mapping не сохранён — вернитесь на шаг «Сопоставление колонок».
+        Mapping не сохранён — вернитесь на шаг «Данные и колонки».
       </div>
     );
   }
@@ -512,3 +931,11 @@ const FinalizeSummary: React.FC<{
     </div>
   );
 };
+
+function pluralEnding(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}

@@ -1,8 +1,10 @@
 import type {
   AnalysisRunFull,
   AnalysisRunSummary,
+  AthleteForwardFillResponse,
   CellEdit,
   ColumnMappingConfig,
+  HeaderRowsSuggestionResponse,
   SheetColumnsResponse,
   SheetGridFragment,
   SheetPreview,
@@ -242,6 +244,51 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ header_rows: headerRows ?? null }),
       }
+    );
+  },
+  countEmptyRows(
+    sourceId: number,
+    sheetName: string,
+    headerRows?: number[]
+  ) {
+    const qs =
+      headerRows && headerRows.length > 0
+        ? `?header_rows=${headerRows.join(",")}`
+        : "";
+    return request<{ count: number }>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(
+        sheetName
+      )}/empty-rows-count${qs}`
+    );
+  },
+  headerRowsSuggestion(
+    sourceId: number,
+    sheetName: string,
+    headerRows?: number[]
+  ) {
+    const qs =
+      headerRows && headerRows.length > 0
+        ? `?header_rows=${headerRows.join(",")}`
+        : "";
+    return request<HeaderRowsSuggestionResponse>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(
+        sheetName
+      )}/suggestions/header-rows${qs}`
+    );
+  },
+  athleteForwardFillSuggestions(
+    sourceId: number,
+    sheetName: string,
+    headerRows?: number[]
+  ) {
+    const qs =
+      headerRows && headerRows.length > 0
+        ? `?header_rows=${headerRows.join(",")}`
+        : "";
+    return request<AthleteForwardFillResponse>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(
+        sheetName
+      )}/suggestions/athlete-forward-fill${qs}`
     );
   },
   getMapping(sourceId: number) {

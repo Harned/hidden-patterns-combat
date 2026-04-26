@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import type {
   ColumnMappingConfig,
+  HeaderRowsSuggestionResponse,
   HiddenGroup,
   SheetColumnInfo,
 } from "@/api/types";
@@ -23,6 +24,16 @@ const ROLE_OPTIONS: { value: HiddenGroup | "__none__"; label: string }[] = [
 
 interface Props {
   sourceId: number;
+  /**
+   * Если задан, активный лист контролируется снаружи. Используется в
+   * мастере предобработки, где список листов общий с сеткой данных.
+   */
+  controlledActiveSheet?: string | null;
+  onActiveSheetChange?: (sheetName: string | null) => void;
+  /** Скрыть внутренние вкладки листов и блок «Сопоставление колонок». */
+  hideSheetTabs?: boolean;
+  /** Скрыть верхнюю карточку с заголовком/действиями (preflight, save). */
+  hideHeader?: boolean;
 }
 
 function cloneMapping(m: ColumnMappingConfig): ColumnMappingConfig {
@@ -58,7 +69,13 @@ function shortSamples(sample: unknown[]): string {
     .join(", ");
 }
 
-export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
+export const MappingEditor: React.FC<Props> = ({
+  sourceId,
+  controlledActiveSheet,
+  onActiveSheetChange,
+  hideSheetTabs = false,
+  hideHeader = false,
+}) => {
   const qc = useQueryClient();
 
   const savedQuery = useQuery({
@@ -67,8 +84,16 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
   });
 
   const [draft, setDraft] = useState<ColumnMappingConfig | null>(null);
-  const [activeSheet, setActiveSheet] = useState<string | null>(null);
+  const [internalActiveSheet, setInternalActiveSheet] =
+    useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const isControlled = controlledActiveSheet !== undefined;
+  const activeSheet = isControlled ? controlledActiveSheet : internalActiveSheet;
+  const setActiveSheet = (next: string | null) => {
+    if (!isControlled) setInternalActiveSheet(next);
+    onActiveSheetChange?.(next);
+  };
 
   useEffect(() => {
     if (savedQuery.data?.mapping && !draft) {
@@ -77,11 +102,13 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
   }, [savedQuery.data, draft]);
 
   useEffect(() => {
-    if (draft && !activeSheet) {
+    if (isControlled) return;
+    if (draft && !internalActiveSheet) {
       const firstSheet = Object.keys(draft.sheets)[0] ?? null;
-      setActiveSheet(firstSheet);
+      setInternalActiveSheet(firstSheet);
+      onActiveSheetChange?.(firstSheet);
     }
-  }, [draft, activeSheet]);
+  }, [draft, internalActiveSheet, isControlled, onActiveSheetChange]);
 
   const sheetMapping = draft && activeSheet ? draft.sheets[activeSheet] : null;
   const headerRowsKey = sheetMapping?.header_rows.join(",") ?? "";
@@ -116,12 +143,26 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
     retry: false,
   });
 
+  const headerSuggestionQuery = useQuery({
+    queryKey: ["headerSuggestion", sourceId, activeSheet, headerRowsKey],
+    queryFn: () =>
+      api.headerRowsSuggestion(
+        sourceId,
+        activeSheet!,
+        sheetMapping?.header_rows ?? [0]
+      ),
+    enabled: Boolean(activeSheet && sheetMapping),
+    retry: false,
+    staleTime: 30_000,
+  });
+
   const preflightMut = useMutation({
     mutationFn: () => api.preflight(sourceId),
     onSuccess: (res) => {
       if (res.mapping) {
         setDraft(cloneMapping(res.mapping));
-        setActiveSheet(Object.keys(res.mapping.sheets)[0] ?? null);
+        const firstSheet = Object.keys(res.mapping.sheets)[0] ?? null;
+        setActiveSheet(firstSheet);
         setMessage("Preflight выполнен. Проверьте и сохраните.");
         void qc.invalidateQueries({ queryKey: ["sheetColumns", sourceId] });
       }
@@ -217,6 +258,20 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
     setDraft(next);
   };
 
+  const applySuggestedHeaderRows = (suggested: number[]) => {
+    if (!draft || !activeSheet || suggested.length === 0) return;
+    const next = cloneMapping(draft);
+    next.sheets[activeSheet] = {
+      ...next.sheets[activeSheet],
+      header_rows: [...suggested],
+    };
+    setDraft(next);
+    setMessage(
+      `header_rows для «${activeSheet}» обновлены до [${suggested.join(", ")}]. ` +
+        "Не забудьте нажать «Сохранить»."
+    );
+  };
+
   const roleCountsForSheet = useMemo(() => {
     if (!sheetMapping) return [] as Array<[HiddenGroup, number]>;
     return Object.entries(sheetMapping.roles).map(
@@ -234,55 +289,75 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
 
   return (
     <div className="space-y-6">
-      <Card className="px-6 py-5 flex flex-wrap items-center gap-3 justify-between">
-        <div>
-          <div className="text-base font-semibold text-brand-900">
-            Сопоставление колонок
+      {!hideHeader && (
+        <Card className="px-6 py-5 flex flex-wrap items-center gap-3 justify-between">
+          <div>
+            <div className="text-base font-semibold text-brand-900">
+              Сопоставление колонок
+            </div>
+            <p className="mt-1 text-sm text-brand-700/80">
+              Preflight предлагает стартовое сопоставление на основе заголовков.
+              Вы можете изменить роль любой колонки листа и сохранить mapping.
+            </p>
           </div>
-          <p className="mt-1 text-sm text-brand-700/80">
-            Preflight предлагает стартовое сопоставление на основе заголовков.
-            Вы можете изменить роль любой колонки листа и сохранить mapping.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => preflightMut.mutate()}
+              disabled={preflightMut.isPending}
+            >
+              {preflightMut.isPending
+                ? "Preflight..."
+                : draft
+                ? "Пересобрать preflight"
+                : "Запустить preflight"}
+            </Button>
+            <Button
+              onClick={() => draft && saveMut.mutate(draft)}
+              disabled={!draft || saveMut.isPending}
+            >
+              {saveMut.isPending ? "Сохраняем..." : "Сохранить"}
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!draft) return;
+                await saveMut.mutateAsync(draft);
+                analyzeMut.mutate();
+              }}
+              disabled={!draft || saveMut.isPending || analyzeMut.isPending}
+            >
+              {analyzeMut.isPending
+                ? "Анализ..."
+                : "Сохранить и запустить анализ"}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => deleteMut.mutate()}
+              disabled={!savedQuery.data?.mapping || deleteMut.isPending}
+            >
+              Сбросить
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {hideHeader && draft && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => draft && saveMut.mutate(draft)}
+            disabled={!draft || saveMut.isPending}
+          >
+            {saveMut.isPending ? "Сохраняем..." : "Сохранить mapping"}
+          </Button>
           <Button
             variant="secondary"
             onClick={() => preflightMut.mutate()}
             disabled={preflightMut.isPending}
           >
-            {preflightMut.isPending
-              ? "Preflight..."
-              : draft
-              ? "Пересобрать preflight"
-              : "Запустить preflight"}
-          </Button>
-          <Button
-            onClick={() => draft && saveMut.mutate(draft)}
-            disabled={!draft || saveMut.isPending}
-          >
-            {saveMut.isPending ? "Сохраняем..." : "Сохранить"}
-          </Button>
-          <Button
-            onClick={async () => {
-              if (!draft) return;
-              await saveMut.mutateAsync(draft);
-              analyzeMut.mutate();
-            }}
-            disabled={!draft || saveMut.isPending || analyzeMut.isPending}
-          >
-            {analyzeMut.isPending
-              ? "Анализ..."
-              : "Сохранить и запустить анализ"}
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => deleteMut.mutate()}
-            disabled={!savedQuery.data?.mapping || deleteMut.isPending}
-          >
-            Сбросить
+            {preflightMut.isPending ? "Preflight..." : "Пересобрать preflight"}
           </Button>
         </div>
-      </Card>
+      )}
 
       {message && (
         <div className="rounded-md border border-brand-200 bg-brand-50 px-4 py-2 text-sm text-brand-900">
@@ -298,37 +373,33 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
       )}
 
       {draft && (
-        <Section
-          title="Листы"
-          description="Выберите лист, чтобы отредактировать его колонки и строки заголовка."
+        <SheetSectionWrapper
+          hideSheetTabs={hideSheetTabs}
+          sheetKeys={sheetKeys}
+          activeSheet={activeSheet}
+          setActiveSheet={setActiveSheet}
         >
-          <div className="flex flex-wrap gap-2 mb-4">
-            {sheetKeys.map((name) => (
-              <button
-                key={name}
-                onClick={() => setActiveSheet(name)}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium border ${
-                  name === activeSheet
-                    ? "bg-brand-100 text-brand-900 border-brand-300"
-                    : "bg-white text-brand-800 border-brand-200 hover:bg-brand-50"
-                }`}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-
           {sheetMapping && activeSheet && (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="text-sm text-brand-900">
-                  header_rows (через запятую, 0-индекс):
-                </label>
-                <input
-                  value={sheetMapping.header_rows.join(", ")}
-                  onChange={(e) => changeHeaderRows(e.target.value)}
-                  className="h-9 rounded-md border border-brand-200 px-3 text-sm font-mono w-56"
-                />
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+                <div className="flex flex-col">
+                  <label
+                    htmlFor={`header-rows-${activeSheet}`}
+                    className="text-sm text-brand-900"
+                  >
+                    Строки заголовка (нумерация с 0, через запятую)
+                  </label>
+                  <input
+                    id={`header-rows-${activeSheet}`}
+                    value={sheetMapping.header_rows.join(", ")}
+                    onChange={(e) => changeHeaderRows(e.target.value)}
+                    title="С каких строк (с 0) собрать шапку. Один уровень: 0. Несколько: 0,1,2. Ниже в файле — данные."
+                    className="mt-1 h-9 rounded-md border border-brand-200 px-3 text-sm font-mono w-56"
+                  />
+                  <p className="mt-1 text-xs text-brand-700/70 max-w-md">
+                    С каких строк (с 0) собрать шапку. Один уровень — <code>0</code>; несколько — <code>0,1,2</code>. Ниже в файле — данные.
+                  </p>
+                </div>
                 <div className="flex gap-2 flex-wrap">
                   {roleCountsForSheet.map(([role, count]) => (
                     <Badge key={role} tone="info">
@@ -342,6 +413,13 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
                     : `Показано колонок: ${allColumns.length}`}
                 </div>
               </div>
+
+              {headerSuggestionQuery.data && (
+                <HeaderRowsHint
+                  data={headerSuggestionQuery.data}
+                  onApply={applySuggestedHeaderRows}
+                />
+              )}
 
               {stale.length > 0 && (
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
@@ -479,8 +557,140 @@ export const MappingEditor: React.FC<Props> = ({ sourceId }) => {
               </div>
             </div>
           )}
-        </Section>
+        </SheetSectionWrapper>
       )}
     </div>
+  );
+};
+
+const HeaderRowsHint: React.FC<{
+  data: HeaderRowsSuggestionResponse;
+  onApply: (rows: number[]) => void;
+}> = ({ data, onApply }) => {
+  const suggested = data.suggested_header_rows;
+  const current = data.current_header_rows;
+  const matches = data.matches_current;
+  const previewNames = data.preview.map((p) => p.name);
+  const unnamedShare = previewNames.length
+    ? previewNames.filter((n) => n.startsWith("Unnamed")).length /
+      previewNames.length
+    : 0;
+
+  if (matches) {
+    return (
+      <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900">
+        <div className="font-medium">
+          Многострочная шапка: строки [{suggested.join(", ")}] (с 0) совпадают
+          с эвристикой.
+        </div>
+        {unnamedShare >= 0.3 && (
+          <div className="mt-1 text-xs text-emerald-900/80">
+            При этом {Math.round(unnamedShare * 100)}% flatten-имён начинаются с
+            <code className="mx-1">Unnamed</code> — возможно, у листа сложная
+            многоуровневая шапка. Проверьте превью ниже.
+          </div>
+        )}
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-emerald-900/80">
+            Превью flatten-имён ({previewNames.length})
+          </summary>
+          <ul className="mt-1 list-disc ml-5 text-xs text-emerald-900/80 space-y-0.5">
+            {previewNames.slice(0, 10).map((name, idx) => (
+              <li key={idx} className="font-mono break-all">
+                {name}
+              </li>
+            ))}
+            {previewNames.length > 10 && (
+              <li className="text-emerald-900/60">
+                …и ещё {previewNames.length - 10}
+              </li>
+            )}
+          </ul>
+        </details>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-medium">
+          Подсказка по шапке: рекомендованные header_rows —{" "}
+          <code className="font-mono">[{suggested.join(", ")}]</code>
+          {current && current.length > 0 && (
+            <>
+              {" "}(сейчас{" "}
+              <code className="font-mono">[{current.join(", ")}]</code>)
+            </>
+          )}
+          .
+        </span>
+        <Button
+          variant="secondary"
+          onClick={() => onApply(suggested)}
+          className="ml-auto"
+        >
+          Применить рекомендацию
+        </Button>
+      </div>
+      <div className="text-xs text-amber-900/80">
+        Эвристика ищет верхние строки с преобладанием текстовых значений и
+        переменным числом непустых ячеек (типичный признак merged-шапки).
+        Рекомендация не пишет в файл — только меняет поле header_rows; чтобы
+        зафиксировать, нажмите «Сохранить».
+      </div>
+      <details>
+        <summary className="cursor-pointer text-xs text-amber-900/80">
+          Превью flatten-имён при header_rows = [{suggested.join(", ")}]
+        </summary>
+        <ul className="mt-1 list-disc ml-5 text-xs text-amber-900/80 space-y-0.5">
+          {previewNames.slice(0, 12).map((name, idx) => (
+            <li key={idx} className="font-mono break-all">
+              {name}
+            </li>
+          ))}
+          {previewNames.length > 12 && (
+            <li className="text-amber-900/60">
+              …и ещё {previewNames.length - 12}
+            </li>
+          )}
+        </ul>
+      </details>
+    </div>
+  );
+};
+
+const SheetSectionWrapper: React.FC<{
+  hideSheetTabs: boolean;
+  sheetKeys: string[];
+  activeSheet: string | null;
+  setActiveSheet: (s: string | null) => void;
+  children: React.ReactNode;
+}> = ({ hideSheetTabs, sheetKeys, activeSheet, setActiveSheet, children }) => {
+  if (hideSheetTabs) {
+    return <div className="space-y-4">{children}</div>;
+  }
+  return (
+    <Section
+      title="Листы"
+      description="Выберите лист, чтобы отредактировать его колонки и строки заголовка."
+    >
+      <div className="flex flex-wrap gap-2 mb-4">
+        {sheetKeys.map((name) => (
+          <button
+            key={name}
+            onClick={() => setActiveSheet(name)}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium border ${
+              name === activeSheet
+                ? "bg-brand-100 text-brand-900 border-brand-300"
+                : "bg-white text-brand-800 border-brand-200 hover:bg-brand-50"
+            }`}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+      {children}
+    </Section>
   );
 };

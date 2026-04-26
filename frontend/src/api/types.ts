@@ -129,6 +129,7 @@ export interface BaselineReport {
 
   time_statistics: Record<string, TimeStats>;
   episodes_per_sheet: Record<string, number>;
+  empty_data_rows_per_sheet: Record<string, number>;
   notes: string[];
 }
 
@@ -265,6 +266,30 @@ export interface CellEdit {
   row: number;
   col: number;
   value: GridCellValue;
+}
+
+export interface AthleteForwardFillSuggestion {
+  row: number;
+  col: number;
+  proposed: string;
+  source_row: number;
+  message_ru: string;
+}
+
+export interface HeaderRowsSuggestionResponse {
+  sheet: string;
+  suggested_header_rows: number[];
+  current_header_rows: number[] | null;
+  matches_current: boolean;
+  preview: { index: number; name: string; levels: string[] }[];
+  raw_preview: unknown[][];
+}
+
+export interface AthleteForwardFillResponse {
+  suggestions: AthleteForwardFillSuggestion[];
+  athlete_column: string | null;
+  athlete_columns: string[];
+  warning: string | null;
 }
 
 export interface ApiError {
