@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+
+import openpyxl
 from fastapi.testclient import TestClient
 
 
@@ -206,6 +209,68 @@ def test_athlete_forward_fill_suggestions_blocked_after_finalize(
 
     resp = client.get(
         f"/api/sources/{sid}/sheets/48/suggestions/athlete-forward-fill"
+    )
+    assert resp.status_code == 400
+
+
+def _merged_header_xlsx_bytes() -> bytes:
+    """Лист с двухстрочной шапкой и merge A1:B1 в верхней строке."""
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "48"
+    ws["A1"] = "Спортсмен"
+    ws["C1"] = "Эпизод"
+    ws.merge_cells("A1:B1")
+    ws["A2"] = "ФИО"
+    ws["B2"] = "Команда"
+    ws["C2"] = "№"
+    ws["A3"] = "Иванов"
+    ws["B3"] = "RUS"
+    ws["C3"] = 1
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_header_merge_fill_suggestions_endpoint(
+    client: TestClient, register_verified
+) -> None:
+    """Endpoint должен предложить материализацию slave-ячейки merged-шапки."""
+
+    sid = _upload(
+        client,
+        register_verified,
+        "header-merge@example.com",
+        _merged_header_xlsx_bytes(),
+    )
+
+    resp = client.get(
+        f"/api/sources/{sid}/sheets/48/suggestions/header-merge-fill",
+        params={"header_rows": "0,1"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["sheet"] == "48"
+    assert body["header_rows"] == [0, 1]
+    assert body["warning"] is None
+    coords = [(s["row"], s["col"], s["proposed"]) for s in body["suggestions"]]
+    assert coords == [(1, 2, "Спортсмен")]
+
+
+def test_header_merge_fill_suggestions_blocked_after_finalize(
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
+) -> None:
+    sid = _upload(
+        client, register_verified, "header-merge-final@example.com", multirow_xlsx_bytes
+    )
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
+
+    resp = client.get(
+        f"/api/sources/{sid}/sheets/48/suggestions/header-merge-fill",
+        params={"header_rows": "0,1,2"},
     )
     assert resp.status_code == 400
 

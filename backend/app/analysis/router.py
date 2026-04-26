@@ -621,6 +621,58 @@ def get_athlete_forward_fill_suggestions(
         ) from exc
 
 
+@router.get("/sheets/{sheet_name}/suggestions/header-merge-fill")
+def get_header_merge_fill_suggestions(
+    source_id: int,
+    sheet_name: str,
+    header_rows: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Предложить материализовать merged-ячейки шапки.
+
+    Источник правды для ``header_rows``: query-параметр > saved mapping.
+    Если ни там, ни там нет — возвращаем предупреждение и пустой список,
+    чтобы UI мог сначала применить header-rows-suggestion.
+    """
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    _ensure_draft(source)
+    parsed_rows = _parse_header_rows(header_rows)
+
+    if parsed_rows is None and source.mapping_config:
+        try:
+            cfg = json.loads(source.mapping_config)
+        except json.JSONDecodeError:
+            cfg = None
+        if isinstance(cfg, dict):
+            sheet_cfg = (cfg.get("sheets") or {}).get(sheet_name) or {}
+            stored = sheet_cfg.get("header_rows")
+            if isinstance(stored, list):
+                parsed_rows = [int(x) for x in stored]
+
+    try:
+        return analysis_service.header_merge_fill_for_sheet(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            header_rows=parsed_rows,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Не удалось получить предложения по merged-шапке для "
+                f"'{sheet_name}': {exc}"
+            ),
+        ) from exc
+
+
 @router.post("/sheets/{sheet_name}/remove-empty-rows")
 def remove_empty_rows(
     source_id: int,

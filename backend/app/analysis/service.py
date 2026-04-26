@@ -265,6 +265,46 @@ def athlete_forward_fill_suggestions(
     }
 
 
+def header_merge_fill_for_sheet(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    header_rows: list[int] | None,
+) -> dict[str, Any]:
+    """Получить предложения «материализовать merged-ячейки шапки».
+
+    Тонкая обёртка вокруг :func:`hpc_algo.suggestions.header_merge_fill_suggestions`.
+    Если ``header_rows`` не передан, вернётся предупреждение и пустой список —
+    подбор header_rows здесь не делаем (за это отвечает отдельный endpoint).
+    """
+
+    from hpc_algo.suggestions import header_merge_fill_suggestions
+
+    absolute: Path = storage_resolve(source.stored_path)
+    report = header_merge_fill_suggestions(
+        absolute,
+        sheet_name,
+        header_rows=header_rows or [],
+    )
+    return {
+        "sheet": sheet_name,
+        "header_rows": list(report.header_rows),
+        "suggestions": [
+            {
+                "row": s.row,
+                "col": s.col,
+                "proposed": s.proposed,
+                "source_row": s.source_row,
+                "source_col": s.source_col,
+                "message_ru": s.message_ru,
+            }
+            for s in report.suggestions
+        ],
+        "warning": report.warning,
+    }
+
+
 def suggest_sheet_header_rows(
     source: Source,
     storage_resolve,
