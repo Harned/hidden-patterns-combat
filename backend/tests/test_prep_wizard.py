@@ -161,3 +161,88 @@ def test_remove_empty_rows_endpoint(
     )
     assert resp.status_code == 200
     assert resp.json()["deleted"] == 1
+
+
+def test_athlete_forward_fill_suggestions_endpoint(
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
+) -> None:
+    """Очищаем ФИО в одной строке и ожидаем единственное предложение."""
+
+    sid = _upload(
+        client, register_verified, "athlete-suggest@example.com", multirow_xlsx_bytes
+    )
+
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+
+    client.put(
+        f"/api/sources/{sid}/sheets/48/grid",
+        json={"edits": [{"row": 5, "col": 1, "value": None}]},
+    )
+
+    resp = client.get(
+        f"/api/sources/{sid}/sheets/48/suggestions/athlete-forward-fill"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["athlete_column"]
+    assert len(body["suggestions"]) == 1
+    suggestion = body["suggestions"][0]
+    assert suggestion["row"] == 5
+    assert suggestion["col"] == 1
+    assert suggestion["proposed"] == "Иванов"
+    assert suggestion["source_row"] == 4
+
+
+def test_athlete_forward_fill_suggestions_blocked_after_finalize(
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
+) -> None:
+    sid = _upload(
+        client, register_verified, "athlete-final@example.com", multirow_xlsx_bytes
+    )
+    pre = client.post(f"/api/sources/{sid}/preflight").json()["mapping"]
+    client.put(f"/api/sources/{sid}/mapping", json=pre)
+    client.post(f"/api/sources/{sid}/finalize")
+
+    resp = client.get(
+        f"/api/sources/{sid}/sheets/48/suggestions/athlete-forward-fill"
+    )
+    assert resp.status_code == 400
+
+
+def test_empty_rows_count_matches_remove(
+    client: TestClient, register_verified, multirow_xlsx_bytes: bytes
+) -> None:
+    """Счётчик пустых строк должен совпадать с тем, что фактически удаляется."""
+
+    sid = _upload(client, register_verified, "count@example.com", multirow_xlsx_bytes)
+
+    # Сделаем одну пустую data-строку, как в test_remove_empty_rows_endpoint.
+    client.put(
+        f"/api/sources/{sid}/sheets/48/grid",
+        json={
+            "edits": [
+                {"row": 5, "col": c, "value": None} for c in range(1, 11)
+            ]
+        },
+    )
+
+    pre = client.get(
+        f"/api/sources/{sid}/sheets/48/empty-rows-count",
+        params={"header_rows": "0,1,2"},
+    )
+    assert pre.status_code == 200
+    expected = pre.json()["count"]
+    assert expected == 1
+
+    deleted = client.post(
+        f"/api/sources/{sid}/sheets/48/remove-empty-rows",
+        json={"header_rows": [0, 1, 2]},
+    ).json()["deleted"]
+    assert deleted == expected
+
+    after = client.get(
+        f"/api/sources/{sid}/sheets/48/empty-rows-count",
+        params={"header_rows": "0,1,2"},
+    ).json()["count"]
+    assert after == 0

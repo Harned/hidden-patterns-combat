@@ -210,6 +210,107 @@ def remove_empty_rows_in_sheet(
     return remove_empty_rows(absolute, sheet_name, header_rows=header_rows)
 
 
+def count_empty_rows_in_sheet(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    header_rows: list[int] | None,
+) -> int:
+    from hpc_algo.workbook_editor import count_empty_rows
+
+    absolute: Path = storage_resolve(source.stored_path)
+    return count_empty_rows(absolute, sheet_name, header_rows=header_rows)
+
+
+def athlete_forward_fill_suggestions(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    header_rows: list[int] | None,
+    athlete_columns: list[str],
+    episode_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    """Получить предложения forward-fill по колонке ФИО для одного листа.
+
+    Тонкая обёртка вокруг :func:`hpc_algo.suggestions.forward_fill_athlete_suggestions`.
+    Возвращает уже сериализованные значения, готовые для JSON-ответа.
+    """
+
+    from hpc_algo.suggestions import forward_fill_athlete_suggestions
+
+    absolute: Path = storage_resolve(source.stored_path)
+    report = forward_fill_athlete_suggestions(
+        absolute,
+        sheet_name,
+        header_rows=header_rows or [0],
+        athlete_columns=athlete_columns,
+        episode_columns=episode_columns,
+    )
+    return {
+        "suggestions": [
+            {
+                "row": s.row,
+                "col": s.col,
+                "proposed": s.proposed,
+                "source_row": s.source_row,
+                "message_ru": s.message_ru,
+            }
+            for s in report.suggestions
+        ],
+        "athlete_column": report.athlete_column,
+        "athlete_columns": list(report.athlete_columns_seen),
+        "warning": report.warning,
+    }
+
+
+def suggest_sheet_header_rows(
+    source: Source,
+    storage_resolve,
+    *,
+    sheet_name: str,
+    current_header_rows: list[int] | None,
+) -> dict[str, Any]:
+    """Подсказать ``header_rows`` для листа + flatten-превью имён."""
+
+    from hpc_algo.mapping import suggest_header_rows as _suggest
+
+    absolute: Path = storage_resolve(source.stored_path)
+    suggestion = _suggest(
+        absolute,
+        sheet_name,
+        current_header_rows=current_header_rows,
+    )
+
+    def _safe(value: Any) -> Any:
+        import math as _math
+
+        if value is None:
+            return None
+        if isinstance(value, float) and (_math.isnan(value) or _math.isinf(value)):
+            return None
+        if isinstance(value, (str, int, bool, float)):
+            return value
+        try:
+            return value.isoformat()  # pd.Timestamp / datetime
+        except Exception:  # noqa: BLE001
+            return str(value)
+
+    return {
+        "sheet": sheet_name,
+        "suggested_header_rows": list(suggestion.suggested),
+        "current_header_rows": (
+            list(suggestion.current) if suggestion.current is not None else None
+        ),
+        "matches_current": suggestion.matches_current,
+        "preview": suggestion.preview,
+        "raw_preview": [
+            [_safe(v) for v in row] for row in suggestion.raw_preview
+        ],
+    }
+
+
 def describe_sheet_columns(
     source: Source,
     storage_resolve,

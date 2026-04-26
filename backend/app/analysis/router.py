@@ -340,6 +340,57 @@ def list_sheet_columns(
         ) from exc
 
 
+@router.get("/sheets/{sheet_name}/suggestions/header-rows")
+def get_header_rows_suggestion(
+    source_id: int,
+    sheet_name: str,
+    header_rows: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Подсказка ``header_rows`` для листа + превью flatten-имён.
+
+    MVP «не пишет в файл»: возвращает только рекомендацию, а применять её
+    через PUT mapping будет пользователь. Источник правды по текущим
+    ``header_rows`` — переданный query-параметр; если он не задан, берём
+    значение из сохранённого ``mapping_config`` (если есть).
+    """
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    parsed_rows = _parse_header_rows(header_rows)
+
+    if parsed_rows is None and source.mapping_config:
+        try:
+            cfg = json.loads(source.mapping_config)
+        except json.JSONDecodeError:
+            cfg = None
+        if isinstance(cfg, dict):
+            sheet_cfg = (cfg.get("sheets") or {}).get(sheet_name) or {}
+            stored = sheet_cfg.get("header_rows")
+            if isinstance(stored, list):
+                parsed_rows = [int(x) for x in stored]
+
+    try:
+        return analysis_service.suggest_sheet_header_rows(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            current_header_rows=parsed_rows,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Не удалось подсказать header_rows для '{sheet_name}': {exc}"
+            ),
+        ) from exc
+
+
 @router.get("/sheets/{sheet_name}/preview")
 def get_sheet_preview(
     source_id: int,
@@ -465,6 +516,109 @@ class RemoveEmptyRowsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     header_rows: list[int] | None = None
+
+
+@router.get("/sheets/{sheet_name}/empty-rows-count")
+def count_empty_rows(
+    source_id: int,
+    sheet_name: str,
+    header_rows: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Сколько полностью пустых data-строк сейчас в листе.
+
+    Используется на шаге редактирования, чтобы заранее предложить
+    пользователю удалить мусор без ручного просмотра всей таблицы.
+    """
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    parsed_rows = _parse_header_rows(header_rows)
+    try:
+        count = analysis_service.count_empty_rows_in_sheet(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            header_rows=parsed_rows,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Не удалось посчитать пустые строки на листе '{sheet_name}': {exc}"
+            ),
+        ) from exc
+
+    return {"count": count}
+
+
+@router.get("/sheets/{sheet_name}/suggestions/athlete-forward-fill")
+def get_athlete_forward_fill_suggestions(
+    source_id: int,
+    sheet_name: str,
+    header_rows: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Предложить заполнить пустые ячейки в колонке ФИО значением «выше».
+
+    Источник правды по тому, какие колонки относятся к роли ``athlete``,
+    — saved mapping (`source.mapping_config`). Без сохранённого mapping
+    эндпоинт возвращает пустой список и подсказку для пользователя.
+    """
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    _ensure_draft(source)
+    parsed_rows = _parse_header_rows(header_rows)
+
+    athlete_columns: list[str] = []
+    episode_columns: list[str] = []
+    if source.mapping_config:
+        try:
+            cfg = json.loads(source.mapping_config)
+        except json.JSONDecodeError:
+            cfg = None
+        if isinstance(cfg, dict):
+            sheets = cfg.get("sheets") or {}
+            sheet_cfg = sheets.get(sheet_name) or {}
+            if parsed_rows is None:
+                stored_rows = sheet_cfg.get("header_rows")
+                if isinstance(stored_rows, list):
+                    parsed_rows = [int(x) for x in stored_rows]
+            roles = sheet_cfg.get("roles") or {}
+            cols = roles.get("athlete") or []
+            if isinstance(cols, list):
+                athlete_columns = [str(c) for c in cols]
+            eps = roles.get("episode") or []
+            if isinstance(eps, list):
+                episode_columns = [str(c) for c in eps]
+
+    try:
+        return analysis_service.athlete_forward_fill_suggestions(
+            source,
+            storage.resolve,
+            sheet_name=sheet_name,
+            header_rows=parsed_rows,
+            athlete_columns=athlete_columns,
+            episode_columns=episode_columns or None,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Не удалось получить предложения по ФИО для '{sheet_name}': {exc}"
+            ),
+        ) from exc
 
 
 @router.post("/sheets/{sheet_name}/remove-empty-rows")
