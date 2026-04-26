@@ -31,9 +31,12 @@ class AnalysisStatus(str, Enum):
       кандидатам ЗАП; полноценная HMM невозможна.
     * ``needs_column_mapping`` — структура Excel не позволяет надёжно
       определить группы, требуется ручное сопоставление колонок.
-    * ``hmm_ready`` — зарезервировано; выставляется только после
-      подтверждённого column mapping и валидации качества. В MVP
-      никогда не возвращается.
+    * ``hmm_ready`` — HMM обучена, прошла все guard-ы и sanity-check'и.
+    * ``hmm_low_signal`` — HMM обучена, но ЗАП-сигнал в данных
+      разрежённый: эмиссии состояний почти идентичны, и часть
+      Viterbi-траектории фактически отражает приор переходов, а не
+      наблюдения. Результат публикуется, но в UI идут явные
+      предупреждения о низкой надёжности интерпретации.
     * ``failed`` — анализ не удался (см. ``errors``).
     """
 
@@ -41,6 +44,7 @@ class AnalysisStatus(str, Enum):
     BASELINE_ONLY = "baseline_only"
     NEEDS_COLUMN_MAPPING = "needs_column_mapping"
     HMM_READY = "hmm_ready"
+    HMM_LOW_SIGNAL = "hmm_low_signal"
     FAILED = "failed"
 
 
@@ -338,8 +342,9 @@ class AnalysisResult(BaseModel):
     hmm: HMMResult | None = Field(
         default=None,
         description=(
-            "Результат HMM-ветки (TASK_SPEC_004). Заполняется ТОЛЬКО при"
-            " status == hmm_ready; при любом другом статусе остаётся None."
+            "Результат HMM-ветки (TASK_SPEC_004). Заполняется при"
+            " status == hmm_ready или hmm_low_signal; при любом другом"
+            " статусе остаётся None."
         ),
     )
 
@@ -432,21 +437,88 @@ class HMMParameters(BaseModel):
 
 
 class HMMTrajectory(BaseModel):
-    """Viterbi-путь для одного эпизода (последовательности)."""
+    """Viterbi-путь для одного эпизода (последовательности).
+
+    Дополнительно несёт честные индикаторы качества интерпретации:
+
+    * ``has_zap`` — был ли в серии хотя бы один не-noop токен. Если
+      False, траектория восстановлена по приору переходов, и в UI
+      такие эпизоды помечаются явно;
+    * ``state_posterior`` — γ_t (T × K), per-step posterior из
+      forward-backward; ``None`` означает, что posterior не считался
+      (например, для bernoulli-ветки на этапах, где ещё не реализован
+      вывод γ);
+    * ``confidence`` — средняя по шагам максимальная вероятность
+      состояния (mean_t max_k γ_t,k); если posterior не доступен,
+      также ``None``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     sheet: str
     episode_index: int
+    episode_key: str = Field(
+        default="",
+        description=(
+            "Композитный ключ серии (athlete + bout): нужен для UI и"
+            " join'ов с baseline."
+        ),
+    )
     length: int
     observation_tokens: list[str]
     state_path: list[str]
     log_likelihood: float
+    has_zap: bool = Field(
+        default=True,
+        description=(
+            "Есть ли в наблюдениях хотя бы один не-noop токен. False -"
+            " серия использовалась только для отчёта; в обучении HMM"
+            " она не участвовала."
+        ),
+    )
+    state_posterior: list[list[float]] | None = Field(
+        default=None,
+        description=(
+            "Per-step posterior γ_t размера T × K (rows нормированы"
+            " в 1). None, если backend не считает forward-backward."
+        ),
+    )
+    confidence: float | None = Field(
+        default=None,
+        description=(
+            "Средняя уверенность Viterbi-пути: mean_t(max_k γ_t,k)."
+            " None, если posterior отсутствует."
+        ),
+    )
+
+
+class VariantAttempt(BaseModel):
+    """Попытка обучить вариант HMM (basic_3state / detailed_7state).
+
+    Используется для прозрачности выбора в UI: пользователь видит, что
+    было опробовано, что отбраковано и почему.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    variant: str = Field(..., description="basic_3state или detailed_7state.")
+    status: str = Field(
+        ...,
+        description=(
+            "Один из: applied | rejected_by_guard | rejected_by_sanity |"
+            " rejected_by_bic | fit_failed."
+        ),
+    )
+    reason: str = ""
+    bic: float | None = None
+    log_likelihood: float | None = None
+    n_states_used: int | None = None
+    n_states: int | None = None
 
 
 class HMMResult(BaseModel):
-    """Итог HMM-ветки. Попадает в :attr:`AnalysisResult.hmm` только при
-    ``status == hmm_ready``."""
+    """Итог HMM-ветки. Попадает в :attr:`AnalysisResult.hmm` при
+    ``status == hmm_ready`` или ``status == hmm_low_signal``."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -464,3 +536,33 @@ class HMMResult(BaseModel):
         ),
     )
     interpretation: str = ""
+    average_confidence: float | None = Field(
+        default=None,
+        description=(
+            "Средняя по эпизодам confidence Viterbi-пути."
+            " None, если posterior не считался."
+        ),
+    )
+    training_excluded_episodes: int = Field(
+        default=0,
+        description=(
+            "Сколько серий не использовалось при обучении (например, серий"
+            " только из noop-токенов). Они попадают в trajectories с"
+            " has_zap=False, но в fit не участвовали."
+        ),
+    )
+    no_zap_trajectories: int = Field(
+        default=0,
+        description=(
+            "Число траекторий без ни одного не-noop наблюдения. Полезно"
+            " для UI, чтобы выделить блок «эпизоды без ZAP»."
+        ),
+    )
+    tried_variants: list[VariantAttempt] = Field(
+        default_factory=list,
+        description=(
+            "Лог попыток вариантов HMM: что обучали, что отбраковали"
+            " и по какой причине. Применённый вариант помечен"
+            " status=='applied'."
+        ),
+    )

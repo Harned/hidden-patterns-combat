@@ -40,6 +40,7 @@ from hpc_algo.schema import (
     HMMParameters,
     HMMResult,
     HMMTrajectory,
+    VariantAttempt,
     WarningItem,
     WarningSeverity,
 )
@@ -76,6 +77,12 @@ DEFAULT_MIN_EPISODES = 30
 DEFAULT_MIN_ZAP_EVENTS = 20
 DEFAULT_MIN_ALPHABET = 2
 DEFAULT_MIN_SEQUENCE_MEDIAN = 2
+# Порог разрежённости ЗАП-сигнала: при доле эпизодов с зафиксированным
+# ЗАП ниже него HMM формально может обучиться, но эмиссии станут почти
+# идентичными «_noop_», а Viterbi-траектории — следствием приора, а не
+# наблюдений. Поэтому мы выставляем явный warning и понижаем статус до
+# `hmm_low_signal`, не блокируя обучение.
+DEFAULT_LOW_ZAP_DENSITY_THRESHOLD = 0.05
 DEFAULT_N_ITER = 50
 DEFAULT_SEED = 42
 
@@ -97,6 +104,7 @@ class HMMRunConfig:
     min_zap_events: int = DEFAULT_MIN_ZAP_EVENTS
     min_alphabet: int = DEFAULT_MIN_ALPHABET
     min_sequence_median: int = DEFAULT_MIN_SEQUENCE_MEDIAN
+    low_zap_density_threshold: float = DEFAULT_LOW_ZAP_DENSITY_THRESHOLD
     min_episodes_detailed: int = DEFAULT_DETAILED_MIN_EPISODES
     min_zap_events_detailed: int = DEFAULT_DETAILED_MIN_ZAP_EVENTS
     min_alphabet_detailed: int = DEFAULT_DETAILED_MIN_ALPHABET
@@ -359,7 +367,20 @@ def evaluate_guards(
     alphabet: list[str],
     run_config: HMMRunConfig,
 ) -> list[WarningItem]:
-    """Вернуть список сработавших guard'ов (пустой => HMM разрешена)."""
+    """Вернуть список guard-предупреждений.
+
+    Возвращаются два класса предупреждений:
+
+    * Жёсткие — с кодом ``hmm.guards_failed``: пользовательский api
+      обязан НЕ запускать обучение HMM, если такой есть в списке.
+    * Мягкие — например ``hmm.low_zap_density``: HMM можно запустить,
+      но статус в итоге понижается до ``hmm_low_signal`` и в UI
+      добавляются предупреждения о низкой надёжности интерпретации.
+
+    Решение «запускать ли HMM» принимает вызывающая сторона: HMM
+    стартует только если среди возвращённых элементов нет ни одного с
+    кодом ``hmm.guards_failed``.
+    """
 
     failed: list[WarningItem] = []
 
@@ -491,6 +512,40 @@ def evaluate_guards(
                         "actual": int(median_len),
                         "required": run_config.min_sequence_median,
                         "sequences": len(sequences),
+                    },
+                )
+            )
+
+        # Мягкий guard: разрежённость ЗАП-сигнала. Считаем долю шагов с
+        # не-noop наблюдением — она же ≈ доля эпизодов, в которых
+        # зафиксирован ЗАП (один шаг = один эпизод). Если доля низкая,
+        # HMM формально обучится, но эмиссии у разных состояний станут
+        # почти идентичными «noop», а Viterbi-траектория — следствием
+        # приора. Сообщаем явно, статус будет hmm_low_signal.
+        total_steps = sum(len(seq.tokens) for seq in sequences)
+        non_noop_steps = sum(
+            1 for seq in sequences for tok in seq.tokens if tok != NOOP_TOKEN
+        )
+        density = non_noop_steps / total_steps if total_steps else 0.0
+        if total_steps and density < run_config.low_zap_density_threshold:
+            failed.append(
+                WarningItem(
+                    code="hmm.low_zap_density",
+                    message=(
+                        "HMM запущена, но ЗАП-сигнал разрежённый: "
+                        f"наблюдения с ЗАП есть только в {non_noop_steps} из "
+                        f"{total_steps} шагов ({density * 100:.1f}%). "
+                        "Эмиссии состояний будут близкими, а скрытая траектория "
+                        "в большой части эпизодов определяется приором, а не "
+                        "наблюдениями. Статус анализа понижен до hmm_low_signal."
+                    ),
+                    severity=WarningSeverity.WARNING,
+                    context={
+                        "guard": "low_zap_density",
+                        "non_noop_steps": int(non_noop_steps),
+                        "total_steps": int(total_steps),
+                        "density": float(density),
+                        "threshold": float(run_config.low_zap_density_threshold),
                     },
                 )
             )
@@ -645,6 +700,14 @@ def _fit_variant(
 ) -> tuple[HMMResult, dict[str, Any]] | None:
     """Обучить HMM для указанного ``variant`` и вернуть (result, sanity).
 
+    Из обучающей выборки исключаются серии, состоящие только из
+    :data:`NOOP_TOKEN` — они не несут информации об эмиссиях/переходах
+    и в больших количествах смещают модель в стартовое состояние.
+    Такие серии всё равно попадают в ``trajectories`` (с
+    ``has_zap=False``): пользователь видит сводку «N эпизодов без ZAP»,
+    но отдельный визуальный сигнал, что эта траектория восстановлена
+    приором, делает интерпретацию честной.
+
     Возвращает ``None`` при проблемах с зависимостью или обучением.
     """
 
@@ -659,12 +722,18 @@ def _fit_variant(
     vocab = {tok: i for i, tok in enumerate(alphabet)}
     n_obs = len(alphabet)
 
+    train_indices: list[int] = []  # позиции в `sequences`, которые ушли в fit
     X_list: list[np.ndarray] = []
     lengths: list[int] = []
-    for seq in sequences:
-        indices = _tokens_to_indices(seq.tokens, vocab)
-        if not indices:
+    for i, seq in enumerate(sequences):
+        if not seq.tokens:
             continue
+        if all(tok == NOOP_TOKEN for tok in seq.tokens):
+            # Не учим HMM на «тишине»: эмиссии всех состояний к ней
+            # сходятся одинаково и инициализация диктует A.
+            continue
+        indices = _tokens_to_indices(seq.tokens, vocab)
+        train_indices.append(i)
         X_list.append(np.array(indices).reshape(-1, 1))
         lengths.append(len(indices))
 
@@ -692,26 +761,63 @@ def _fit_variant(
     except Exception:  # noqa: BLE001
         return None
 
+    # Декодируем ВСЕ серии (включая all-noop), чтобы пользователь видел
+    # сводку. Для all-noop серий записываем has_zap=False и помечаем
+    # отдельный канал. Posterior (γ) считаем через predict_proba —
+    # это forward-backward в `hmmlearn`.
     trajectories: list[HMMTrajectory] = []
-    for seq, length in zip(sequences, lengths, strict=True):
-        indices = np.array(_tokens_to_indices(seq.tokens, vocab)).reshape(-1, 1)
-        if indices.size == 0:
+    confidences: list[float] = []
+    excluded_count = 0
+    for seq in sequences:
+        if not seq.tokens:
             continue
-        log_prob, states = model.decode(indices, algorithm="viterbi")
+        indices_arr = np.array(_tokens_to_indices(seq.tokens, vocab)).reshape(-1, 1)
+        log_prob, states = model.decode(indices_arr, algorithm="viterbi")
+        posterior_list: list[list[float]] | None
+        confidence: float | None
+        try:
+            posterior = model.predict_proba(indices_arr)
+            if not np.all(np.isfinite(posterior)):
+                # На all-noop сериях, отсутствующих в обучающей выборке,
+                # forward-backward в `hmmlearn` может вернуть NaN/inf.
+                # В таких случаях честнее показать «нет posterior», чем
+                # подмешивать мусор в confidence-агрегаты.
+                posterior_list = None
+                confidence = None
+            else:
+                posterior_list = [[float(v) for v in row] for row in posterior]
+                confidence = float(np.mean(posterior.max(axis=1)))
+        except Exception:  # noqa: BLE001
+            posterior_list = None
+            confidence = None
+        if confidence is not None:
+            confidences.append(confidence)
+        has_zap = any(tok != NOOP_TOKEN for tok in seq.tokens)
+        if not has_zap:
+            excluded_count += 1
         trajectories.append(
             HMMTrajectory(
                 sheet=seq.sheet,
                 episode_index=seq.episode_index,
-                length=length,
+                episode_key=seq.episode_key,
+                length=len(seq.tokens),
                 observation_tokens=seq.tokens,
                 state_path=[state_labels[s] for s in states],
                 log_likelihood=float(log_prob),
+                has_zap=has_zap,
+                state_posterior=posterior_list,
+                confidence=confidence,
             )
         )
 
+    # Распределение времени по состояниям считаем по эпизодам, в
+    # которых было реальное наблюдение — иначе огромный массив
+    # all-noop серий перекосит метрику в сторону приора.
     total_state_steps = np.zeros(n_states, dtype=float)
     states_used: set[str] = set()
     for tr in trajectories:
+        if not tr.has_zap:
+            continue
         for s in tr.state_path:
             total_state_steps[state_labels.index(s)] += 1
             states_used.add(s)
@@ -720,6 +826,9 @@ def _fit_variant(
         state_labels[i]: float(round(total_state_steps[i] / denom, 6))
         for i in range(n_states)
     }
+    avg_confidence = (
+        float(np.mean(confidences)) if confidences else None
+    )
 
     A = np.array(model.transmat_)
     diag_mass = float(np.diag(A).sum())
@@ -771,7 +880,9 @@ def _fit_variant(
         "enough_states_used": bool(enough_states_used),
         "states_used": len(states_used),
         "min_states_used_required": int(min_states_used),
-        "episodes_used": len(trajectories),
+        "episodes_used": len(train_indices),
+        "episodes_total": len(trajectories),
+        "episodes_excluded_all_noop": int(excluded_count),
         "n_samples": n_samples,
         "bic": bic,
     }
@@ -782,6 +893,9 @@ def _fit_variant(
         state_distribution=state_distribution,
         sanity=sanity,
         interpretation=interpretation,
+        average_confidence=avg_confidence,
+        training_excluded_episodes=int(excluded_count),
+        no_zap_trajectories=int(excluded_count),
     )
     return result, sanity
 
@@ -792,7 +906,13 @@ def _fit_bernoulli_variant(
     run_config: HMMRunConfig,
     variant: str,
 ) -> tuple[HMMResult, dict[str, Any]] | None:
-    """Обучить multivariate Bernoulli HMM и собрать :class:`HMMResult`."""
+    """Обучить multivariate Bernoulli HMM и собрать :class:`HMMResult`.
+
+    Серии, у которых все шаги — нулевые векторы (нет ни одного
+    активного канала ЗАП), исключаются из обучения, но остаются в
+    ``trajectories`` с ``has_zap=False``: декодируем их по приору и
+    помечаем для UI, чтобы не выдавать их за диагностику.
+    """
 
     entries, channels = build_bernoulli_sequences(frames, config)
     if not entries or not channels:
@@ -809,36 +929,59 @@ def _fit_bernoulli_variant(
         B=rng.uniform(0.1, 0.4, size=(n_states, n_channels)),
     )
 
-    sequences = [X for _, _, X in entries]
+    train_sequences: list[np.ndarray] = []
+    train_indices: list[int] = []
+    for i, (_sheet, _key, X) in enumerate(entries):
+        if X.size == 0 or not np.any(X > 0):
+            continue
+        train_sequences.append(X)
+        train_indices.append(i)
+
+    if not train_sequences:
+        return None
+
     fit = fit_bernoulli_hmm(
-        sequences, init, n_iter=run_config.n_iter, tol=1e-4
+        train_sequences, init, n_iter=run_config.n_iter, tol=1e-4
     )
 
     trajectories: list[HMMTrajectory] = []
     states_used: set[str] = set()
-    for (sheet_name, _ep_key, X), seq_index in zip(
-        entries, range(len(entries)), strict=True
-    ):
+    excluded_count = 0
+    for seq_index, (sheet_name, ep_key, X) in enumerate(entries):
         path, log_prob = decode_sequence(X, fit.params)
         path_labels = [state_labels[int(s)] for s in path]
-        states_used.update(path_labels)
+        has_zap = bool(np.any(X > 0))
+        if has_zap:
+            states_used.update(path_labels)
+        else:
+            excluded_count += 1
         obs_tokens = [
-            "+".join(channels[i] for i, v in enumerate(row) if v > 0) or "_noop_"
+            "+".join(channels[i] for i, v in enumerate(row) if v > 0) or NOOP_TOKEN
             for row in X
         ]
         trajectories.append(
             HMMTrajectory(
                 sheet=sheet_name,
                 episode_index=seq_index,
+                episode_key=ep_key,
                 length=X.shape[0],
                 observation_tokens=obs_tokens,
                 state_path=path_labels,
                 log_likelihood=float(log_prob),
+                has_zap=has_zap,
+                # Bernoulli-ветка пока без посткорректного γ (forward-
+                # backward есть, но не выгружен в API). Оставляем None,
+                # чтобы UI честно скрывал posterior-полосу.
+                state_posterior=None,
+                confidence=None,
             )
         )
 
+    # Время по состояниям — только по сериям с реальным сигналом.
     total_state_steps = np.zeros(n_states, dtype=float)
     for tr in trajectories:
+        if not tr.has_zap:
+            continue
         for s in tr.state_path:
             total_state_steps[state_labels.index(s)] += 1
     denom = total_state_steps.sum() or 1.0
@@ -894,7 +1037,9 @@ def _fit_bernoulli_variant(
         "enough_states_used": bool(enough_states_used),
         "states_used": len(states_used),
         "min_states_used_required": int(min_states_used),
-        "episodes_used": len(trajectories),
+        "episodes_used": len(train_indices),
+        "episodes_total": len(trajectories),
+        "episodes_excluded_all_noop": int(excluded_count),
         "n_samples": total_samples,
         "bic": bic,
     }
@@ -905,6 +1050,9 @@ def _fit_bernoulli_variant(
         state_distribution=state_distribution,
         sanity=sanity,
         interpretation=interpretation,
+        average_confidence=None,
+        training_excluded_episodes=int(excluded_count),
+        no_zap_trajectories=int(excluded_count),
     )
     return result, sanity
 
@@ -960,42 +1108,230 @@ def _detailed_data_ok(
     )
 
 
+def _attempt_bernoulli(
+    frames: dict[str, pd.DataFrame],
+    config: ColumnMappingConfig,
+    run_config: HMMRunConfig,
+    variant: str,
+) -> tuple[VariantAttempt, tuple[HMMResult, dict[str, Any]] | None]:
+    out = _fit_bernoulli_variant(frames, config, run_config, variant)
+    if out is None:
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="fit_failed",
+                reason="Bernoulli HMM не удалось обучить (нет последовательностей или ошибка EM).",
+            ),
+            None,
+        )
+    result, sanity = out
+    if not sanity.get("transition_dominance_ok"):
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="rejected_by_sanity",
+                reason="Sanity-check матрицы переходов не пройден (нет домината по диагонали/вперёд).",
+                bic=result.parameters.bic,
+                log_likelihood=result.parameters.log_likelihood,
+                n_states_used=int(sanity.get("states_used", 0)),
+                n_states=result.parameters.n_states,
+            ),
+            None,
+        )
+    if variant == VARIANT_DETAILED and not sanity.get("enough_states_used"):
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="rejected_by_sanity",
+                reason=(
+                    "Detailed-вариант использует слишком мало состояний "
+                    f"(нужно ≥ {sanity.get('min_states_used_required')}, "
+                    f"использовано {sanity.get('states_used')})."
+                ),
+                bic=result.parameters.bic,
+                log_likelihood=result.parameters.log_likelihood,
+                n_states_used=int(sanity.get("states_used", 0)),
+                n_states=result.parameters.n_states,
+            ),
+            None,
+        )
+    return (
+        VariantAttempt(
+            variant=variant,
+            status="passed",
+            bic=result.parameters.bic,
+            log_likelihood=result.parameters.log_likelihood,
+            n_states_used=int(sanity.get("states_used", 0)),
+            n_states=result.parameters.n_states,
+        ),
+        (result, sanity),
+    )
+
+
 def fit_hmm_bernoulli(
     frames: dict[str, pd.DataFrame],
     config: ColumnMappingConfig,
     run_config: HMMRunConfig,
 ) -> tuple[HMMResult, dict[str, Any]] | None:
-    """Попробовать Bernoulli-вариант (detailed > auto по BIC > basic)."""
+    """Попробовать Bernoulli-вариант (detailed > auto по BIC > basic).
+
+    Возвращает (result, sanity); внутри ``result.tried_variants``
+    лежит лог попыток с финальным ``applied`` маркером.
+    """
 
     mode = run_config.mode
     if mode == "off":
         return None
 
-    def try_bernoulli(variant: str):
-        out = _fit_bernoulli_variant(frames, config, run_config, variant)
+    attempts: list[VariantAttempt] = []
+
+    def finalize(
+        out: tuple[HMMResult, dict[str, Any]] | None,
+    ) -> tuple[HMMResult, dict[str, Any]] | None:
         if out is None:
             return None
         result, sanity = out
-        if not sanity.get("transition_dominance_ok"):
-            return None
-        if variant == VARIANT_DETAILED and not sanity.get("enough_states_used"):
-            return None
-        return result, sanity
+        applied_variant = result.parameters.variant
+        finalized: list[VariantAttempt] = []
+        for att in attempts:
+            if att.variant == applied_variant and att.status == "passed":
+                finalized.append(
+                    VariantAttempt(
+                        variant=att.variant,
+                        status="applied",
+                        reason=att.reason,
+                        bic=att.bic,
+                        log_likelihood=att.log_likelihood,
+                        n_states_used=att.n_states_used,
+                        n_states=att.n_states,
+                    )
+                )
+            else:
+                finalized.append(att)
+        result_with_log = result.model_copy(update={"tried_variants": finalized})
+        return result_with_log, sanity
 
     if mode == "basic":
-        return try_bernoulli(VARIANT_BASIC)
+        att, out = _attempt_bernoulli(frames, config, run_config, VARIANT_BASIC)
+        attempts.append(att)
+        return finalize(out)
     if mode == "detailed":
-        return try_bernoulli(VARIANT_DETAILED)
+        att, out = _attempt_bernoulli(frames, config, run_config, VARIANT_DETAILED)
+        attempts.append(att)
+        return finalize(out)
 
-    detailed = try_bernoulli(VARIANT_DETAILED)
-    basic = try_bernoulli(VARIANT_BASIC)
-    if detailed is not None and basic is not None:
-        bic_d = detailed[0].parameters.bic
-        bic_b = basic[0].parameters.bic
+    att_d, out_d = _attempt_bernoulli(frames, config, run_config, VARIANT_DETAILED)
+    attempts.append(att_d)
+    att_b, out_b = _attempt_bernoulli(frames, config, run_config, VARIANT_BASIC)
+    attempts.append(att_b)
+    if out_d is not None and out_b is not None:
+        bic_d = out_d[0].parameters.bic
+        bic_b = out_b[0].parameters.bic
         if bic_d is not None and bic_b is not None and bic_d < bic_b:
-            return detailed
-        return basic
-    return detailed or basic
+            return finalize(out_d)
+        # detailed обучилась, но BIC не лучше basic — фиксируем причину.
+        attempts[-2] = VariantAttempt(
+            variant=att_d.variant,
+            status="rejected_by_bic",
+            reason=(
+                f"BIC detailed ({bic_d}) ≥ BIC basic ({bic_b}); "
+                "выбран basic_3state как более экономный."
+            ),
+            bic=bic_d,
+            log_likelihood=out_d[0].parameters.log_likelihood,
+            n_states_used=int(out_d[1].get("states_used", 0)),
+            n_states=out_d[0].parameters.n_states,
+        )
+        return finalize(out_b)
+    return finalize(out_d or out_b)
+
+
+def _attempt_categorical(
+    sequences: list[EpisodeSequence],
+    alphabet: list[str],
+    run_config: HMMRunConfig,
+    variant: str,
+    baseline: BaselineReport,
+) -> tuple[VariantAttempt, tuple[HMMResult, dict[str, Any]] | None]:
+    """Однократная попытка обучить categorical HMM с расшифровкой причин.
+
+    Возвращает ``(VariantAttempt, raw_out)`` — лог попытки и сырой
+    результат _fit_variant, если он прошёл guard/sanity.
+    """
+
+    if variant == VARIANT_DETAILED and not _detailed_data_ok(
+        baseline, alphabet, run_config
+    ):
+        total_episodes = sum(baseline.episodes_per_sheet.values())
+        non_noop_alphabet = [t for t in alphabet if t != NOOP_TOKEN]
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="rejected_by_guard",
+                reason=(
+                    "Detailed-вариант требует "
+                    f"≥ {run_config.min_episodes_detailed} эпизодов, "
+                    f"≥ {run_config.min_zap_events_detailed} ЗАП-событий "
+                    f"и алфавита ≥ {run_config.min_alphabet_detailed}; "
+                    f"фактически: эпизодов {total_episodes}, "
+                    f"алфавит {len(non_noop_alphabet)}."
+                ),
+            ),
+            None,
+        )
+
+    out = _fit_variant(sequences, alphabet, run_config, variant)
+    if out is None:
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="fit_failed",
+                reason="Не удалось обучить HMM (отсутствует hmmlearn или ошибка EM).",
+            ),
+            None,
+        )
+    result, sanity = out
+    if not sanity.get("transition_dominance_ok"):
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="rejected_by_sanity",
+                reason="Sanity-check матрицы переходов не пройден.",
+                bic=result.parameters.bic,
+                log_likelihood=result.parameters.log_likelihood,
+                n_states_used=int(sanity.get("states_used", 0)),
+                n_states=result.parameters.n_states,
+            ),
+            None,
+        )
+    if variant == VARIANT_DETAILED and not sanity.get("enough_states_used"):
+        return (
+            VariantAttempt(
+                variant=variant,
+                status="rejected_by_sanity",
+                reason=(
+                    "Detailed-вариант использует слишком мало состояний "
+                    f"(нужно ≥ {sanity.get('min_states_used_required')}, "
+                    f"использовано {sanity.get('states_used')})."
+                ),
+                bic=result.parameters.bic,
+                log_likelihood=result.parameters.log_likelihood,
+                n_states_used=int(sanity.get("states_used", 0)),
+                n_states=result.parameters.n_states,
+            ),
+            None,
+        )
+    return (
+        VariantAttempt(
+            variant=variant,
+            status="passed",
+            bic=result.parameters.bic,
+            log_likelihood=result.parameters.log_likelihood,
+            n_states_used=int(sanity.get("states_used", 0)),
+            n_states=result.parameters.n_states,
+        ),
+        (result, sanity),
+    )
 
 
 def fit_hmm(
@@ -1012,7 +1348,9 @@ def fit_hmm(
     * ``mode == "auto"`` — сначала пробуем detailed, при неуспехе или
       ухудшении BIC откатываемся к basic.
 
-    Возвращает ``(result, sanity)`` или ``None``.
+    Возвращает ``(result, sanity)`` или ``None``. ``result`` несёт
+    ``tried_variants`` с пометкой ``status='applied'`` у выбранного
+    варианта и причинами отбраковки у остальных.
     """
 
     mode = run_config.mode
@@ -1021,47 +1359,77 @@ def fit_hmm(
     if baseline is None:
         baseline = BaselineReport()
 
-    def try_basic():
-        out = _fit_variant(sequences, alphabet, run_config, VARIANT_BASIC)
-        if out is None:
-            return None
-        result, sanity = out
-        if not sanity.get("transition_dominance_ok"):
-            return None
-        return result, sanity
+    attempts: list[VariantAttempt] = []
 
-    def try_detailed():
-        if not _detailed_data_ok(baseline, alphabet, run_config):
-            return None
-        out = _fit_variant(sequences, alphabet, run_config, VARIANT_DETAILED)
+    def finalize(
+        out: tuple[HMMResult, dict[str, Any]] | None,
+    ) -> tuple[HMMResult, dict[str, Any]] | None:
         if out is None:
             return None
         result, sanity = out
-        if not sanity.get("transition_dominance_ok"):
-            return None
-        if not sanity.get("enough_states_used"):
-            return None
-        return result, sanity
+        applied_variant = result.parameters.variant
+        finalized: list[VariantAttempt] = []
+        for att in attempts:
+            if att.variant == applied_variant and att.status == "passed":
+                finalized.append(
+                    VariantAttempt(
+                        variant=att.variant,
+                        status="applied",
+                        reason=att.reason,
+                        bic=att.bic,
+                        log_likelihood=att.log_likelihood,
+                        n_states_used=att.n_states_used,
+                        n_states=att.n_states,
+                    )
+                )
+            else:
+                finalized.append(att)
+        result_with_log = result.model_copy(update={"tried_variants": finalized})
+        return result_with_log, sanity
 
     if mode == "basic":
-        return try_basic()
+        att, out = _attempt_categorical(
+            sequences, alphabet, run_config, VARIANT_BASIC, baseline
+        )
+        attempts.append(att)
+        return finalize(out)
 
     if mode == "detailed":
-        # Явный выбор пользователя: если guard/sanity прошли — возвращаем,
-        # без сравнения с basic. BIC в этом режиме не ограничивает.
-        return try_detailed()
+        att, out = _attempt_categorical(
+            sequences, alphabet, run_config, VARIANT_DETAILED, baseline
+        )
+        attempts.append(att)
+        return finalize(out)
 
-    # mode == "auto": сравниваем по BIC. 7-state принимается, только если
-    # BIC строго лучше — иначе остаёмся с basic.
-    detailed = try_detailed()
-    basic = try_basic()
-    if detailed is not None and basic is not None:
-        bic_d = detailed[0].parameters.bic
-        bic_b = basic[0].parameters.bic
+    # auto: пробуем оба, выбираем по BIC.
+    att_d, out_d = _attempt_categorical(
+        sequences, alphabet, run_config, VARIANT_DETAILED, baseline
+    )
+    attempts.append(att_d)
+    att_b, out_b = _attempt_categorical(
+        sequences, alphabet, run_config, VARIANT_BASIC, baseline
+    )
+    attempts.append(att_b)
+
+    if out_d is not None and out_b is not None:
+        bic_d = out_d[0].parameters.bic
+        bic_b = out_b[0].parameters.bic
         if bic_d is not None and bic_b is not None and bic_d < bic_b:
-            return detailed
-        return basic
-    return detailed or basic
+            return finalize(out_d)
+        attempts[-2] = VariantAttempt(
+            variant=att_d.variant,
+            status="rejected_by_bic",
+            reason=(
+                f"BIC detailed ({bic_d}) ≥ BIC basic ({bic_b}); "
+                "выбран basic_3state как более экономный."
+            ),
+            bic=bic_d,
+            log_likelihood=out_d[0].parameters.log_likelihood,
+            n_states_used=int(out_d[1].get("states_used", 0)),
+            n_states=out_d[0].parameters.n_states,
+        )
+        return finalize(out_b)
+    return finalize(out_d or out_b)
 
 
 def _build_interpretation(

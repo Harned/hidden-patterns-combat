@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,6 @@ from hpc_algo.baseline import (
 from hpc_algo.detection import detect_columns, strong_zap_candidates, weak_candidates
 from hpc_algo.hmm import HMMRunConfig
 from hpc_algo.loading import ExcelLoadError, LoadedExcel, load_excel
-from hpc_algo.trainer import build_athlete_episode_rollup
 from hpc_algo.schema import (
     AnalysisResult,
     AnalysisStatus,
@@ -40,6 +40,7 @@ from hpc_algo.schema import (
     WarningItem,
     WarningSeverity,
 )
+from hpc_algo.trainer import build_athlete_episode_rollup
 
 
 @dataclass
@@ -283,6 +284,7 @@ def _build_report(
     detection: ColumnDetectionReport,
     baseline: BaselineReport,
     mapping_applied: bool,
+    hmm: HMMResult | None = None,
 ) -> str:
     status_messages = {
         AnalysisStatus.AUDIT_ONLY: (
@@ -300,19 +302,49 @@ def _build_report(
             "guard-ы по числу эпизодов/событий, sanity-check матрицы переходов "
             "и BIC-гейт. Все выводы остаются вероятностными."
         ),
+        AnalysisStatus.HMM_LOW_SIGNAL: (
+            "Статус: hmm_low_signal — HMM обучена, но ЗАП-сигнал в данных "
+            "разрежённый: эмиссии состояний близки, и часть Viterbi-пути "
+            "восстанавливается приором, а не наблюдениями. Интерпретация "
+            "модели требует осторожности."
+        ),
         AnalysisStatus.FAILED: "Статус: failed — см. errors.",
     }
 
     lines: list[str] = []
 
     if mapping_applied:
+        # Honesty layer: показываем не «Наблюдения по группам», а
+        # «Непустых ячеек по ролям» — чтобы пользователь не путал
+        # количество заполненных клеток в таблице с количеством
+        # эпизодов или ЗАП-событий.
         totals = baseline.hidden_group_totals
+        n_role_columns = sum(
+            len(cols) for cols in (baseline.hidden_group_value_counts or {}).values()
+        )
         if totals:
+            suffix = (
+                f" (по {n_role_columns} колонкам)" if n_role_columns else ""
+            )
             lines.append(
-                "Наблюдения по группам: "
+                f"Непустых ячеек по ролям{suffix}: "
                 + ", ".join(f"{k}={v}" for k, v in totals.items())
                 + "."
             )
+        # Эпизоды и доля без ZAP — главный сигнал для тренера/аналитика
+        # о плотности наблюдений.
+        total_episodes = sum(baseline.episodes_per_sheet.values())
+        no_zap = hmm.no_zap_trajectories if hmm is not None else None
+        if total_episodes:
+            if no_zap is not None:
+                pct = (no_zap / total_episodes * 100.0) if total_episodes else 0.0
+                lines.append(
+                    f"Эпизодов без ЗАП-маркера: {no_zap} из {total_episodes} "
+                    f"({pct:.1f}%) — серии без ЗАП исключаются из обучения HMM, "
+                    "Viterbi для них восстанавливается по приору."
+                )
+            else:
+                lines.append(f"Эпизодов всего (по mapping): {total_episodes}.")
         if baseline.zap_events_by_channel:
             top = sorted(
                 baseline.zap_events_by_channel.items(),
@@ -328,6 +360,35 @@ def _build_report(
             lines.append(
                 f"Рассчитаны time-статистики для {len(baseline.time_statistics)} колонок."
             )
+        if hmm is not None:
+            applied = next(
+                (a for a in hmm.tried_variants if a.status == "applied"),
+                None,
+            )
+            applied_name = (
+                applied.variant if applied is not None else hmm.parameters.variant
+            )
+            other = [a for a in hmm.tried_variants if a.status != "applied"]
+            if other:
+                rejected_parts = [
+                    f"{a.variant}: {a.status}"
+                    + (f" ({a.reason})" if a.reason else "")
+                    for a in other
+                ]
+                lines.append(
+                    f"Применён вариант HMM: {applied_name}. "
+                    + "Остальные попытки — "
+                    + "; ".join(rejected_parts)
+                    + "."
+                )
+            else:
+                lines.append(f"Применён вариант HMM: {applied_name}.")
+            if hmm.average_confidence is not None:
+                lines.append(
+                    "Средняя уверенность Viterbi-пути: "
+                    f"{hmm.average_confidence * 100:.1f}% "
+                    "(чем ниже — тем больше эпизодов следуют приору)."
+                )
     else:
         if detection.detected_groups:
             lines.append(
@@ -447,7 +508,6 @@ def _mapping_warnings(
 def _build_hmm_charts(hmm: HMMResult) -> list[ChartData]:
     charts: list[ChartData] = []
 
-    # transition heatmap
     charts.append(
         ChartData(
             id="hmm_transition_matrix",
@@ -464,7 +524,6 @@ def _build_hmm_charts(hmm: HMMResult) -> list[ChartData]:
         )
     )
 
-    # state distribution (bar)
     items = list(hmm.state_distribution.items())
     charts.append(
         ChartData(
@@ -476,6 +535,35 @@ def _build_hmm_charts(hmm: HMMResult) -> list[ChartData]:
             meta={"group": "hmm_states"},
         )
     )
+
+    confidences = [
+        tr.confidence
+        for tr in hmm.trajectories
+        if tr.confidence is not None and math.isfinite(tr.confidence)
+    ]
+    if confidences:
+        # Гистограмма confidence по эпизодам — 10 равных бакетов от 0 до 1.
+        # Используется и как картинка, и как сигнал «много низких» в UI.
+        bins = [i / 10 for i in range(11)]
+        counts = [0] * 10
+        for c in confidences:
+            idx = min(int(c * 10), 9)
+            counts[idx] += 1
+        labels = [f"{bins[i]:.1f}–{bins[i + 1]:.1f}" for i in range(10)]
+        charts.append(
+            ChartData(
+                id="hmm_confidence_histogram",
+                title="Распределение уверенности Viterbi-пути (mean γ)",
+                kind="bar",
+                x=labels,
+                y=counts,
+                meta={
+                    "group": "hmm_states",
+                    "average_confidence": hmm.average_confidence,
+                    "n_trajectories": len(confidences),
+                },
+            )
+        )
 
     return charts
 
@@ -505,14 +593,21 @@ def _analyze_with_mapping(
     # --- HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005 / TASK_SPEC_008) ---
     hmm_result: HMMResult | None = None
     hmm_charts: list[ChartData] = []
+    low_signal = False
     if status == AnalysisStatus.BASELINE_ONLY:
         run_cfg = analyze_config.hmm_run_config()
         sequences, alphabet = hmm_mod.build_observation_sequences(frames, config)
         guard_warnings = hmm_mod.evaluate_guards(
             baseline, config, sequences, alphabet, run_cfg
         )
-        if guard_warnings:
-            warnings.extend(guard_warnings)
+        # Жёсткие guard'ы блокируют запуск, мягкие (`hmm.low_zap_density`)
+        # — нет: их пробрасываем в warnings, но fit всё равно стартует.
+        blocking = [w for w in guard_warnings if w.code == "hmm.guards_failed"]
+        soft = [w for w in guard_warnings if w.code != "hmm.guards_failed"]
+        warnings.extend(soft)
+        low_signal = any(w.code == "hmm.low_zap_density" for w in soft)
+        if blocking:
+            warnings.extend(blocking)
         elif run_cfg.enable_hmm:
             if run_cfg.observation_emission == "bernoulli":
                 fit_result = hmm_mod.fit_hmm_bernoulli(frames, config, run_cfg)
@@ -540,7 +635,11 @@ def _analyze_with_mapping(
                 result_obj, _sanity = fit_result
                 hmm_result = result_obj
                 hmm_charts = _build_hmm_charts(result_obj)
-                status = AnalysisStatus.HMM_READY
+                status = (
+                    AnalysisStatus.HMM_LOW_SIGNAL
+                    if low_signal
+                    else AnalysisStatus.HMM_READY
+                )
 
     source_meta = SourceMetadata(
         filename=loaded.path.name,
@@ -557,6 +656,7 @@ def _analyze_with_mapping(
         detection=detection,
         baseline=baseline,
         mapping_applied=True,
+        hmm=hmm_result,
     )
 
     trainer_summary = build_athlete_episode_rollup(frames, config)
@@ -721,6 +821,7 @@ def is_honest_baseline(result: AnalysisResult) -> bool:
         AnalysisStatus.AUDIT_ONLY,
         AnalysisStatus.BASELINE_ONLY,
         AnalysisStatus.NEEDS_COLUMN_MAPPING,
+        AnalysisStatus.HMM_LOW_SIGNAL,
         AnalysisStatus.FAILED,
     }
 
