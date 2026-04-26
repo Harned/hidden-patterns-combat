@@ -32,7 +32,7 @@ from hpc_algo.hmm_bernoulli import (
     decode_sequence,
     fit_bernoulli_hmm,
 )
-from hpc_algo.mapping import episode_grouping_columns, episode_key
+from hpc_algo.mapping import bout_grouping_columns, episode_key
 from hpc_algo.schema import (
     BaselineReport,
     ColumnMappingConfig,
@@ -75,6 +75,7 @@ VARIANT_DETAILED = "detailed_7state"
 DEFAULT_MIN_EPISODES = 30
 DEFAULT_MIN_ZAP_EVENTS = 20
 DEFAULT_MIN_ALPHABET = 2
+DEFAULT_MIN_SEQUENCE_MEDIAN = 2
 DEFAULT_N_ITER = 50
 DEFAULT_SEED = 42
 
@@ -95,6 +96,7 @@ class HMMRunConfig:
     min_episodes: int = DEFAULT_MIN_EPISODES
     min_zap_events: int = DEFAULT_MIN_ZAP_EVENTS
     min_alphabet: int = DEFAULT_MIN_ALPHABET
+    min_sequence_median: int = DEFAULT_MIN_SEQUENCE_MEDIAN
     min_episodes_detailed: int = DEFAULT_DETAILED_MIN_EPISODES
     min_zap_events_detailed: int = DEFAULT_DETAILED_MIN_ZAP_EVENTS
     min_alphabet_detailed: int = DEFAULT_DETAILED_MIN_ALPHABET
@@ -118,6 +120,50 @@ class EpisodeSequence:
 def _channel_from_flat_name(name: str) -> str:
     parts = [p.strip() for p in name.split(" | ") if p.strip()]
     return parts[-1] if parts else name
+
+
+def _row_to_zap_token(
+    row: pd.Series,
+    zap_cols: list[str],
+    kinds: dict[str, str],
+) -> str:
+    """Свернуть одну строку-эпизод в один HMM-токен.
+
+    Один эпизод = одно ЗАП-наблюдение (см. DOMAIN_SPEC.md), поэтому
+    каждая строка превращается ровно в один токен:
+
+    * категориальная ячейка с непустым значением — берётся как токен;
+    * иначе среди binary/count колонок собираются названия активных
+      каналов (значение > 0), упорядоченных как в ``zap_cols``, и
+      склеиваются через ``"+"`` — это сохраняет факт «в эпизоде было
+      несколько ЗАП-проявлений», но остаётся одним шагом времени;
+    * если активных каналов нет — возвращается :data:`NOOP_TOKEN`,
+      означающий «эпизод без зафиксированного ЗАП».
+    """
+
+    categorical_token: str | None = None
+    active_channels: list[str] = []
+    for col in zap_cols:
+        val = row.get(col)
+        if pd.isna(val):
+            continue
+        kind = kinds.get(col)
+        if kind in {ZAP_KIND_BINARY, ZAP_KIND_COUNT}:
+            try:
+                numeric = float(val)
+            except (TypeError, ValueError):
+                continue
+            if numeric > 0:
+                active_channels.append(_channel_from_flat_name(col))
+        elif kind == ZAP_KIND_CATEGORICAL:
+            text = str(val).strip()
+            if text and categorical_token is None:
+                categorical_token = text
+    if categorical_token is not None:
+        return categorical_token
+    if active_channels:
+        return "+".join(active_channels)
+    return NOOP_TOKEN
 
 
 def _episode_key(row: pd.Series, episode_columns: list[str]) -> str:
@@ -174,12 +220,21 @@ def build_bernoulli_sequences(
         if not zap_cols:
             continue
 
-        grouping_cols = episode_grouping_columns(sm, df.columns)
+        # HMM-серия = последовательность ЭПИЗОДОВ одного борца в одной
+        # схватке (см. DOMAIN_SPEC.md: эпизод — одна полная скрытая
+        # траектория с одним ЗАП-наблюдением; временная динамика
+        # появляется на уровне серии эпизодов). Поэтому группировка
+        # ИСКЛЮЧАЕТ роль episode: иначе каждая серия вырождается в
+        # длину 1 при типовой структуре «1 строка = 1 эпизод».
+        grouping_cols = bout_grouping_columns(sm, df.columns)
         if grouping_cols:
             grouper_keys = [
                 _episode_key(row, grouping_cols) for _, row in df.iterrows()
             ]
         else:
+            # Без athlete/bout честнее не склеивать строки разных боёв
+            # в одну марковскую цепь; гард на длину серии всё равно
+            # отсечёт такой результат.
             grouper_keys = [str(i) for i in range(len(df))]
 
         order: list[str] = []
@@ -190,8 +245,9 @@ def build_bernoulli_sequences(
             if key not in buckets:
                 buckets[key] = []
                 order.append(key)
+            # Один шаг последовательности = одна строка-эпизод; вектор
+            # активных каналов для multivariate Bernoulli.
             vec = np.zeros(len(channels), dtype=float)
-            touched = False
             for col in zap_cols:
                 val = row.get(col)
                 if pd.isna(val):
@@ -205,15 +261,12 @@ def build_bernoulli_sequences(
                     idx = channel_to_idx.get(ch)
                     if idx is not None:
                         vec[idx] = 1.0
-                        touched = True
-            if touched:
-                buckets[key].append(vec)
+            buckets[key].append(vec)
 
         for key in order:
             vecs = buckets[key]
             if not vecs:
-                # Пустой эпизод — один нулевой вектор (observation = «ничего»).
-                vecs = [np.zeros(len(channels), dtype=float)]
+                continue
             X = np.vstack(vecs)
             entries.append((sheet_name, key, X))
 
@@ -254,10 +307,11 @@ def build_observation_sequences(
             kind, _ = classify_zap_column(df[col])
             kinds[col] = kind
 
-        # Группируем строки по составному ключу эпизода
-        # (athlete + bout + episode); если ничего из них не задано —
-        # каждая строка = отдельный эпизод.
-        grouping_cols = episode_grouping_columns(sheet_mapping, df.columns)
+        # HMM-серия = последовательность ЭПИЗОДОВ одного борца в одной
+        # схватке (см. DOMAIN_SPEC.md). Группировка по athlete + bout
+        # без episode: каждая строка-эпизод даёт один шаг и один
+        # наблюдаемый токен ЗАП.
+        grouping_cols = bout_grouping_columns(sheet_mapping, df.columns)
         if grouping_cols:
             grouper_keys = [
                 _episode_key(row, grouping_cols) for _, row in df.iterrows()
@@ -265,7 +319,6 @@ def build_observation_sequences(
         else:
             grouper_keys = [str(i) for i in range(len(df))]
 
-        # Накопим токены per episode_key, сохраняя порядок появления.
         order: list[str] = []
         buckets: dict[str, list[str]] = {}
         for key, (_, row) in zip(grouper_keys, df.iterrows(), strict=True):
@@ -274,33 +327,12 @@ def build_observation_sequences(
             if key not in buckets:
                 buckets[key] = []
                 order.append(key)
-            tokens_row: list[str] = []
-            for col in zap_cols:
-                val = row.get(col)
-                if pd.isna(val):
-                    continue
-                kind = kinds[col]
-                channel = _channel_from_flat_name(col)
-                if kind in {ZAP_KIND_BINARY, ZAP_KIND_COUNT}:
-                    try:
-                        numeric = float(val)
-                    except (TypeError, ValueError):
-                        continue
-                    if numeric <= 0:
-                        continue
-                    # count-колонка value=2 — два события одного типа подряд.
-                    repeats = int(numeric) if numeric >= 1 else 0
-                    tokens_row.extend([channel] * repeats)
-                elif kind == ZAP_KIND_CATEGORICAL:
-                    token = str(val).strip()
-                    if token:
-                        tokens_row.append(token)
-            buckets[key].extend(tokens_row)
+            buckets[key].append(_row_to_zap_token(row, zap_cols, kinds))
 
         for idx, key in enumerate(order):
             tokens = buckets[key]
             if not tokens:
-                tokens = [NOOP_TOKEN]
+                continue
             alphabet_set.update(tokens)
             sequences.append(
                 EpisodeSequence(
@@ -431,6 +463,37 @@ def evaluate_guards(
                 context={"guard": "no_sequences"},
             )
         )
+    else:
+        # Медиана длины серии: HMM учится переходам только если внутри
+        # серии есть хотя бы 2 эпизода. Если данные уже агрегированы и
+        # на каждого борца приходится по одной строке, median == 1 и
+        # обученные переходы отражают только инициализацию, не данные.
+        lengths = sorted(len(seq.tokens) for seq in sequences)
+        median_idx = len(lengths) // 2
+        median_len = (
+            lengths[median_idx]
+            if len(lengths) % 2 == 1
+            else (lengths[median_idx - 1] + lengths[median_idx]) // 2
+        )
+        if median_len < run_config.min_sequence_median:
+            failed.append(
+                WarningItem(
+                    code="hmm.guards_failed",
+                    message=(
+                        "HMM не запущена: медианная длина серии эпизодов "
+                        f"{median_len} < минимума {run_config.min_sequence_median}. "
+                        "Скорее всего, на каждого борца приходится одна строка-эпизод "
+                        "и временной динамики переходов в данных нет."
+                    ),
+                    severity=WarningSeverity.WARNING,
+                    context={
+                        "guard": "min_sequence_median",
+                        "actual": int(median_len),
+                        "required": run_config.min_sequence_median,
+                        "sequences": len(sequences),
+                    },
+                )
+            )
 
     return failed
 

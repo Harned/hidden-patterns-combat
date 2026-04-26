@@ -426,11 +426,21 @@ def load_mapped_sheets(
 
 # Роли, по которым строится составной ключ эпизода. Порядок важен — он
 # определяет порядок частей в "athlete|bout|episode_number" и
-# воспроизводим между baseline и hmm.
+# воспроизводим между baseline и trainer rollup.
 _EPISODE_KEY_ROLES: tuple[HiddenGroup, ...] = (
     HiddenGroup.ATHLETE,
     HiddenGroup.BOUT,
     HiddenGroup.EPISODE,
+)
+
+# Роли, формирующие ключ "схватки" — единицы агрегации для HMM-серии.
+# По смыслу DOMAIN_SPEC.md эпизод — атомарная скрытая траектория с одним
+# ЗАП-наблюдением; временная динамика появляется на уровне серии эпизодов
+# одного борца в одной схватке. Поэтому для HMM мы НЕ включаем episode
+# в ключ — иначе каждая последовательность вырождается в длину 1.
+_BOUT_KEY_ROLES: tuple[HiddenGroup, ...] = (
+    HiddenGroup.ATHLETE,
+    HiddenGroup.BOUT,
 )
 
 
@@ -445,14 +455,41 @@ def episode_grouping_columns(
     (в реальных файлах нумерация перезапускается), поэтому в качестве
     grouper'а мы используем составной ключ из колонок ролей
     ``athlete`` → ``bout`` → ``episode`` (только тех, что присутствуют
-    в df). Возвращаемый список используется и в baseline, и в hmm,
-    чтобы число эпизодов и количество последовательностей совпадали.
+    в df). Возвращаемый список используется в baseline (счёт эпизодов)
+    и в тренерской сводке.
     """
 
     available = set(df_columns)
     cols: list[str] = []
     seen: set[str] = set()
     for role in _EPISODE_KEY_ROLES:
+        for col in sheet_mapping.roles.get(role, []) or []:
+            if col in available and col not in seen:
+                cols.append(col)
+                seen.add(col)
+    return cols
+
+
+def bout_grouping_columns(
+    sheet_mapping: SheetMapping,
+    df_columns: Iterable[str],
+) -> list[str]:
+    """Колонки для группировки строк в одну HMM-серию (схватку).
+
+    Возвращает доступные колонки ролей ``athlete`` → ``bout`` без
+    ``episode``. Каждая строка внутри получившейся группы трактуется
+    HMM как один шаг последовательности (то есть один эпизод = один
+    наблюдаемый токен ЗАП).
+
+    Если ни одной из ролей нет — возвращается пустой список; в этом
+    случае вызывающая сторона решает, считать ли весь лист одной
+    серией или каждую строку отдельным эпизодом длины 1.
+    """
+
+    available = set(df_columns)
+    cols: list[str] = []
+    seen: set[str] = set()
+    for role in _BOUT_KEY_ROLES:
         for col in sheet_mapping.roles.get(role, []) or []:
             if col in available and col not in seen:
                 cols.append(col)
