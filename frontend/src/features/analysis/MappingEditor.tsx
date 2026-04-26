@@ -11,7 +11,7 @@ import { Badge, Button, Card, Section } from "@/components/ui";
 
 const ROLE_OPTIONS: { value: HiddenGroup | "__none__"; label: string }[] = [
   { value: "__none__", label: "— (игнорировать)" },
-  { value: "ЗАП", label: "ЗАП (observations)" },
+  { value: "ЗАП", label: "ЗАП (observations: ЗАП-Р/Н/Т, удержание, болевой, баллы)" },
   { value: "маневрирование", label: "маневрирование" },
   { value: "КФВ", label: "КФВ" },
   { value: "ВУП", label: "ВУП" },
@@ -298,6 +298,15 @@ export const MappingEditor: React.FC<Props> = ({
             <p className="mt-1 text-sm text-brand-700/80">
               Preflight предлагает стартовое сопоставление на основе заголовков.
               Вы можете изменить роль любой колонки листа и сохранить mapping.
+            </p>
+            <p className="mt-1 text-xs text-brand-700/70">
+              По <code>DOMAIN_SPEC</code> в роль ЗАП относятся все колонки
+              судейской фиксации: <code>ЗАП-Р/Н/Т</code>,{" "}
+              <code>Удержание</code>, <code>Болевой / На руку / На ногу</code>,
+              а также числовая колонка{" "}
+              <code>Баллы</code> (общая судейская оценка эпизода). Шкала
+              значений в баллах не интерпретируется алгоритмом как разные
+              ЗАП-классы.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
