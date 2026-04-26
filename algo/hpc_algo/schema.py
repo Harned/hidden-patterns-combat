@@ -251,6 +251,13 @@ class BaselineReport(BaseModel):
         default_factory=dict,
         description="sheet -> число эпизодов, восстановленных по mapping (role=episode).",
     )
+    empty_data_rows_per_sheet: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "sheet -> число полностью пустых строк после применения header_rows."
+            " Заполняется только в mapping-ветке."
+        ),
+    )
     notes: list[str] = Field(default_factory=list)
 
 

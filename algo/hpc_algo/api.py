@@ -283,10 +283,27 @@ def _build_report(
     baseline: BaselineReport,
     mapping_applied: bool,
 ) -> str:
+    status_messages = {
+        AnalysisStatus.AUDIT_ONLY: (
+            "Статус: audit_only — удалось выполнить только аудит файла."
+        ),
+        AnalysisStatus.NEEDS_COLUMN_MAPPING: (
+            "Статус: needs_column_mapping — требуется ручное сопоставление колонок."
+        ),
+        AnalysisStatus.BASELINE_ONLY: (
+            "Статус: baseline_only — рассчитаны только базовые описательные "
+            "характеристики. Диагностика скрытой траектории не выполнена."
+        ),
+        AnalysisStatus.HMM_READY: (
+            "Статус: hmm_ready — обучена HMM (см. applied variant), прошли "
+            "guard-ы по числу эпизодов/событий, sanity-check матрицы переходов "
+            "и BIC-гейт. Все выводы остаются вероятностными."
+        ),
+        AnalysisStatus.FAILED: "Статус: failed — см. errors.",
+    }
+
     lines: list[str] = []
-    lines.append(f"Файл: {source.filename}")
-    lines.append(f"Листов: {source.sheet_count}. Всего строк: {audit.total_rows}.")
-    lines.append(f"Доля пропусков по файлу: {audit.overall_null_ratio * 100:.1f}%.")
+    lines.append(status_messages.get(status, f"Статус: {status.value}."))
 
     if mapping_applied:
         totals = baseline.hidden_group_totals
@@ -327,25 +344,11 @@ def _build_report(
                 + "."
             )
 
-    status_messages = {
-        AnalysisStatus.AUDIT_ONLY: (
-            "Статус: audit_only — удалось выполнить только аудит файла."
-        ),
-        AnalysisStatus.NEEDS_COLUMN_MAPPING: (
-            "Статус: needs_column_mapping — требуется ручное сопоставление колонок."
-        ),
-        AnalysisStatus.BASELINE_ONLY: (
-            "Статус: baseline_only — рассчитаны только базовые описательные "
-            "характеристики. Диагностика скрытой траектории не выполнена."
-        ),
-        AnalysisStatus.HMM_READY: (
-            "Статус: hmm_ready — обучена HMM (см. applied variant), прошли "
-            "guard-ы по числу эпизодов/событий, sanity-check матрицы переходов "
-            "и BIC-гейт. Все выводы остаются вероятностными."
-        ),
-        AnalysisStatus.FAILED: "Статус: failed — см. errors.",
-    }
-    lines.append(status_messages.get(status, f"Статус: {status.value}."))
+    lines.append("")
+    lines.append("Сводка по данным (аудит):")
+    lines.append(f"Файл: {source.filename}")
+    lines.append(f"Листов: {source.sheet_count}. Всего строк: {audit.total_rows}.")
+    lines.append(f"Доля пропусков по файлу: {audit.overall_null_ratio * 100:.1f}%.")
 
     return "\n".join(lines)
 

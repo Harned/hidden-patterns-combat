@@ -195,6 +195,7 @@ def build_baseline_with_mapping(
     hidden_totals: dict[str, int] = {}
     time_stats: dict[str, TimeStats] = {}
     episodes_per_sheet: dict[str, int] = {}
+    empty_data_rows_per_sheet: dict[str, int] = {}
     zap_counts: dict[str, dict[str, int]] = {}
     zap_column_kinds: dict[str, str] = {}
     zap_events: dict[str, int] = {}
@@ -206,6 +207,15 @@ def build_baseline_with_mapping(
         df = frames.get(sheet_name)
         if df is None:
             continue
+
+        # Считаем число полностью пустых data-строк (после применения header_rows
+        # и data_start_row, что уже сделал mapping_mod.load_mapped_sheets).
+        if not df.empty:
+            empty_data_rows_per_sheet[sheet_name] = int(
+                df.isna().all(axis=1).sum()
+            )
+        else:
+            empty_data_rows_per_sheet[sheet_name] = 0
 
         if HiddenGroup.EPISODE in sheet_mapping.roles:
             cols = sheet_mapping.roles[HiddenGroup.EPISODE]
@@ -305,8 +315,15 @@ def build_baseline_with_mapping(
             "Они проигнорированы и отражены в warnings."
         )
 
+    # Графики пропусков строим только по листам из mapping: чтобы избежать
+    # путаницы (графики «Unnamed: N» для листов, которые пользователь сам
+    # исключил из обработки) и согласовать набор листов с тем, что реально
+    # пошло в анализ.
+    mapped_sheets = set(config.sheets.keys())
     missing_per_column: dict[str, dict[str, int]] = {}
     for sheet in audit.sheets:
+        if sheet.name not in mapped_sheets:
+            continue
         if sheet.columns:
             missing_per_column[sheet.name] = {
                 col.name: col.null_count for col in sheet.columns
@@ -343,6 +360,7 @@ def build_baseline_with_mapping(
         zap_events_by_channel=zap_events_by_channel,
         time_statistics=time_stats,
         episodes_per_sheet=episodes_per_sheet,
+        empty_data_rows_per_sheet=empty_data_rows_per_sheet,
         notes=notes,
     )
     return report, unknown
@@ -471,6 +489,27 @@ def build_charts(baseline: BaselineReport) -> list[ChartData]:
                     meta={"source_column": path, "shown": len(head)},
                 )
             )
+
+    # 2.5. Полностью пустые data-строки по листам (mapping-ветка).
+    if baseline.empty_data_rows_per_sheet:
+        items = sorted(
+            baseline.empty_data_rows_per_sheet.items(),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        charts.append(
+            ChartData(
+                id="empty_data_rows_per_sheet",
+                title="Полностью пустые строки данных по листам",
+                kind="hbar",
+                x=[v for _, v in items],
+                y=[k for k, _ in items],
+                meta={
+                    "shown": len(items),
+                    "semantics": "empty_rows",
+                },
+            )
+        )
 
     # 3. Missing-values per sheet.
     for sheet_name, cols in baseline.missing_values_per_column.items():
