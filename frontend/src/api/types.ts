@@ -292,6 +292,22 @@ export interface AthleteForwardFillResponse {
   warning: string | null;
 }
 
+export interface HeaderMergeFillSuggestion {
+  row: number;
+  col: number;
+  proposed: string;
+  source_row: number;
+  source_col: number;
+  message_ru: string;
+}
+
+export interface HeaderMergeFillResponse {
+  sheet: string;
+  header_rows: number[];
+  suggestions: HeaderMergeFillSuggestion[];
+  warning: string | null;
+}
+
 export interface ApiError {
   detail: string;
 }

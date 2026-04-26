@@ -4,6 +4,7 @@ import type {
   AthleteForwardFillResponse,
   CellEdit,
   ColumnMappingConfig,
+  HeaderMergeFillResponse,
   HeaderRowsSuggestionResponse,
   SheetColumnsResponse,
   SheetGridFragment,
@@ -289,6 +290,21 @@ export const api = {
       `/sources/${sourceId}/sheets/${encodeURIComponent(
         sheetName
       )}/suggestions/athlete-forward-fill${qs}`
+    );
+  },
+  headerMergeFillSuggestions(
+    sourceId: number,
+    sheetName: string,
+    headerRows?: number[]
+  ) {
+    const qs =
+      headerRows && headerRows.length > 0
+        ? `?header_rows=${headerRows.join(",")}`
+        : "";
+    return request<HeaderMergeFillResponse>(
+      `/sources/${sourceId}/sheets/${encodeURIComponent(
+        sheetName
+      )}/suggestions/header-merge-fill${qs}`
     );
   },
   getMapping(sourceId: number) {

@@ -8,6 +8,7 @@ import {
 import { api, ApiError } from "@/api/client";
 import type {
   ColumnMappingConfig,
+  HeaderMergeFillResponse,
   HeaderRowsSuggestionResponse,
   SheetMapping,
   SourceSummary,
@@ -456,8 +457,31 @@ const PrepareStep: React.FC<{
     },
   });
 
+  const headerMergeFillQuery = useQuery({
+    queryKey: [
+      "headerMergeFill",
+      sourceId,
+      activeSheet,
+      headerRows.join(","),
+    ],
+    queryFn: () =>
+      api.headerMergeFillSuggestions(sourceId, activeSheet!, headerRows),
+    enabled: Boolean(activeSheet && sheetMapping),
+    retry: false,
+    staleTime: 0,
+  });
+
   const suggestionByCell = useMemo<Record<string, CellSuggestion>>(() => {
     const map: Record<string, CellSuggestion> = {};
+    // Сначала кладём merge-fill: ячейки строго в зоне шапки, чтобы они
+    // не перекрывались athlete-LOCF (последний всегда в data-зоне).
+    for (const s of headerMergeFillQuery.data?.suggestions ?? []) {
+      map[`${s.row}:${s.col}`] = {
+        proposed: s.proposed,
+        hint: s.message_ru,
+        kind: "header-merge-fill",
+      };
+    }
     for (const s of athleteSuggestionsQuery.data?.suggestions ?? []) {
       map[`${s.row}:${s.col}`] = {
         proposed: s.proposed,
@@ -466,7 +490,7 @@ const PrepareStep: React.FC<{
       };
     }
     return map;
-  }, [athleteSuggestionsQuery.data]);
+  }, [athleteSuggestionsQuery.data, headerMergeFillQuery.data]);
 
   const cleanupMut = useMutation({
     mutationFn: () =>
@@ -486,6 +510,48 @@ const PrepareStep: React.FC<{
           : "Не удалось очистить лист."
       ),
   });
+
+  const applyHeaderMergeMut = useMutation({
+    mutationFn: async () => {
+      const items = headerMergeFillQuery.data?.suggestions ?? [];
+      if (items.length === 0) return 0;
+      const edits = items.map((s) => ({
+        row: s.row,
+        col: s.col,
+        value: s.proposed,
+      }));
+      await gridRef.current?.applyEdits(edits);
+      return edits.length;
+    },
+    onSuccess: (count) => {
+      void qc.invalidateQueries({ queryKey: ["headerMergeFill", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["grid", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["sheetColumns", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["sheetPreview", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["headerSuggestion", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["source", sourceId] });
+      if (count) alert(`Применено предложений по шапке: ${count}.`);
+    },
+    onError: (err) =>
+      alert(
+        err instanceof ApiError
+          ? `Не удалось применить предложения по шапке: ${err.message}`
+          : "Не удалось применить предложения по шапке."
+      ),
+  });
+
+  const onApplyHeaderMergeSuggestions = () => {
+    const dirty = gridRef.current?.dirtyCount() ?? 0;
+    if (dirty > 0) {
+      const ok = window.confirm(
+        `В сетке есть ${dirty} несохранённых ручных правок. ` +
+          "Применить предложения по шапке сейчас? В файл будут записаны только " +
+          "значения merged-ячеек шапки, ручные правки останутся в локальном черновике."
+      );
+      if (!ok) return;
+    }
+    applyHeaderMergeMut.mutate();
+  };
 
   const applyAthleteMut = useMutation({
     mutationFn: async () => {
@@ -676,6 +742,13 @@ const PrepareStep: React.FC<{
               isApplying={applyHeaderRowsMut.isPending}
               onApply={(rows) => applyHeaderRowsMut.mutate(rows)}
             />
+            <HeaderMergeFillBanner
+              isLoading={headerMergeFillQuery.isLoading}
+              isError={headerMergeFillQuery.isError}
+              data={headerMergeFillQuery.data}
+              isApplying={applyHeaderMergeMut.isPending}
+              onApply={onApplyHeaderMergeSuggestions}
+            />
             <SheetGrid
               ref={gridRef}
               sourceId={sourceId}
@@ -778,6 +851,70 @@ const HeaderRowsPrepareBanner: React.FC<{
         >
           {isApplying ? "Сохраняем…" : "Применить в mapping"}
         </Button>
+      </div>
+    </div>
+  );
+};
+
+const HeaderMergeFillBanner: React.FC<{
+  isLoading: boolean;
+  isError: boolean;
+  data: HeaderMergeFillResponse | undefined;
+  isApplying: boolean;
+  onApply: () => void;
+}> = ({ isLoading, isError, data, isApplying, onApply }) => {
+  if (isLoading) {
+    return (
+      <div className="mb-4 text-xs text-brand-700/60">
+        Проверяем merged-ячейки шапки…
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        Не удалось получить предложения по merged-шапке.
+      </div>
+    );
+  }
+  if (!data) return null;
+  const count = data.suggestions.length;
+  if (count === 0) {
+    if (data.warning) {
+      return (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {data.warning}
+        </div>
+      );
+    }
+    return (
+      <div className="mb-4 text-xs text-emerald-700">
+        Незаполненных ячеек в merged-шапке не найдено.
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+      <div className="flex flex-wrap items-center gap-3">
+        <span>
+          В шапке есть <b>{count}</b> объединённых ячеек, у которых «дочерние»
+          поля пусты — после ручного редактирования сетки flatten-имена колонок
+          могут потерять верхний уровень. Можем материализовать значение
+          родительской ячейки во все объединённые позиции.
+        </span>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={onApply}
+          disabled={isApplying}
+          title="Скопировать значение master-ячейки merged-диапазона во все его подчинённые ячейки. Запишется в файл одним пакетом."
+        >
+          {isApplying ? "Применяем..." : `Применить ${count} предложений`}
+        </Button>
+      </div>
+      <div className="mt-1 text-xs text-amber-900/80">
+        Затрагиваются только ячейки внутри объединённых диапазонов, целиком
+        лежащих в строках заголовка. Содержимое самих master-ячеек не меняется.
       </div>
     </div>
   );
