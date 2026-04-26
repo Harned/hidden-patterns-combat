@@ -61,17 +61,80 @@ const ChartCard: React.FC<{ chart: ChartData }> = ({ chart }) => {
   );
 };
 
-export const ChartsGrid: React.FC<{ charts: ChartData[] }> = ({ charts }) => {
+function getChartSheet(chart: ChartData): string | null {
+  const sheet = chart.meta?.sheet;
+  if (typeof sheet === "string" && sheet.length > 0) return sheet;
+  return null;
+}
+
+export const ChartsGrid: React.FC<{
+  charts: ChartData[];
+  sheetOrder?: string[];
+}> = ({ charts, sheetOrder }) => {
   if (charts.length === 0) return null;
+
+  const globalCharts: ChartData[] = [];
+  const bySheet = new Map<string, ChartData[]>();
+  for (const chart of charts) {
+    const sheet = getChartSheet(chart);
+    if (sheet === null) {
+      globalCharts.push(chart);
+      continue;
+    }
+    const bucket = bySheet.get(sheet);
+    if (bucket) bucket.push(chart);
+    else bySheet.set(sheet, [chart]);
+  }
+
+  const orderedSheetNames = (() => {
+    const known = new Set(bySheet.keys());
+    const ordered: string[] = [];
+    if (sheetOrder) {
+      for (const name of sheetOrder) {
+        if (known.has(name)) {
+          ordered.push(name);
+          known.delete(name);
+        }
+      }
+    }
+    const remaining = Array.from(known).sort((a, b) =>
+      a.localeCompare(b, "ru"),
+    );
+    return [...ordered, ...remaining];
+  })();
+
   return (
     <Section
       title="Графики"
-      description="Распределения и пропуски, собранные напрямую из AnalysisResult. Для ЗАП-распределений показываются только уверенные кандидаты."
+      description="Сводные графики по всему анализу и отдельные группы на каждый лист (пропуски и т.п.). Для ЗАП-распределений показываются только уверенные кандидаты."
     >
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {charts.map((c) => (
-          <ChartCard key={c.id} chart={c} />
-        ))}
+      <div className="space-y-6">
+        {globalCharts.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-brand-900 mb-3">Сводка</h4>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {globalCharts.map((c) => (
+                <ChartCard key={c.id} chart={c} />
+              ))}
+            </div>
+          </div>
+        )}
+        {orderedSheetNames.map((sheetName) => {
+          const sheetCharts = bySheet.get(sheetName) ?? [];
+          if (sheetCharts.length === 0) return null;
+          return (
+            <div key={`sheet-${sheetName}`}>
+              <h4 className="text-sm font-semibold text-brand-900 mb-3">
+                Лист «{sheetName}»
+              </h4>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                {sheetCharts.map((c) => (
+                  <ChartCard key={c.id} chart={c} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </Section>
   );

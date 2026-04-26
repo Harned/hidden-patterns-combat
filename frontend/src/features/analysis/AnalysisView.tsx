@@ -11,6 +11,7 @@ import { DetectedColumns } from "./DetectedColumns";
 import { ChartsGrid } from "./ChartsGrid";
 import { ZapChannelsCard } from "./ZapChannelsCard";
 import { RunsHistory } from "./RunsHistory";
+import { TrainerSummary } from "./TrainerSummary";
 
 // Code-split: редактор mapping и HMM-вьюха грузятся только когда
 // пользователь открывает соответствующие секции интерфейса.
@@ -25,7 +26,7 @@ const SectionFallback: React.FC<{ label: string }> = ({ label }) => (
   <Card className="px-6 py-8 text-center text-brand-700/70">{label}</Card>
 );
 
-type Tab = "result" | "mapping" | "history";
+type Tab = "result" | "trainer" | "mapping" | "history";
 
 export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const qc = useQueryClient();
@@ -68,6 +69,17 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const run = resultQuery.data;
   const result = run?.result;
   const isDraft = source?.preparation_state === "draft";
+
+  const hasTrainerRoles = (() => {
+    const sheets = result?.applied_mapping?.sheets;
+    if (!sheets) return false;
+    return Object.values(sheets).some((sm) => {
+      const roles = sm.roles ?? {};
+      const hasAthlete = Array.isArray(roles.athlete) && roles.athlete.length > 0;
+      const hasEpisode = Array.isArray(roles.episode) && roles.episode.length > 0;
+      return hasAthlete && hasEpisode;
+    });
+  })();
 
   return (
     <div className="max-w-6xl w-full mx-auto px-6 py-6 space-y-6">
@@ -140,6 +152,9 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         {(
           [
             ["result", "Результат"],
+            ...(hasTrainerRoles
+              ? ([["trainer", "Тренер"]] as const)
+              : ([] as const)),
             ["mapping", "Сопоставление колонок"],
             ["history", "История запусков"],
           ] as const
@@ -173,6 +188,12 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
             ? runAnalyze.error.message
             : "ошибка"}
         </div>
+      )}
+
+      {tab === "trainer" && (
+        <TrainerSummary
+          summary={result?.trainer_athlete_summary ?? null}
+        />
       )}
 
       {tab === "mapping" && (
@@ -283,7 +304,10 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
               )}
               <ZapChannelsCard baseline={result.basic_statistics} />
               <DetectedColumns detection={result.detected_columns} />
-              <ChartsGrid charts={result.charts} />
+              <ChartsGrid
+                charts={result.charts}
+                sheetOrder={result.source_metadata.sheet_names}
+              />
               <AuditTable audit={result.data_audit} />
 
               <p className="text-xs text-brand-700/60 text-center">

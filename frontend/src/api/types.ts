@@ -204,6 +204,18 @@ export interface HMMResult {
   interpretation: string;
 }
 
+export interface AthleteEpisodeStats {
+  athlete: string;
+  episode_count: number;
+}
+
+export interface TrainerAthleteSummary {
+  athletes: AthleteEpisodeStats[];
+  total_athletes: number;
+  total_episodes: number;
+  notes: string[];
+}
+
 export interface AnalysisResult {
   status: AnalysisStatus;
   generated_at: string;
@@ -217,6 +229,7 @@ export interface AnalysisResult {
   charts: ChartData[];
   warnings: WarningItem[];
   errors: WarningItem[];
+  trainer_athlete_summary: TrainerAthleteSummary | null;
   report: string;
 }
 
