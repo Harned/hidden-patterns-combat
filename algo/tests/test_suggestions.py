@@ -8,7 +8,10 @@ import pandas as pd
 import pytest
 from openpyxl import Workbook
 
-from hpc_algo.suggestions import forward_fill_athlete_suggestions
+from hpc_algo.suggestions import (
+    forward_fill_athlete_suggestions,
+    header_merge_fill_suggestions,
+)
 
 
 @pytest.fixture
@@ -205,3 +208,86 @@ def test_forward_fill_with_episode_role_skips_row_without_episode(
     )
     assert [s.row for s in report.suggestions] == [3]
     assert 4 not in [s.row for s in report.suggestions]
+
+
+# --------------------------- header_merge_fill ------------------------------
+
+
+def _build_merged_header_xlsx(path: Path) -> None:
+    """Лист с двухстрочной шапкой и горизонтальным merge в верхней строке."""
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    # Row 1: "Спортсмен" покрывает A1:B1; C1 — самостоятельная "Эпизод"
+    ws["A1"] = "Спортсмен"
+    ws["C1"] = "Эпизод"
+    ws.merge_cells("A1:B1")
+    # Row 2: подзаголовки
+    ws["A2"] = "ФИО"
+    ws["B2"] = "Команда"
+    ws["C2"] = "№"
+    # Data
+    ws["A3"] = "Иванов"
+    ws["B3"] = "RUS"
+    ws["C3"] = 1
+    wb.save(path)
+    wb.close()
+
+
+def test_header_merge_fill_proposes_slave_cells(tmp_path: Path) -> None:
+    path = tmp_path / "merged.xlsx"
+    _build_merged_header_xlsx(path)
+    report = header_merge_fill_suggestions(path, "Sheet1", header_rows=[0, 1])
+    coords = [(s.row, s.col, s.proposed) for s in report.suggestions]
+    # B1 — единственная slave-ячейка в merge A1:B1, master = "Спортсмен".
+    assert coords == [(1, 2, "Спортсмен")]
+    s0 = report.suggestions[0]
+    assert s0.source_row == 1 and s0.source_col == 1
+
+
+def test_header_merge_fill_skips_ranges_outside_header(tmp_path: Path) -> None:
+    path = tmp_path / "out_of_header.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "H1"
+    ws["B1"] = "H2"
+    ws["A2"] = "v"
+    ws["B2"] = "w"
+    # merge ниже шапки — не должен попасть в предложения
+    ws.merge_cells("A2:B2")
+    wb.save(path)
+    wb.close()
+
+    report = header_merge_fill_suggestions(path, "Sheet1", header_rows=[0])
+    assert report.suggestions == []
+
+
+def test_header_merge_fill_skips_empty_master(tmp_path: Path) -> None:
+    path = tmp_path / "empty_master.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    # master пустой — не предлагаем «вписать пустоту» в slave
+    ws.merge_cells("A1:B1")
+    ws["A2"] = "x"
+    ws["B2"] = "y"
+    wb.save(path)
+    wb.close()
+
+    report = header_merge_fill_suggestions(path, "Sheet1", header_rows=[0, 1])
+    assert report.suggestions == []
+
+
+def test_header_merge_fill_warns_on_empty_header_rows(tmp_path: Path) -> None:
+    path = tmp_path / "no_header.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "x"
+    wb.save(path)
+    wb.close()
+    report = header_merge_fill_suggestions(path, "Sheet1", header_rows=[])
+    assert report.suggestions == []
+    assert report.warning is not None

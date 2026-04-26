@@ -3,10 +3,14 @@
 подтверждение пользователем — модуль возвращает только список предложений
 с координатами в Excel (1-based), исходное значение и источник переноса.
 
-Сейчас поддерживается одна эвристика — forward-fill по колонке ``athlete``.
-Это детерминированное «копирование последнего непустого ФИО вниз», полезное,
-когда ФИО в листе проставлено только в первой строке группы строк одного
-спортсмена. Никакой «детекции личности по эпизодам» здесь нет.
+Поддерживаются две эвристики:
+
+* :func:`forward_fill_athlete_suggestions` — копирование последнего непустого
+  ФИО вниз в data-секции (детекции личности по эпизодам нет).
+* :func:`header_merge_fill_suggestions` — материализация значений merged-ячеек
+  в **зоне шапки**: «подчинённые» (slave) ячейки объединённого диапазона
+  получают копию текста master, чтобы flatten-имена колонок не теряли
+  верхние уровни заголовка после ручного редактирования.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
+from openpyxl import load_workbook
 
 from hpc_algo.mapping import read_sheet_with_header_rows
 
@@ -203,8 +208,115 @@ def forward_fill_athlete_suggestions(
     )
 
 
+@dataclass(frozen=True)
+class HeaderMergeSuggestion:
+    """Одно предложение «вписать значение master-ячейки в slave merged-области шапки»."""
+
+    row: int  # 1-based Excel row (slave)
+    col: int  # 1-based Excel column (slave)
+    proposed: str
+    source_row: int  # 1-based Excel row (master)
+    source_col: int  # 1-based Excel column (master)
+    message_ru: str
+
+
+@dataclass(frozen=True)
+class HeaderMergeReport:
+    suggestions: list[HeaderMergeSuggestion]
+    header_rows: list[int]
+    warning: str | None = None
+
+
+def _cell_text(value: object) -> str:
+    if _is_blank(value):
+        return ""
+    return str(value).strip()
+
+
+def header_merge_fill_suggestions(
+    path: str | Path,
+    sheet_name: str,
+    *,
+    header_rows: list[int],
+) -> HeaderMergeReport:
+    """Найти merged-диапазоны в зоне многострочной шапки и предложить заполнить
+    их «подчинённые» ячейки копией значения master.
+
+    Логика merged-only: затрагиваются **только** те ячейки, которые входят в
+    объединённый диапазон, целиком расположенный в строках шапки. Остальные
+    пустые ячейки шапки не трогаем (это могут быть осознанно пустые поля).
+
+    ``header_rows`` — 0-based, как и в остальном модуле; ``row``/``col`` в
+    результате — 1-based Excel-координаты.
+    """
+
+    if not header_rows:
+        return HeaderMergeReport(
+            suggestions=[],
+            header_rows=[],
+            warning="header_rows пуст — нечего заполнять.",
+        )
+
+    header_excel_rows = {r + 1 for r in header_rows}
+    min_header_row = min(header_excel_rows)
+    max_header_row = max(header_excel_rows)
+
+    wb = load_workbook(path, data_only=True, read_only=False)
+    try:
+        if sheet_name not in wb.sheetnames:
+            return HeaderMergeReport(
+                suggestions=[],
+                header_rows=sorted(header_rows),
+                warning=f"Лист «{sheet_name}» не найден.",
+            )
+        ws = wb[sheet_name]
+
+        suggestions: list[HeaderMergeSuggestion] = []
+        for merged_range in list(ws.merged_cells.ranges):
+            r1, r2 = merged_range.min_row, merged_range.max_row
+            c1, c2 = merged_range.min_col, merged_range.max_col
+            # Берём диапазоны, целиком лежащие в зоне шапки.
+            if r1 < min_header_row or r2 > max_header_row:
+                continue
+            # Дополнительно: каждая строка диапазона действительно объявлена шапкой.
+            if not all(r in header_excel_rows for r in range(r1, r2 + 1)):
+                continue
+            master_value = ws.cell(row=r1, column=c1).value
+            text = _cell_text(master_value)
+            if not text:
+                continue
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    if r == r1 and c == c1:
+                        continue
+                    suggestions.append(
+                        HeaderMergeSuggestion(
+                            row=r,
+                            col=c,
+                            proposed=text,
+                            source_row=r1,
+                            source_col=c1,
+                            message_ru=(
+                                f"Перенос значения шапки из ячейки "
+                                f"({r1}, {c1}) — «{text}»."
+                            ),
+                        )
+                    )
+    finally:
+        wb.close()
+
+    suggestions.sort(key=lambda s: (s.row, s.col))
+    return HeaderMergeReport(
+        suggestions=suggestions,
+        header_rows=sorted(header_rows),
+    )
+
+
 __all__ = [
     "AthleteSuggestion",
     "ForwardFillReport",
     "forward_fill_athlete_suggestions",
+    "HeaderMergeSuggestion",
+    "HeaderMergeReport",
+    "header_merge_fill_suggestions",
 ]
