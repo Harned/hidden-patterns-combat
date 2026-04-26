@@ -32,6 +32,7 @@ from hpc_algo.hmm_bernoulli import (
     decode_sequence,
     fit_bernoulli_hmm,
 )
+from hpc_algo.mapping import episode_grouping_columns, episode_key
 from hpc_algo.schema import (
     BaselineReport,
     ColumnMappingConfig,
@@ -120,13 +121,15 @@ def _channel_from_flat_name(name: str) -> str:
 
 
 def _episode_key(row: pd.Series, episode_columns: list[str]) -> str:
-    pieces: list[str] = []
-    for c in episode_columns:
-        v = row.get(c)
-        if pd.isna(v):
-            continue
-        pieces.append(str(v))
-    return "|".join(pieces) if pieces else ""
+    """Совместимый wrapper над :func:`hpc_algo.mapping.episode_key`.
+
+    Раньше функция собирала ключ только по колонкам роли ``episode``;
+    теперь группировка делается по составному ключу
+    (athlete + bout + episode), и вызывающие места передают сюда
+    именно этот расширенный список колонок.
+    """
+
+    return episode_key(row, episode_columns)
 
 
 def build_bernoulli_sequences(
@@ -168,14 +171,14 @@ def build_bernoulli_sequences(
         if df is None or df.empty:
             continue
         zap_cols = [c for c in sm.roles.get(HiddenGroup.ZAP, []) if c in df.columns]
-        episode_cols = [
-            c for c in sm.roles.get(HiddenGroup.EPISODE, []) if c in df.columns
-        ]
         if not zap_cols:
             continue
 
-        if episode_cols:
-            grouper_keys = [_episode_key(row, episode_cols) for _, row in df.iterrows()]
+        grouping_cols = episode_grouping_columns(sm, df.columns)
+        if grouping_cols:
+            grouper_keys = [
+                _episode_key(row, grouping_cols) for _, row in df.iterrows()
+            ]
         else:
             grouper_keys = [str(i) for i in range(len(df))]
 
@@ -242,11 +245,6 @@ def build_observation_sequences(
         zap_cols = [
             c for c in sheet_mapping.roles.get(HiddenGroup.ZAP, []) if c in df.columns
         ]
-        episode_cols = [
-            c
-            for c in sheet_mapping.roles.get(HiddenGroup.EPISODE, [])
-            if c in df.columns
-        ]
         if not zap_cols:
             continue
 
@@ -256,11 +254,13 @@ def build_observation_sequences(
             kind, _ = classify_zap_column(df[col])
             kinds[col] = kind
 
-        # Группируем строки по episode_key; если episode columns не
-        # указаны — каждая строка = отдельный эпизод.
-        if episode_cols:
+        # Группируем строки по составному ключу эпизода
+        # (athlete + bout + episode); если ничего из них не задано —
+        # каждая строка = отдельный эпизод.
+        grouping_cols = episode_grouping_columns(sheet_mapping, df.columns)
+        if grouping_cols:
             grouper_keys = [
-                _episode_key(row, episode_cols) for _, row in df.iterrows()
+                _episode_key(row, grouping_cols) for _, row in df.iterrows()
             ]
         else:
             grouper_keys = [str(i) for i in range(len(df))]

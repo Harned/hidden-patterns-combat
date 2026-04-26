@@ -24,6 +24,7 @@ import pandas as pd
 
 from hpc_algo.detection import strong_zap_candidates
 from hpc_algo.loading import LoadedExcel
+from hpc_algo.mapping import episode_grouping_columns, episode_key
 from hpc_algo.schema import (
     AuditReport,
     BaselineReport,
@@ -218,15 +219,25 @@ def build_baseline_with_mapping(
             empty_data_rows_per_sheet[sheet_name] = 0
 
         if HiddenGroup.EPISODE in sheet_mapping.roles:
-            cols = sheet_mapping.roles[HiddenGroup.EPISODE]
-            for col in cols:
+            for col in sheet_mapping.roles[HiddenGroup.EPISODE]:
                 if col not in df.columns:
                     unknown.append(f"{sheet_name}.{col}")
-                    continue
-                episodes_per_sheet[sheet_name] = int(
-                    df[col].dropna().astype(str).nunique()
-                )
-                break  # берём первую найденную
+
+            # Эпизод уникален в рамках листа, борца и схватки. Голый
+            # "№ эпизода" обычно перезапускается у каждого борца, поэтому
+            # nunique по одной колонке систематически занижает счёт.
+            grouping_cols = episode_grouping_columns(
+                sheet_mapping, df.columns
+            )
+            if grouping_cols and not df.empty:
+                keys: set[str] = set()
+                for _, row in df.iterrows():
+                    key = episode_key(row, grouping_cols)
+                    if key:
+                        keys.add(key)
+                episodes_per_sheet[sheet_name] = len(keys)
+            else:
+                episodes_per_sheet[sheet_name] = 0
 
         for role, cols in sheet_mapping.roles.items():
             if role == HiddenGroup.TIME:

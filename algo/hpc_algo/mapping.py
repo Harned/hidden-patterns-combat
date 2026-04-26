@@ -422,3 +422,61 @@ def load_mapped_sheets(
                 df = df.iloc[offset:].reset_index(drop=True)
         frames[sheet_name] = df
     return frames
+
+
+# Роли, по которым строится составной ключ эпизода. Порядок важен — он
+# определяет порядок частей в "athlete|bout|episode_number" и
+# воспроизводим между baseline и hmm.
+_EPISODE_KEY_ROLES: tuple[HiddenGroup, ...] = (
+    HiddenGroup.ATHLETE,
+    HiddenGroup.BOUT,
+    HiddenGroup.EPISODE,
+)
+
+
+def episode_grouping_columns(
+    sheet_mapping: SheetMapping,
+    df_columns: Iterable[str],
+) -> list[str]:
+    """Колонки для уникальной идентификации эпизода в одном листе.
+
+    Эпизод — это технико-тактическая единица в схватке конкретного
+    борца. Голый ``№ эпизода`` не уникален между борцами/схватками
+    (в реальных файлах нумерация перезапускается), поэтому в качестве
+    grouper'а мы используем составной ключ из колонок ролей
+    ``athlete`` → ``bout`` → ``episode`` (только тех, что присутствуют
+    в df). Возвращаемый список используется и в baseline, и в hmm,
+    чтобы число эпизодов и количество последовательностей совпадали.
+    """
+
+    available = set(df_columns)
+    cols: list[str] = []
+    seen: set[str] = set()
+    for role in _EPISODE_KEY_ROLES:
+        for col in sheet_mapping.roles.get(role, []) or []:
+            if col in available and col not in seen:
+                cols.append(col)
+                seen.add(col)
+    return cols
+
+
+def episode_key(row: pd.Series, columns: list[str]) -> str:
+    """Сформировать ключ эпизода из значений ``columns`` в строке.
+
+    Пустые значения (NaN/None) пропускаются. Если в итоге пусто —
+    возвращаем пустую строку: вызывающая сторона решает, считать ли
+    такую запись «эпизодом-сиротой».
+    """
+
+    pieces: list[str] = []
+    for col in columns:
+        value = row.get(col)
+        if value is None:
+            continue
+        if isinstance(value, float) and pd.isna(value):
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        pieces.append(text)
+    return "|".join(pieces)
