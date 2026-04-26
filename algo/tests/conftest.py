@@ -309,6 +309,75 @@ def thin_excel(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def balls_zap_excel(tmp_path: Path) -> Path:
+    """Multi-row header с супер-заголовком «Баллы» и числовой судейской шкалой.
+
+    Цель — проверить, что:
+      * детекция распознаёт колонку под «Баллы» как ZAP-кандидата по
+        маркеру `балл` + числовой контент-поддержке;
+      * после явного включения «Баллы» в роль ZAP плотность ZAP-сигнала
+        достаточна для прохождения guard ``low_zap_density``.
+    """
+
+    import openpyxl
+
+    path = tmp_path / "balls_zap.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Общее"
+
+    # row 0: супер-заголовки.
+    ws.append(
+        [
+            "ФИО борца",
+            "Технико-тактический эпизод",
+            None,
+            "Баллы",
+            "Завершающие атаку приемы (n)",
+            None,
+        ]
+    )
+    # row 1: подгруппы (для «Баллы» под-заголовка нет — атомарно, как в
+    # реальном файле).
+    ws.append([None, None, None, None, None, None])
+    # row 2: атомарные заголовки.
+    ws.append(
+        [
+            None,
+            "№ эпизода",
+            "Время эпизода, с.",
+            None,
+            "Удержание",
+            "На руку",
+        ]
+    )
+
+    import random
+
+    rng = random.Random(7)
+    # Алфавит судейских баллов: 1/2/4/6/8 (малый, max=8, ≤ 16).
+    score_alphabet = [1, 2, 4, 6, 8]
+    names = ["Иванов", "Петров", "Сидоров", "Кузнецов"]
+    for i in range(1, 81):  # 80 эпизодов.
+        name = rng.choice(names)
+        time_s = rng.randint(10, 40)
+        # ~35% эпизодов оценены ненулевым баллом → плотность ZAP > порога.
+        score: int | None
+        if rng.random() < 0.35:
+            score = rng.choice(score_alphabet)
+        else:
+            score = 0
+        # Удержание/«На руку» — редкие, чтобы без «Баллы» сигнал был слабым
+        # (как в реальном файле).
+        udrzh = 1 if rng.random() < 0.04 else 0
+        ruka = 1 if rng.random() < 0.03 else 0
+        ws.append([name, i, time_s, score, udrzh, ruka])
+
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
 def very_dense_excel(tmp_path: Path) -> Path:
     """Плотная фикстура (≥150 эпизодов) для 7-state HMM.
 

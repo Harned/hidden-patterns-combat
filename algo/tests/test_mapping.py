@@ -112,8 +112,14 @@ def test_analyze_with_empty_mapping_falls_back_to_heuristic(
 ) -> None:
     empty = ColumnMappingConfig(sheets={})
     result = analyze_source(multirow_header_excel, AnalyzeConfig(column_mapping=empty))
-    # Эвристика на multi-row header даёт needs_column_mapping.
-    assert result.status == AnalysisStatus.NEEDS_COLUMN_MAPPING
+    # Эвристика на multi-row header при single-row парсинге может
+    # увидеть ЗАП-подобный контент в колонках, попавших в данные
+    # (sub-header «ЗАП» оказался в данных, а маркер «Баллы» теперь
+    # распознаётся правилом ZAP). В любом случае mapping не применён.
+    assert result.status in {
+        AnalysisStatus.NEEDS_COLUMN_MAPPING,
+        AnalysisStatus.BASELINE_ONLY,
+    }
     assert result.applied_mapping is None
 
 

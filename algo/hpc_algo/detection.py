@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -52,6 +53,16 @@ _HEADER_RULES: tuple[_Rule, ...] = (
         header_markers=("удержание", "болевой"),
         base_score=0.7,
         rationale="Заголовок содержит маркер наблюдаемого судейского результата (удержание/болевой).",
+    ),
+    _Rule(
+        group=HiddenGroup.ZAP,
+        header_markers=("балл", "оценк"),
+        base_score=0.65,
+        rationale=(
+            "Заголовок содержит маркер судейского балла/оценки. "
+            "По DOMAIN_SPEC такая колонка является фактом ZAP-наблюдения, "
+            "но требует ручного подтверждения в column mapping."
+        ),
     ),
     # --- Маневрирование ---
     _Rule(
@@ -127,15 +138,77 @@ _ZAP_EXPECTED_TOKENS = (
 )
 
 
-def _zap_content_support(values: Iterable[Any]) -> float:
-    """Во сколько раз содержимое колонки похоже на ЗАП-метки."""
+# Лимиты для распознавания «судейской числовой шкалы» (не путать с count-полем).
+# Реальные колонки судейских баллов — небольшой алфавит положительных целых.
+_SCORING_SCALE_MAX_ALPHABET = 8
+_SCORING_SCALE_MAX_VALUE = 16
 
-    normalized = [normalize_header(v) for v in values if v is not None]
+
+def _looks_like_scoring_scale(values: Iterable[Any]) -> bool:
+    """Похоже ли содержимое на судейскую балльную шкалу (малый алфавит ≤ 16)."""
+
+    nonzero_alphabet: set[int] = set()
+    max_value = 0
+    saw_any_numeric = False
+    for v in values:
+        if v is None:
+            continue
+        if isinstance(v, float) and not math.isfinite(v):
+            return False
+        try:
+            num = float(v)
+        except (TypeError, ValueError):
+            return False
+        if num < 0 or num != int(num):
+            return False
+        saw_any_numeric = True
+        as_int = int(num)
+        if as_int > 0:
+            nonzero_alphabet.add(as_int)
+            if as_int > max_value:
+                max_value = as_int
+    if not saw_any_numeric or not nonzero_alphabet:
+        return False
+    return (
+        len(nonzero_alphabet) <= _SCORING_SCALE_MAX_ALPHABET
+        and max_value <= _SCORING_SCALE_MAX_VALUE
+    )
+
+
+def _zap_content_support(values: Iterable[Any]) -> float:
+    """Во сколько раз содержимое колонки похоже на ЗАП-наблюдение.
+
+    Поддерживаются две формы:
+
+    * текстовая — значения содержат метки ЗАП-Р/Н/Т / удержание / болевой;
+    * числовая судейская шкала — небольшой алфавит положительных целых
+      (например 1/2/4/6/8) с :data:`_SCORING_SCALE_MAX_VALUE` сверху.
+      По DOMAIN_SPEC сам факт ненулевой судейской оценки эпизода уже
+      является ZAP-наблюдением; шкала значений алгоритмом не
+      интерпретируется.
+    """
+
+    sample = list(values)
+    normalized = [normalize_header(v) for v in sample if v is not None]
     normalized = [v for v in normalized if v]
-    if not normalized:
-        return 0.0
-    hits = sum(1 for v in normalized if any(tok in v for tok in _ZAP_EXPECTED_TOKENS))
-    return hits / len(normalized)
+    if normalized:
+        text_hits = sum(
+            1 for v in normalized if any(tok in v for tok in _ZAP_EXPECTED_TOKENS)
+        )
+        if text_hits > 0:
+            return text_hits / len(normalized)
+
+    if _looks_like_scoring_scale(sample):
+        # Поддержка = доля непустых ненулевых записей в семпле. Низкое
+        # значение тоже считается «слабой» поддержкой — без штрафа за
+        # отсутствие текстовых меток. Числовое значение ≠ метка класса.
+        non_null = [v for v in sample if v is not None]
+        if not non_null:
+            return 0.0
+        positive = sum(1 for v in non_null if float(v) > 0)
+        return positive / len(non_null)
+
+    return 0.0
 
 
 def _time_content_support(series: pd.Series) -> float:
