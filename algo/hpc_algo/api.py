@@ -25,6 +25,7 @@ from hpc_algo.baseline import (
 from hpc_algo.detection import detect_columns, strong_zap_candidates, weak_candidates
 from hpc_algo.hmm import HMMRunConfig
 from hpc_algo.loading import ExcelLoadError, LoadedExcel, load_excel
+from hpc_algo.trainer import build_athlete_episode_rollup
 from hpc_algo.schema import (
     AnalysisResult,
     AnalysisStatus,
@@ -558,6 +559,8 @@ def _analyze_with_mapping(
         mapping_applied=True,
     )
 
+    trainer_summary = build_athlete_episode_rollup(frames, config)
+
     return AnalysisResult(
         status=status,
         source_metadata=source_meta,
@@ -569,6 +572,7 @@ def _analyze_with_mapping(
         charts=charts,
         warnings=warnings,
         errors=[],
+        trainer_athlete_summary=trainer_summary,
         report=report_text,
     )
 

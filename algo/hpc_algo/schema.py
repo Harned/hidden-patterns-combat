@@ -261,6 +261,37 @@ class BaselineReport(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class AthleteEpisodeStats(BaseModel):
+    """Описательная сводка одного спортсмена для тренерской вкладки.
+
+    Считается только в mapping-ветке при наличии ролей `athlete` и
+    `episode`. ``episode_count`` — число уникальных эпизодов, в которых
+    встретился этот спортсмен. Уникальность ключа эпизода учитывает имя
+    листа, чтобы совпадающие номера эпизодов в разных весовых категориях
+    не схлопывались между собой.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    athlete: str
+    episode_count: int = Field(..., ge=0)
+
+
+class TrainerAthleteSummary(BaseModel):
+    """Контейнер тренерской вкладки.
+
+    Отдельная модель, чтобы добавить агрегаты (общее число спортсменов /
+    эпизодов) и явные ``notes`` без раздувания корневого результата.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    athletes: list[AthleteEpisodeStats] = Field(default_factory=list)
+    total_athletes: int = 0
+    total_episodes: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     """Полный результат работы ``analyze_source``.
 
@@ -290,6 +321,14 @@ class AnalysisResult(BaseModel):
     charts: list[ChartData] = Field(default_factory=list)
     warnings: list[WarningItem] = Field(default_factory=list)
     errors: list[WarningItem] = Field(default_factory=list)
+    trainer_athlete_summary: TrainerAthleteSummary | None = Field(
+        default=None,
+        description=(
+            "Описательная сводка по спортсменам для тренерской вкладки."
+            " Заполняется только в mapping-ветке при наличии ролей athlete"
+            " и episode хотя бы на одном листе."
+        ),
+    )
 
     report: str = Field(
         default="",
