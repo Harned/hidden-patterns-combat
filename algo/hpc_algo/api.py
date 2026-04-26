@@ -16,7 +16,7 @@ from typing import Any
 
 from hpc_algo import hmm as hmm_mod
 from hpc_algo import mapping as mapping_mod
-from hpc_algo.audit import build_audit
+from hpc_algo.audit import build_audit, filter_audit_to_sheets
 from hpc_algo.baseline import (
     build_baseline,
     build_baseline_with_mapping,
@@ -487,13 +487,18 @@ def _analyze_with_mapping(
     analyze_config: AnalyzeConfig,
 ) -> AnalysisResult:
     frames = mapping_mod.load_mapped_sheets(loaded.path, config)
-    baseline, unknown = build_baseline_with_mapping(frames, audit, config)
+    # Сужаем audit к листам, фактически вошедшим в анализ. Сам baseline
+    # внутри уже фильтрует пропуски по mapping, но data_audit/отчёт/метаданные
+    # должны быть согласованы с этим срезом.
+    mapping_sheet_names = list(config.sheets.keys())
+    audit_scoped = filter_audit_to_sheets(audit, set(mapping_sheet_names))
+    baseline, unknown = build_baseline_with_mapping(frames, audit_scoped, config)
     status = _decide_status_with_mapping(baseline)
 
+    # На mapping-пути не эмитим audit.possible_multirow_header: пользователь
+    # уже задал header_rows в мастере, и подсказка про "укажите column_mapping
+    # с header_rows" дублирует уже сделанный шаг.
     warnings: list[WarningItem] = []
-    mr = _build_multirow_warning(audit)
-    if mr is not None:
-        warnings.append(mr)
     warnings.extend(_mapping_warnings(config, baseline, unknown, status))
 
     # --- HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005 / TASK_SPEC_008) ---
@@ -540,14 +545,14 @@ def _analyze_with_mapping(
         filename=loaded.path.name,
         size_bytes=loaded.size_bytes,
         sha256=loaded.sha256,
-        sheet_count=len(loaded.sheet_names),
-        sheet_names=loaded.sheet_names,
+        sheet_count=len(mapping_sheet_names),
+        sheet_names=mapping_sheet_names,
     )
     charts = build_charts(baseline) + hmm_charts
     report_text = _build_report(
         status=status,
         source=source_meta,
-        audit=audit,
+        audit=audit_scoped,
         detection=detection,
         baseline=baseline,
         mapping_applied=True,
@@ -556,7 +561,7 @@ def _analyze_with_mapping(
     return AnalysisResult(
         status=status,
         source_metadata=source_meta,
-        data_audit=audit,
+        data_audit=audit_scoped,
         detected_columns=detection,
         basic_statistics=baseline,
         applied_mapping=config,

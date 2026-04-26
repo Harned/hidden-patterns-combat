@@ -155,6 +155,26 @@ def build_audit(loaded: LoadedExcel) -> AuditReport:
     """Собрать :class:`AuditReport` для загруженного Excel."""
 
     sheet_reports = [_audit_sheet(name, df) for name, df in loaded.sheets.items()]
+    return _aggregate_audit(sheet_reports)
+
+
+def filter_audit_to_sheets(audit: AuditReport, names: set[str]) -> AuditReport:
+    """Сузить :class:`AuditReport` к подмножеству листов.
+
+    Используется в mapping-ветке, чтобы `data_audit` и сводка в текстовом
+    отчёте не описывали листы, которые пользователь исключил из анализа.
+    Порядок листов сохраняется как в исходном `audit.sheets`. Агрегаты
+    (`total_rows`, `total_cells`, `overall_null_ratio`) пересчитываются по
+    оставшимся листам по той же формуле, что и в :func:`build_audit`.
+    """
+
+    if not names:
+        return _aggregate_audit([])
+    selected = [s for s in audit.sheets if s.name in names]
+    return _aggregate_audit(selected)
+
+
+def _aggregate_audit(sheet_reports: list[SheetAudit]) -> AuditReport:
     total_rows = sum(s.n_rows for s in sheet_reports)
     total_cells = sum(s.n_rows * s.n_cols for s in sheet_reports)
 
