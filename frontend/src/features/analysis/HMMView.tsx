@@ -85,22 +85,40 @@ const TrajectoriesTable: React.FC<{ hmm: HMMResult }> = ({ hmm }) => {
             <th className="py-2 px-3 font-medium">Лист</th>
             <th className="py-2 px-3 font-medium">Эпизод</th>
             <th className="py-2 px-3 font-medium">Длина</th>
+            <th className="py-2 px-3 font-medium">ZAP</th>
             <th className="py-2 px-3 font-medium">Наблюдения</th>
             <th className="py-2 px-3 font-medium">Скрытая траектория</th>
+            <th className="py-2 px-3 font-medium">conf.</th>
             <th className="py-2 px-3 font-medium">log L</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((tr, i) => (
-            <tr key={i} className="border-t border-brand-100 align-top">
+            <tr
+              key={i}
+              className="border-t border-brand-100 align-top"
+              style={tr.has_zap ? undefined : { opacity: 0.6 }}
+            >
               <td className="py-2 px-3">{tr.sheet}</td>
               <td className="py-2 px-3">{tr.episode_index}</td>
               <td className="py-2 px-3">{tr.length}</td>
+              <td className="py-2 px-3">
+                {tr.has_zap ? (
+                  <Badge tone="success">есть</Badge>
+                ) : (
+                  <Badge tone="warning">no_zap</Badge>
+                )}
+              </td>
               <td className="py-2 px-3 font-mono text-xs max-w-xs break-words">
                 {tr.observation_tokens.join(" → ")}
               </td>
               <td className="py-2 px-3 font-mono text-xs">
                 {tr.state_path.join(" → ")}
+              </td>
+              <td className="py-2 px-3 font-mono text-xs">
+                {tr.confidence !== null
+                  ? `${(tr.confidence * 100).toFixed(0)}%`
+                  : "—"}
               </td>
               <td className="py-2 px-3 font-mono text-xs">
                 {fmt(tr.log_likelihood, 2)}
@@ -114,6 +132,69 @@ const TrajectoriesTable: React.FC<{ hmm: HMMResult }> = ({ hmm }) => {
           Показаны первые {rows.length} из {hmm.trajectories.length} траекторий.
         </div>
       )}
+    </div>
+  );
+};
+
+const VariantAttemptsTable: React.FC<{ hmm: HMMResult }> = ({ hmm }) => {
+  if (!hmm.tried_variants || hmm.tried_variants.length === 0) return null;
+
+  const statusTone: Record<string, "success" | "warning" | "info" | "neutral"> = {
+    applied: "success",
+    passed: "info",
+    rejected_by_guard: "warning",
+    rejected_by_sanity: "warning",
+    rejected_by_bic: "neutral",
+    fit_failed: "warning",
+  };
+  const statusLabel: Record<string, string> = {
+    applied: "применён",
+    passed: "пройден",
+    rejected_by_guard: "отброшен guard",
+    rejected_by_sanity: "отброшен sanity",
+    rejected_by_bic: "проиграл по BIC",
+    fit_failed: "ошибка обучения",
+  };
+
+  return (
+    <div className="overflow-x-auto rounded-md border border-brand-100">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-brand-700/70 bg-brand-50">
+            <th className="py-2 px-3 font-medium">Вариант</th>
+            <th className="py-2 px-3 font-medium">Статус</th>
+            <th className="py-2 px-3 font-medium">состояний (исп./всего)</th>
+            <th className="py-2 px-3 font-medium">log L</th>
+            <th className="py-2 px-3 font-medium">BIC</th>
+            <th className="py-2 px-3 font-medium">Причина</th>
+          </tr>
+        </thead>
+        <tbody>
+          {hmm.tried_variants.map((att, i) => (
+            <tr key={i} className="border-t border-brand-100 align-top">
+              <td className="py-2 px-3 font-mono text-xs">{att.variant}</td>
+              <td className="py-2 px-3">
+                <Badge tone={statusTone[att.status] ?? "neutral"}>
+                  {statusLabel[att.status] ?? att.status}
+                </Badge>
+              </td>
+              <td className="py-2 px-3 font-mono text-xs">
+                {att.n_states_used !== null ? att.n_states_used : "—"}
+                {att.n_states !== null ? ` / ${att.n_states}` : ""}
+              </td>
+              <td className="py-2 px-3 font-mono text-xs">
+                {att.log_likelihood !== null ? fmt(att.log_likelihood, 2) : "—"}
+              </td>
+              <td className="py-2 px-3 font-mono text-xs">
+                {att.bic !== null ? fmt(att.bic, 2) : "—"}
+              </td>
+              <td className="py-2 px-3 text-xs text-brand-900/80">
+                {att.reason || "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 };
@@ -141,6 +222,11 @@ export const HMMView: React.FC<{ hmm: HMMResult }> = ({ hmm }) => (
       {hmm.parameters.bic !== null && (
         <Badge tone="info">BIC = {fmt(hmm.parameters.bic, 2)}</Badge>
       )}
+      {hmm.average_confidence !== null && (
+        <Badge tone={hmm.average_confidence >= 0.7 ? "success" : "warning"}>
+          avg confidence: {(hmm.average_confidence * 100).toFixed(0)}%
+        </Badge>
+      )}
       <Badge tone="neutral">seed: {hmm.parameters.random_seed}</Badge>
       <Badge tone="neutral">
         состояний: {hmm.parameters.n_states}
@@ -151,7 +237,22 @@ export const HMMView: React.FC<{ hmm: HMMResult }> = ({ hmm }) => (
       <Badge tone={hmm.sanity["transition_dominance_ok"] ? "success" : "warning"}>
         sanity: {hmm.sanity["transition_dominance_ok"] ? "ok" : "weak"}
       </Badge>
+      {hmm.no_zap_trajectories > 0 && (
+        <Badge tone="warning">
+          без ZAP: {hmm.no_zap_trajectories} эпизодов (исключены из обучения)
+        </Badge>
+      )}
     </div>
+
+    {hmm.no_zap_trajectories > 0 && (
+      <div className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        В данных {hmm.no_zap_trajectories} эпизодов без зафиксированного ЗАП.
+        Они не использовались при обучении HMM (эмиссии бы выровнялись по
+        noop-токену), но всё равно показаны в таблице и timeline с пометкой
+        no_zap — Viterbi для них восстанавливается по приору переходов, а
+        не по наблюдениям.
+      </div>
+    )}
 
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
       <div>
@@ -176,6 +277,20 @@ export const HMMView: React.FC<{ hmm: HMMResult }> = ({ hmm }) => (
         {hmm.interpretation}
       </pre>
     </div>
+
+    {hmm.tried_variants && hmm.tried_variants.length > 0 && (
+      <div className="mt-6">
+        <div className="text-sm font-medium text-brand-900 mb-2">
+          Варианты HMM
+        </div>
+        <p className="text-xs text-brand-700/70 mb-2">
+          Алгоритм пробует обе модели (3-state и 7-state) и выбирает по
+          BIC и sanity-проверкам. Здесь видно, что было применено и
+          почему остальные варианты отбракованы.
+        </p>
+        <VariantAttemptsTable hmm={hmm} />
+      </div>
+    )}
 
     <div className="mt-6">
       <div className="text-sm font-medium text-brand-900 mb-2">

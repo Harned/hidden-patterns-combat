@@ -31,6 +31,7 @@ export type AnalysisStatus =
   | "baseline_only"
   | "needs_column_mapping"
   | "hmm_ready"
+  | "hmm_low_signal"
   | "failed";
 
 export type WarningSeverity = "info" | "warning" | "error";
@@ -190,10 +191,32 @@ export interface HMMParameters {
 export interface HMMTrajectory {
   sheet: string;
   episode_index: number;
+  episode_key: string;
   length: number;
   observation_tokens: string[];
   state_path: string[];
   log_likelihood: number;
+  has_zap: boolean;
+  state_posterior: number[][] | null;
+  confidence: number | null;
+}
+
+export type HMMVariantStatus =
+  | "applied"
+  | "passed"
+  | "rejected_by_guard"
+  | "rejected_by_sanity"
+  | "rejected_by_bic"
+  | "fit_failed";
+
+export interface HMMVariantAttempt {
+  variant: HMMVariant;
+  status: HMMVariantStatus;
+  reason: string;
+  bic: number | null;
+  log_likelihood: number | null;
+  n_states_used: number | null;
+  n_states: number | null;
 }
 
 export interface HMMResult {
@@ -202,6 +225,10 @@ export interface HMMResult {
   state_distribution: Record<string, number>;
   sanity: Record<string, unknown>;
   interpretation: string;
+  average_confidence: number | null;
+  training_excluded_episodes: number;
+  no_zap_trajectories: number;
+  tried_variants: HMMVariantAttempt[];
 }
 
 export interface AthleteEpisodeStats {

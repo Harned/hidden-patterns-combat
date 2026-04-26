@@ -7,6 +7,7 @@ const labels: Record<AnalysisStatus, string> = {
   baseline_only: "Baseline",
   needs_column_mapping: "Нужен column mapping",
   hmm_ready: "HMM готов",
+  hmm_low_signal: "HMM (низкий сигнал ZAP)",
   failed: "Ошибка",
 };
 
@@ -18,6 +19,7 @@ const tones: Record<
   baseline_only: "info",
   needs_column_mapping: "warning",
   hmm_ready: "success",
+  hmm_low_signal: "warning",
   failed: "danger",
 };
 

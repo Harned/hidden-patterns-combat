@@ -295,13 +295,15 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
                 )}
               </Section>
 
-              {result.hmm && result.status === "hmm_ready" && (
-                <Suspense
-                  fallback={<SectionFallback label="Загрузка HMM-диагностики..." />}
-                >
-                  <HMMView hmm={result.hmm} />
-                </Suspense>
-              )}
+              {result.hmm &&
+                (result.status === "hmm_ready" ||
+                  result.status === "hmm_low_signal") && (
+                  <Suspense
+                    fallback={<SectionFallback label="Загрузка HMM-диагностики..." />}
+                  >
+                    <HMMView hmm={result.hmm} />
+                  </Suspense>
+                )}
               <ZapChannelsCard baseline={result.basic_statistics} />
               <DetectedColumns detection={result.detected_columns} />
               <ChartsGrid
