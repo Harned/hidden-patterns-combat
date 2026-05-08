@@ -7,7 +7,7 @@ REAL_EXCEL ?= docs/Оценка СД содержание.xlsx
 .PHONY: help venv install install-backend install-frontend \
         test test-algo test-backend \
         lint lint-algo lint-backend typecheck-frontend \
-        analyze report summary individual-models \
+        analyze report summary individual-models aggregate-models \
         dev-backend dev-frontend build-frontend \
         db-upgrade db-revision \
         docker-up docker-down docker-logs \
@@ -40,6 +40,7 @@ help:
 	@echo "Algo CLI on real Excel:"
 	@echo "  make analyze / report / summary"
 	@echo "  make individual-models    — TASK_SPEC_011: ~30 HTML-моделей в reports/individual/"
+	@echo "  make aggregate-models     — TASK_SPEC_012: 10 агрегатов по призёрам в reports/aggregate/"
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -137,6 +138,28 @@ individual-models:
 		$(VENV)/bin/hpc-algo individual-markov "$(REAL_EXCEL)" \
 			--state-groups "$(STATE_GROUPS)" \
 			--output-dir "$(INDIVIDUAL_OUT_DIR)"; \
+	fi
+
+# TASK_SPEC_012 — агрегатные модели по призёрам 1–3 каждой весовой категории.
+# FINALISTS — список призёров; если файл существует, он приоритетнее
+# heuristic-детекта по колонкам Excel.
+FINALISTS ?= config/finalists.yaml
+AGGREGATE_OUT_DIR ?= reports/aggregate
+AGGREGATE_ALPHA ?= 0.5
+
+aggregate-models:
+	@mkdir -p "$(AGGREGATE_OUT_DIR)"
+	@if [ -f "$(FINALISTS)" ]; then \
+		$(VENV)/bin/hpc-algo aggregate-markov "$(REAL_EXCEL)" \
+			--state-groups "$(STATE_GROUPS)" \
+			--finalists "$(FINALISTS)" \
+			--alpha "$(AGGREGATE_ALPHA)" \
+			--output-dir "$(AGGREGATE_OUT_DIR)"; \
+	else \
+		$(VENV)/bin/hpc-algo aggregate-markov "$(REAL_EXCEL)" \
+			--state-groups "$(STATE_GROUPS)" \
+			--alpha "$(AGGREGATE_ALPHA)" \
+			--output-dir "$(AGGREGATE_OUT_DIR)"; \
 	fi
 
 clean:

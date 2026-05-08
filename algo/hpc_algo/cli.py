@@ -192,5 +192,74 @@ def individual_markov_cmd(
         )
 
 
+@app.command("aggregate-markov")
+def aggregate_markov_cmd(
+    source: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        help="Excel-источник (например, docs/Оценка СД содержание.xlsx).",
+    ),
+    state_groups: Path = typer.Option(
+        Path("config/state_groups.yaml"),
+        "--state-groups",
+        "-c",
+        exists=True,
+        readable=True,
+        help="YAML-конфиг 5-state алфавита (тот же, что в individual-markov).",
+    ),
+    finalists: Path | None = typer.Option(
+        None,
+        "--finalists",
+        "-f",
+        help=(
+            "YAML со списком призёров {weight_class: {place: athlete}}."
+            " Если не задан — пробуем извлечь из колонок Excel"
+            " ('Весовая категория' / 'Место')."
+        ),
+    ),
+    output_dir: Path = typer.Option(
+        Path("reports/aggregate"),
+        "--output-dir",
+        "-o",
+        help="Каталог HTML-отчётов и summary.json.",
+    ),
+    sheet: str | None = typer.Option(
+        None,
+        "--sheet",
+        help="Имя листа; по умолчанию берётся из YAML state-groups.",
+    ),
+    alpha: float = typer.Option(
+        0.5,
+        "--alpha",
+        min=0.0,
+        max=1.0,
+        help=(
+            "Вес L1 в composite-метрике; default=0.5. composite ="
+            " α·L1(π) + (1-α)·KL(A)."
+        ),
+    ),
+) -> None:
+    """Построить агрегатные модели по призёрам 1–3 каждой весовой категории."""
+
+    from hpc_algo.build_aggregate import build_aggregate_models
+
+    summary = build_aggregate_models(
+        excel_path=source,
+        state_groups_path=state_groups,
+        output_dir=output_dir,
+        finalists_path=finalists,
+        sheet=sheet,
+        alpha=alpha,
+    )
+    typer.echo(
+        f"OK: построено {summary.weight_classes_rendered} агрегатов "
+        f"(пропущено {len(summary.skipped_weight_classes)}). "
+        f"index: {output_dir}/index.html"
+    )
+    if summary.skipped_weight_classes:
+        typer.echo("Пропущенные категории: " + ", ".join(summary.skipped_weight_classes))
+
+
 if __name__ == "__main__":
     app()

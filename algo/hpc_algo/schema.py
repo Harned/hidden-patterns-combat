@@ -760,3 +760,102 @@ class BuildIndividualSummary(BaseModel):
     split_warnings: list[MarkovWarning] = Field(default_factory=list)
     column_validation_warnings: list[MarkovWarning] = Field(default_factory=list)
     per_athlete_warning_counts: dict[str, int] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Markov aggregate (TASK_SPEC_012)
+# ---------------------------------------------------------------------------
+
+
+class FinalistEntry(BaseModel):
+    """Одна запись «финалист в категории» из config/finalists.yaml."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    athlete: str
+    place: int = Field(..., ge=1, description="1, 2 или 3 для призёров; >3 для финалиста.")
+    weight_class: str
+
+
+class MarkovAggregateResult(BaseModel):
+    """Агрегатная 5-state Marков-цепь по списку индивидуалов одной весовой категории.
+
+    Считается через **сумму transition_counts** индивидуалов, без склейки
+    последовательностей (`TASK_SPEC_012` § Артефакты). Это исключает
+    ложные переходы между разными атлетами на стыке.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    weight_class: str
+    members: list[str] = Field(
+        default_factory=list,
+        description="Имена спортсменов, чьи transition_counts вошли в агрегат.",
+    )
+    members_count: int = Field(default=0, ge=0)
+    mode: MarkovMode = "single"
+    states: list[EpisodeState] = Field(...)
+    transition_counts: list[list[int]] = Field(...)
+    transition_matrix: list[list[float]] = Field(...)
+    stationary: list[float] = Field(...)
+    visit_counts: dict[str, int] = Field(default_factory=dict)
+    bout_count_total: int = Field(default=0, ge=0)
+    episode_count_total: int = Field(default=0, ge=0)
+    warnings: list[MarkovWarning] = Field(default_factory=list)
+
+
+class Divergence(BaseModel):
+    """KL по транзициям + L1 по стационарке + композитная метрика.
+
+    `composite = alpha * l1_stationary + (1 - alpha) * kl_transitions`.
+
+    KL — асимметричная (KL(individual ‖ aggregate)), L1 — симметричная
+    норма. Эпсилон-сглаживание агрегата применяется только при KL,
+    чтобы не делить на ноль (см. `compare.py`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    individual: str
+    weight_class: str
+    kl_transitions: float = Field(..., ge=0.0)
+    l1_stationary: float = Field(..., ge=0.0)
+    composite: float = Field(..., ge=0.0)
+    alpha: float = Field(..., ge=0.0, le=1.0)
+
+
+class RankingEntry(BaseModel):
+    """Одна строка ранжирования финалистов внутри весовой категории."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    athlete: str
+    weight_class: str
+    place: int | None = Field(
+        default=None,
+        description="Призовое место 1/2/3 (если известно) или None для прочих финалистов.",
+    )
+    divergence: Divergence
+    rank: int = Field(..., ge=1, description="1-based позиция по композитной метрике.")
+
+
+class BuildAggregateSummary(BaseModel):
+    """Сводка по запуску `make aggregate-models` / CLI aggregate-markov."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    sheet: str
+    state_groups_path: str
+    finalists_path: str | None = None
+    output_dir: str
+    weight_classes_total: int = 0
+    weight_classes_rendered: int = 0
+    rendered_weight_classes: list[str] = Field(default_factory=list)
+    skipped_weight_classes: list[str] = Field(default_factory=list)
+    config_warnings: list[MarkovWarning] = Field(default_factory=list)
+    finalists_warnings: list[MarkovWarning] = Field(default_factory=list)
+    split_warnings: list[MarkovWarning] = Field(default_factory=list)
+    column_validation_warnings: list[MarkovWarning] = Field(default_factory=list)
+    per_class_member_counts: dict[str, int] = Field(default_factory=dict)
+    alpha: float = Field(default=0.5, ge=0.0, le=1.0)
