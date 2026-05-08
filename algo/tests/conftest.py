@@ -378,6 +378,108 @@ def balls_zap_excel(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def bout_resets_excel(tmp_path: Path) -> Path:
+    """Excel без явной колонки «Схватка», но с эпизодами, перезапускающимися
+    в каждой схватке.
+
+    На каждого из четырёх борцов приходится 2 виртуальных схватки по 3
+    эпизода (нумерация эпизодов сбрасывается с 3 → 1 при переходе к
+    следующей схватке). Без виртуального bout группировка по одному
+    борцу даёт 1 длинную серию на спортсмена; с виртуальным bout —
+    8 серий длины 3, что соответствует реальной структуре боёв.
+    """
+
+    import openpyxl
+
+    path = tmp_path / "bout_resets.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "48"
+
+    ws.append(
+        [
+            "ФИО борца",
+            "Технико-тактический эпизод",
+            None,
+            "Завершающие атаку приемы (n)",
+            None,
+        ]
+    )
+    ws.append([None, None, None, "Болевой прием", None])
+    ws.append(
+        [
+            None,
+            "№ эпизода",
+            "Время эпизода, с.",
+            "Удержание",
+            "На руку",
+        ]
+    )
+
+    athletes = ["Иванов", "Петров", "Сидоров", "Кузнецов"]
+    pattern = [
+        # bout 1: episodes 1..3, then bout 2: episodes 1..3
+        (1, 1, 0),
+        (2, 0, 1),
+        (3, 1, 0),
+        (1, 0, 1),
+        (2, 1, 0),
+        (3, 1, 1),
+    ]
+    for athlete in athletes:
+        for ep, udrzh, ruka in pattern:
+            ws.append([athlete, ep, 15 + ep, udrzh, ruka])
+
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def totals_row_excel(tmp_path: Path) -> Path:
+    """Excel с одной строкой-итогом «Итого» в хвосте листа.
+
+    Реальные файлы вида ``docs/Оценка СД содержание.xlsx`` иногда
+    содержат хвостовую строку с агрегатами, структурно неотличимую от
+    обычного эпизода. Без фильтра она попадает в baseline/HMM и
+    исказит распределения. Фикстура минимальна (3 эпизода + 1 итог)
+    и предназначена только для проверки детектора.
+    """
+
+    import openpyxl
+
+    path = tmp_path / "totals.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "48"
+
+    ws.append(
+        [
+            "ФИО борца",
+            "Технико-тактический эпизод",
+            None,
+            "Завершающие атаку приемы (n)",
+            None,
+        ]
+    )
+    ws.append([None, None, None, "Болевой прием", None])
+    ws.append(
+        [
+            None,
+            "№ эпизода",
+            "Время эпизода, с.",
+            "Удержание",
+            "На руку",
+        ]
+    )
+    ws.append(["Иванов", 1, 12, 1, 0])
+    ws.append(["Иванов", 2, 18, 0, 1])
+    ws.append(["Иванов", 3, 14, 1, 0])
+    ws.append(["Итого", None, 44, 2, 1])
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
 def very_dense_excel(tmp_path: Path) -> Path:
     """Плотная фикстура (≥150 эпизодов) для 7-state HMM.
 
@@ -435,6 +537,113 @@ def very_dense_excel(tmp_path: Path) -> Path:
                 1 if rng.random() < 0.2 else 0,
             ]
         )
+
+    wb.save(path)
+    return path
+
+
+@pytest.fixture
+def markov_two_bouts_excel(tmp_path: Path) -> Path:
+    """Фикстура для TASK_SPEC_011: 3-уровневая шапка, 2 поединка, ep_num reset.
+
+    Структура листа `Общее` повторяет реальный формат
+    ``docs/Оценка СД содержание.xlsx`` в редуцированном виде:
+
+    * 12 колонок: 5 служебных (ФИО, № эпизода, время эпизода / паузы) +
+      по одной колонке-представителю каждой из 4 признаковых групп
+      (manoeuvring / grip / off_balance / technical_action), плюс
+      несколько вспомогательных под завершающие приёмы.
+    * Поединок 1: 3 эпизода × 2 спортсмена (Иванов / Петров), пустое
+      ``Время паузы`` у последнего эпизода каждого, дальше — пустая
+      строка-разделитель.
+    * Поединок 2: 2 эпизода × 2 спортсмена; ``№ эпизода`` сбрасывается
+      к 1, что является вторым маркером границы bout'а.
+    * В одной строке стоит значение ``8`` в признаковой колонке —
+      проверка защиты ``>2 → log&skip``.
+    """
+
+    import openpyxl
+
+    path = tmp_path / "markov_two_bouts.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Общее"
+
+    # row 0: super-headers
+    ws.append(
+        [
+            "ФИО борца",
+            "Технико-тактический эпизод",
+            None,
+            None,
+            "Стойка и маневрирование",
+            None,
+            "КФВ",
+            None,
+            "ВУП",
+            "Завершающие атаку приемы (n)",
+            None,
+            None,
+        ]
+    )
+    # row 1: subgroups
+    ws.append(
+        [
+            None,
+            None,
+            None,
+            None,
+            "Правосторонняя стойка (ПС)",
+            "Левосторонняя стойка (ЛС)",
+            "Захваты",
+            "Хваты",
+            None,
+            None,
+            "Болевой прием",
+            "Болевой прием",
+        ]
+    )
+    # row 2: atomic headers
+    ws.append(
+        [
+            None,
+            "№ эпизода",
+            "Время эпизода, с.",
+            "Время паузы, с.",
+            "Вперед-влево",
+            "Назад",
+            "Двусторонний",
+            "ХвШ",
+            "ВУП-Р",
+            "Удержание",
+            "На руку",
+            "На ногу",
+        ]
+    )
+
+    # Schema reminder for data rows:
+    #   ФИО, № эпизода, время эп., время паузы,
+    #   ПС/Вперед-влево, ЛС/Назад, КФВ/Двусторонний, КФВ/Хваты/ХвШ, ВУП-Р,
+    #   Удержание, Болевой/На руку, Болевой/На ногу
+    rows = [
+        # Bout 1 (2 athletes × 3 episodes)
+        ["Иванов", 1, 30, 5, 1, 0, 0, 0, 0, 0, 0, 0],  # manoeuvring
+        ["Петров", 1, 30, 5, 0, 1, 1, 0, 0, 0, 0, 0],  # grip (mano+grip → grip wins)
+        ["Иванов", 2, 25, 4, 0, 0, 1, 0, 1, 0, 0, 0],  # off_balance (grip+vup → off_balance)
+        ["Петров", 2, 25, 4, 0, 0, 0, 0, 0, 1, 0, 0],  # technical_action
+        ["Иванов", 3, 22, None, 0, 0, 1, 0, 0, 0, 0, 0],  # grip; pause empty
+        ["Петров", 3, 22, None, 0, 0, 0, 0, 0, 0, 1, 0],  # technical_action; pause empty
+        # blank separator between bouts
+        [None, None, None, None, None, None, None, None, None, None, None, None],
+        # Bout 2 (ep_num resets to 1)
+        ["Иванов", 1, 18, 6, 1, 1, 0, 0, 0, 0, 0, 0],  # manoeuvring
+        ["Петров", 1, 18, 6, 0, 0, 1, 1, 0, 0, 0, 0],  # grip
+        ["Иванов", 2, 20, None, 0, 0, 0, 0, 0, 1, 0, 1],  # technical_action
+        # value=8 in feature → out-of-range warning, state collapses to pause
+        ["Петров", 2, 20, None, 0, 0, 8, 0, 0, 0, 0, 0],  # pause + warning
+    ]
+    for r in rows:
+        ws.append(r)
 
     wb.save(path)
     return path

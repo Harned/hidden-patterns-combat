@@ -1,0 +1,70 @@
+# State groups for the 5-state observable Markov chain (TASK_SPEC_011).
+#
+# Map: episode-state -> list of flatten column names that, when their value
+# is > 0 in an episode row, mark the episode as "active in this group".
+#
+# Rules (see docs/agent_context/DOMAIN_SPEC.md "Уровни моделирования"):
+#   - 'pause' must NOT list columns (it is the negation of all others);
+#   - state names below are fixed (English idents); Russian column names
+#     come from the existing `flatten_columns` pipeline applied to the
+#     3-level header of `docs/Оценка СД содержание.xlsx`;
+#   - on first run on real data, expect warnings of code
+#     `state_groups.column_not_found` — copy the exact flatten names from
+#     the warning context into the lists below.
+#
+# Mode:
+#   - `single`: episode → one state by `priority` (default behaviour);
+#   - `multi`:  episode → ordered subsequence of active groups in domain order
+#               (manoeuvring → grip → off_balance → technical_action).
+#
+# Priority is fixed by the meeting protocol 02.05.2026:
+#   technical_action > off_balance > grip > manoeuvring > pause
+
+version: "1"
+sheet: "Общее"
+mode: single
+priority:
+  - technical_action
+  - off_balance
+  - grip
+  - manoeuvring
+  - pause
+
+states:
+  manoeuvring:
+    columns:
+      # Стойки + 12 направлений на каждую сторону.
+      # Заполняется по факту flatten-имён реального листа.
+      # - "Стойка и маневрирование самбиста (основные в эпизоде) | Правосторонняя стойка (ПС) | Вперед"
+      # - "Стойка и маневрирование самбиста (основные в эпизоде) | Правосторонняя стойка (ПС) | Назад"
+      # ...
+      # - "Стойка и маневрирование самбиста (основные в эпизоде) | Левосторонняя стойка (ЛС) | Вперед"
+      # ...
+
+  grip:
+    columns:
+      # Контакты физического взаимодействия: захваты / хваты / обхваты / прихваты / упоры.
+      # - "КФВ | Захваты | О"
+      # - "КФВ | Захваты | ОО"
+      # ...
+      # - "КФВ | Хваты | ХвШ"
+      # ...
+
+  off_balance:
+    columns:
+      # Выведение из устойчивого положения (ВУП-Р/Т/С/О/З).
+      # - "ВУП | ВУП-Р"
+      # - "ВУП | ВУП-Т"
+      # ...
+
+  technical_action:
+    columns:
+      # Завершающие приёмы: броски, удержание, болевой.
+      # - "Завершающие атаку приемы (n) | Броски | Руками"
+      # - "Завершающие атаку приемы (n) | Броски | Ногами"
+      # - "Завершающие атаку приемы (n) | Удержание"
+      # - "Завершающие атаку приемы (n) | Болевой прием | На руку"
+      # - "Завершающие атаку приемы (n) | Болевой прием | На ногу"
+      # ...
+
+  # 'pause' deliberately has no columns — see comment above.

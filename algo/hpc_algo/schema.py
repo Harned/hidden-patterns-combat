@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -119,6 +119,16 @@ class SheetAudit(BaseModel):
     suspicious: list[str] = Field(
         default_factory=list,
         description="Человекочитаемые сообщения о подозрительных наблюдениях.",
+    )
+    totals_row_indices: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Индексы (0-based, в df после применения header_rows) строк, "
+            "распознанных как агрегаты («Итого»/«Всего»/«Сумма»/«Total»). "
+            "Эти строки отфильтровываются из baseline/HMM с warning "
+            "`audit.totals_row_detected`, чтобы суммы не считались "
+            "отдельными эпизодами."
+        ),
     )
 
 
@@ -566,3 +576,99 @@ class HMMResult(BaseModel):
             " status=='applied'."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Markov individual / aggregate (TASK_SPEC_011 / 012 / 013)
+#
+# Уровень 1 модели по DOMAIN_SPEC.md: наблюдаемая 5-state Marков-цепь по
+# эпизодам. Отделена от HMM-ветки: своя схема, свои warning-коды,
+# никакого пересечения с AnalysisResult.hmm.
+# ---------------------------------------------------------------------------
+
+
+class EpisodeState(str, Enum):
+    """Алфавит наблюдаемых эпизодных состояний (Уровень 1).
+
+    Имена — фиксированные английские идентификаторы; русские подписи
+    допускаются только в YAML-маппинге и в шаблонах отчётов
+    (см. ``DEFINITION_OF_DONE.md``).
+    """
+
+    MANOEUVRING = "manoeuvring"
+    GRIP = "grip"
+    OFF_BALANCE = "off_balance"
+    TECHNICAL_ACTION = "technical_action"
+    PAUSE = "pause"
+
+
+MarkovMode = Literal["single", "multi"]
+
+
+class MarkovWarning(BaseModel):
+    """Структурированное предупреждение Markov-ветки.
+
+    Параллелит ``AnalysisWarning`` HMM-ветки, но не наследует его —
+    Уровень 1 живёт отдельным модулем без ссылки на HMM-схему.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    message: str
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class EpisodeRecord(BaseModel):
+    """Один эпизод одного спортсмена, готовый для построения Markov-цепи."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    athlete: str
+    bout_id: str = Field(
+        ...,
+        description="Synthetic bout identifier, monotonic в рамках источника.",
+    )
+    episode_idx: int = Field(..., ge=1, description="1-based индекс эпизода в bout.")
+    episode_duration: float | None = None
+    pause_duration: float | None = None
+    score: float | None = None
+    state: EpisodeState | list[EpisodeState] = Field(
+        ...,
+        description=(
+            "В режиме `single` — одно состояние. В `multi` — упорядоченная"
+            " подпоследовательность активных групп для этого эпизода."
+        ),
+    )
+
+
+class MarkovIndividualResult(BaseModel):
+    """Результат построения индивидуальной 5-state Marков-цепи."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    athlete: str
+    mode: MarkovMode
+    states: list[EpisodeState] = Field(
+        ...,
+        description="Упорядоченный алфавит состояний (фиксированный, длина 5).",
+    )
+    transition_counts: list[list[int]] = Field(
+        ...,
+        description="Сырые счёты переходов n_states × n_states.",
+    )
+    transition_matrix: list[list[float]] = Field(
+        ...,
+        description="Row-stochastic матрица переходов; sum(row) = 1 ± 1e-6.",
+    )
+    stationary: list[float] = Field(
+        ...,
+        description="Стационарное распределение π длины 5.",
+    )
+    visit_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Сколько раз каждое состояние встретилось в наблюдениях.",
+    )
+    bout_count: int = Field(default=0, ge=0)
+    episode_count: int = Field(default=0, ge=0)
+    warnings: list[MarkovWarning] = Field(default_factory=list)
