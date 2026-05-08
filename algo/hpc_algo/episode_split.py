@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from hpc_algo.mapping import flatten_columns
+from hpc_algo.mapping import flatten_columns, guess_header_rows
 from hpc_algo.schema import MarkovWarning
 
 _ATHLETE_HINTS: tuple[str, ...] = ("фио", "борц", "спортсм", "атлет", "боец")
@@ -94,9 +94,24 @@ def detect_base_columns(flat_columns: Iterable[str]) -> BaseColumns:
 def read_episodes_sheet(
     path: str | Path,
     sheet: str = "Общее",
-    header_rows: tuple[int, ...] = (0, 1, 2),
+    header_rows: tuple[int, ...] | None = (0, 1, 2),
 ) -> pd.DataFrame:
-    """Прочитать лист с многострочной шапкой и привести колонки к flatten-виду."""
+    """Прочитать лист с многострочной шапкой и привести колонки к flatten-виду.
+
+    Если ``header_rows`` равен ``None``, заголовки определяются эвристически
+    через :func:`hpc_algo.mapping.guess_header_rows` (учитывает возможный
+    пустой первый ряд и плавающее количество уровней).
+    """
+
+    if header_rows is None:
+        raw = pd.read_excel(
+            path,
+            sheet_name=sheet,
+            header=None,
+            engine="openpyxl",
+            nrows=8,
+        )
+        header_rows = tuple(guess_header_rows(raw))
 
     df = pd.read_excel(
         path,
@@ -205,6 +220,7 @@ def split_into_bouts_and_episodes(
     current_bout_id: str | None = None
     last_episode_num: float | None = None
     current_bout_episode_idx = 0
+    current_athlete: str = ""
 
     def open_new_bout() -> str:
         nonlocal bout_counter, current_bout_id, last_episode_num, current_bout_episode_idx
@@ -218,6 +234,7 @@ def split_into_bouts_and_episodes(
         if _is_blank_row(row):
             current_bout_id = None
             last_episode_num = None
+            current_athlete = ""
             continue
 
         ep_num_raw = (
@@ -234,11 +251,14 @@ def split_into_bouts_and_episodes(
 
         current_bout_episode_idx += 1
 
-        athlete = ""
+        # ФИО хранится в merged-cell: непустое значение появляется только на
+        # первой строке блока спортсмена. Внутри bout'а forward-fill'им
+        # последнее увиденное имя; на blank-row сбрасываем (см. continue выше).
         if base.athlete is not None:
             v = row.get(base.athlete)
             if not _is_blank_value(v):
-                athlete = str(v).strip()
+                current_athlete = str(v).strip()
+        athlete = current_athlete
 
         ep_time = (
             _coerce_optional_float(row.get(base.episode_time))

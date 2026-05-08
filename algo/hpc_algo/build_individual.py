@@ -92,6 +92,14 @@ def _feature_columns(cfg: StateGroupsConfig) -> list[str]:
     return out
 
 
+_NON_ATHLETE_HINTS: tuple[str, ...] = ("итог", "всего", "сумма", "total")
+
+
+def _is_non_athlete_label(name: str) -> bool:
+    n = name.strip().lower()
+    return any(h in n for h in _NON_ATHLETE_HINTS)
+
+
 def _athletes_in_order(records: list, raw_episodes: list) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -99,6 +107,8 @@ def _athletes_in_order(records: list, raw_episodes: list) -> list[str]:
         for r in source:
             name = getattr(r, "athlete", None)
             if not name or not name.strip():
+                continue
+            if _is_non_athlete_label(name):
                 continue
             if name not in seen:
                 seen.add(name)
@@ -114,6 +124,7 @@ def build_individual_models(
     sheet: str | None = None,
     athlete_filter: list[str] | None = None,
     style_thresholds_path: str | Path | None = None,
+    header_rows: tuple[int, ...] | None = None,
 ) -> BuildIndividualSummary:
     """Собрать индивидуальные HTML-отчёты для всех (или выбранных) спортсменов.
 
@@ -139,7 +150,7 @@ def build_individual_models(
             style_thresholds_path
         )
 
-    df = read_episodes_sheet(excel_path, sheet=target_sheet)
+    df = read_episodes_sheet(excel_path, sheet=target_sheet, header_rows=header_rows)
     available_columns = list(df.columns)
 
     column_validation_warnings = validate_columns_against_sheet(cfg, available_columns)

@@ -75,6 +75,7 @@ def build_aggregate_models(
     finalists_path: str | Path | None = None,
     sheet: str | None = None,
     alpha: float = 0.5,
+    header_rows: tuple[int, ...] | None = None,
 ) -> BuildAggregateSummary:
     """Собрать 10 агрегатных HTML-отчётов для весовых категорий."""
 
@@ -87,7 +88,7 @@ def build_aggregate_models(
     cfg, cfg_warnings = load_state_groups(state_groups_path)
     target_sheet = sheet or cfg.sheet
 
-    df = read_episodes_sheet(excel_path, sheet=target_sheet)
+    df = read_episodes_sheet(excel_path, sheet=target_sheet, header_rows=header_rows)
     available_columns = list(df.columns)
     column_validation_warnings = validate_columns_against_sheet(cfg, available_columns)
 
