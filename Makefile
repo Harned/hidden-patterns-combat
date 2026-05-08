@@ -7,7 +7,7 @@ REAL_EXCEL ?= docs/Оценка СД содержание.xlsx
 .PHONY: help venv install install-backend install-frontend \
         test test-algo test-backend \
         lint lint-algo lint-backend typecheck-frontend \
-        analyze report summary \
+        analyze report summary individual-models \
         dev-backend dev-frontend build-frontend \
         db-upgrade db-revision \
         docker-up docker-down docker-logs \
@@ -39,6 +39,7 @@ help:
 	@echo ""
 	@echo "Algo CLI on real Excel:"
 	@echo "  make analyze / report / summary"
+	@echo "  make individual-models    — TASK_SPEC_011: ~30 HTML-моделей в reports/individual/"
 
 venv:
 	$(PYTHON) -m venv $(VENV)
@@ -115,6 +116,17 @@ report:
 
 summary:
 	$(VENV)/bin/hpc-algo summary "$(REAL_EXCEL)"
+
+# TASK_SPEC_011 — индивидуальные 5-state Marков-модели.
+# Источник: $(REAL_EXCEL); конфиг: $(STATE_GROUPS); выход: $(INDIVIDUAL_OUT_DIR).
+STATE_GROUPS ?= config/state_groups.yaml
+INDIVIDUAL_OUT_DIR ?= reports/individual
+
+individual-models:
+	@mkdir -p "$(INDIVIDUAL_OUT_DIR)"
+	$(VENV)/bin/hpc-algo individual-markov "$(REAL_EXCEL)" \
+		--state-groups "$(STATE_GROUPS)" \
+		--output-dir "$(INDIVIDUAL_OUT_DIR)"
 
 clean:
 	rm -rf $(VENV) .pytest_cache algo/.pytest_cache algo/**/__pycache__ \

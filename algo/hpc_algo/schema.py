@@ -672,3 +672,78 @@ class MarkovIndividualResult(BaseModel):
     bout_count: int = Field(default=0, ge=0)
     episode_count: int = Field(default=0, ge=0)
     warnings: list[MarkovWarning] = Field(default_factory=list)
+
+
+class DurationStats(BaseModel):
+    """Сводная описательная статистика по длительностям (секунды)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    count: int = 0
+    mean: float | None = None
+    median: float | None = None
+    std: float | None = None
+    min: float | None = None
+    max: float | None = None
+    total: float | None = None
+
+
+class EpisodeMetrics(BaseModel):
+    """Поэпизодные метрики управления поединком (TASK_SPEC_013, частичная реализация).
+
+    Покрывает базовые описательные метрики, которые не требуют YAML-порогов.
+    Стилевая классификация (`classify_style: endurance | speed_power | burnout`)
+    оставлена на отдельный шаг по `TASK_SPEC_013` — её добавление НЕ должно
+    менять поля ниже, только расширять модель.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    athlete: str | None = None
+    episode_count: int = 0
+    bout_count: int = 0
+    duration_stats: DurationStats = Field(default_factory=DurationStats)
+    pause_stats: DurationStats = Field(default_factory=DurationStats)
+    action_density: float | None = Field(
+        default=None,
+        description=(
+            "Сумма ненулевых признаковых индикаторов, делённая на суммарное"
+            " время эпизодов (действий/секунду). None при отсутствии валидных"
+            " длительностей или 0/0."
+        ),
+    )
+    non_technical_share: float | None = Field(
+        default=None,
+        description=(
+            "Доля эпизодов, в которых state ≠ technical_action (включая pause)."
+            " Считается на построенной последовательности EpisodeRecord (single)"
+            " или по первому состоянию подпоследовательности (multi)."
+        ),
+    )
+    activity_evenness: float | None = Field(
+        default=None,
+        description=(
+            "Нормализованная энтропия распределения visit_counts:"
+            " H(visits) / log(N_states). 1.0 — идеально равномерно,"
+            " 0.0 — всё в одном состоянии."
+        ),
+    )
+
+
+class BuildIndividualSummary(BaseModel):
+    """Сводка по запуску `make individual-models` / CLI individual-markov."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    sheet: str
+    state_groups_path: str
+    output_dir: str
+    athletes_total: int = 0
+    athletes_rendered: int = 0
+    skipped_athletes: list[str] = Field(default_factory=list)
+    rendered_athletes: list[str] = Field(default_factory=list)
+    config_warnings: list[MarkovWarning] = Field(default_factory=list)
+    split_warnings: list[MarkovWarning] = Field(default_factory=list)
+    column_validation_warnings: list[MarkovWarning] = Field(default_factory=list)
+    per_athlete_warning_counts: dict[str, int] = Field(default_factory=dict)

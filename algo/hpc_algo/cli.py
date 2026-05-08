@@ -123,5 +123,64 @@ def report_cmd(
             typer.echo(f"  [{e.severity.value}] {e.code}: {e.message}")
 
 
+@app.command("individual-markov")
+def individual_markov_cmd(
+    source: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        help="Excel-источник (например, docs/Оценка СД содержание.xlsx).",
+    ),
+    state_groups: Path = typer.Option(
+        Path("config/state_groups.yaml"),
+        "--state-groups",
+        "-c",
+        exists=True,
+        readable=True,
+        help="YAML-конфиг 5-state алфавита.",
+    ),
+    output_dir: Path = typer.Option(
+        Path("reports/individual"),
+        "--output-dir",
+        "-o",
+        help="Каталог для HTML-отчётов и summary.json.",
+    ),
+    sheet: str | None = typer.Option(
+        None,
+        "--sheet",
+        help="Имя листа; по умолчанию берётся из YAML (`sheet`, default `Общее`).",
+    ),
+    athlete: list[str] = typer.Option(
+        None,
+        "--athlete",
+        "-a",
+        help=(
+            "Точное имя ФИО для фильтра. Можно повторять флаг несколько раз."
+            " Без флага — модели для всех найденных спортсменов."
+        ),
+    ),
+) -> None:
+    """Построить ~30 индивидуальных Marков-моделей по эпизодам (Уровень 1)."""
+
+    from hpc_algo.build_individual import build_individual_models
+
+    summary = build_individual_models(
+        excel_path=source,
+        state_groups_path=state_groups,
+        output_dir=output_dir,
+        sheet=sheet,
+        athlete_filter=athlete or None,
+    )
+    typer.echo(
+        f"OK: построено {summary.athletes_rendered} моделей "
+        f"(пропущено {len(summary.skipped_athletes)}). "
+        f"index: {output_dir}/index.html"
+    )
+    if summary.skipped_athletes:
+        typer.echo(
+            "Пропущены без данных: " + ", ".join(summary.skipped_athletes)
+        )
+
+
 if __name__ == "__main__":
     app()

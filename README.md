@@ -100,6 +100,18 @@ Excel, списком источников и русскоязычным инт�
   + `POST /auth/request-verification`, SMTP пока заглушен через
   stdout); Alembic `0002_email_verified_at`; опциональный жёсткий
   режим через `HPC_REQUIRE_EMAIL_VERIFIED=true`.
+- [ ] **TASK_SPEC_011** — индивидуальная наблюдаемая 5-state Marков-цепь по
+  эпизодам (Уровень 1, основной диагностический выход магистерской).
+  Pipeline: `docs/Оценка СД содержание.xlsx` (лист `Общее`, 3-уровневая
+  шапка) → разбиение на bout / эпизоды → присвоение состояния
+  (`manoeuvring | grip | off_balance | technical_action | pause`) по
+  YAML-конфигу `config/state_groups.yaml` → транзиции **внутри bout'а** →
+  стационарка через ev(A^T) с fallback на time-averaging при разреженных
+  данных. Команда `make individual-models` за один прогон собирает
+  ~30 индивидуальных HTML-отчётов (heatmap A, π-бары, эпизод-метрики,
+  warnings, шаблонная интерпретация) в `reports/individual/`. HMM-ветка
+  (`TASK_SPEC_004/005/008`) переведена в статус `under review`. Защита
+  `>2 → log&skip` покрыта warning'ом и тестом.
 - [x] **TASK_SPEC_010** — закрытый исследовательский стенд (локальный
   MVP): саморегистрация по email/паролю с двумя обязательными
   согласиями (LEGAL-REG-1) и подтверждением email коротким кодом
@@ -182,6 +194,37 @@ make report    # короткий человекочитаемый отчёт
 make summary   # компактная сводка (JSON)
 make analyze   # полный AnalysisResult -> .local/result.json
 ```
+
+### Индивидуальные Marков-модели (TASK_SPEC_011)
+
+Уровень 1 анализа: одна 5-state наблюдаемая Marков-цепь на каждого
+финалиста, без HMM. Конфиг состояний живёт в
+`config/state_groups.yaml` — состояние → список flatten-имён колонок;
+этот файл нужно один раз настроить под реальный Excel (по DATA_SPEC.md).
+
+```bash
+# 1. Один раз: убедиться, что config/state_groups.yaml содержит
+#    реальные имена колонок после flatten.
+# 2. Запуск:
+make individual-models
+# Результат: reports/individual/<athlete>.html + index.html + summary.json
+```
+
+Параметры по умолчанию:
+`REAL_EXCEL=docs/Оценка СД содержание.xlsx`,
+`STATE_GROUPS=config/state_groups.yaml`,
+`INDIVIDUAL_OUT_DIR=reports/individual`. Для прогона на одном спортсмене:
+
+```bash
+.venv/bin/hpc-algo individual-markov "docs/Оценка СД содержание.xlsx" \
+  --state-groups config/state_groups.yaml \
+  --output-dir reports/individual \
+  --athlete "Иванов И. И."
+```
+
+Ограничения текущего шага: `classify_style` (`endurance | speed_power |
+burnout`) и агрегатные модели по призёрам — отдельные шаги
+(`TASK_SPEC_012`, `TASK_SPEC_013`).
 
 ## End-to-end smoke (проверено)
 
