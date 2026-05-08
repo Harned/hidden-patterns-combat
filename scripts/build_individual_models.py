@@ -74,6 +74,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Без флага — модели для всех спортсменов."
         ),
     )
+    p.add_argument(
+        "--style-thresholds",
+        type=Path,
+        default=None,
+        help=(
+            "YAML-пороги TASK_SPEC_013 (style_thresholds.yaml). Если задан, "
+            "в HTML добавится блок «Стиль управления эпизодом»."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -85,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         sheet=args.sheet,
         athlete_filter=args.athlete,
+        style_thresholds_path=args.style_thresholds,
     )
     print(
         f"OK: построено {summary.athletes_rendered} моделей "

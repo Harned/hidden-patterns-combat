@@ -119,14 +119,25 @@ summary:
 
 # TASK_SPEC_011 — индивидуальные 5-state Marков-модели.
 # Источник: $(REAL_EXCEL); конфиг: $(STATE_GROUPS); выход: $(INDIVIDUAL_OUT_DIR).
+# TASK_SPEC_013: $(STYLE_THRESHOLDS) — необязательно. Если файл существует,
+# в отчёт добавится блок «Стиль управления эпизодом» (endurance/speed_power/
+# burnout/unclassified).
 STATE_GROUPS ?= config/state_groups.yaml
+STYLE_THRESHOLDS ?= config/style_thresholds.yaml
 INDIVIDUAL_OUT_DIR ?= reports/individual
 
 individual-models:
 	@mkdir -p "$(INDIVIDUAL_OUT_DIR)"
-	$(VENV)/bin/hpc-algo individual-markov "$(REAL_EXCEL)" \
-		--state-groups "$(STATE_GROUPS)" \
-		--output-dir "$(INDIVIDUAL_OUT_DIR)"
+	@if [ -f "$(STYLE_THRESHOLDS)" ]; then \
+		$(VENV)/bin/hpc-algo individual-markov "$(REAL_EXCEL)" \
+			--state-groups "$(STATE_GROUPS)" \
+			--style-thresholds "$(STYLE_THRESHOLDS)" \
+			--output-dir "$(INDIVIDUAL_OUT_DIR)"; \
+	else \
+		$(VENV)/bin/hpc-algo individual-markov "$(REAL_EXCEL)" \
+			--state-groups "$(STATE_GROUPS)" \
+			--output-dir "$(INDIVIDUAL_OUT_DIR)"; \
+	fi
 
 clean:
 	rm -rf $(VENV) .pytest_cache algo/.pytest_cache algo/**/__pycache__ \

@@ -100,6 +100,20 @@ Excel, списком источников и русскоязычным инт�
   + `POST /auth/request-verification`, SMTP пока заглушен через
   stdout); Alembic `0002_email_verified_at`; опциональный жёсткий
   режим через `HPC_REQUIRE_EMAIL_VERIFIED=true`.
+- [ ] **TASK_SPEC_013** — описательные эпизод-метрики и пороговый
+  классификатор стиля. `EpisodeMetrics` расширены до спецификации:
+  `episode_count`, `bout_count`, `duration_stats` (mean / median / std /
+  p25 / p75 / min / max / total), `pause_stats`, `action_density`
+  (среднее число активаций на эпизод, после `>2 → log&skip`),
+  `action_rate_per_second` (производная для отображения),
+  `action_density_first_half` / `_second_half` (для правила `burnout`),
+  `activity_evenness` (нормализованная энтропия per-episode actions),
+  `non_technical_share`. `classify_style(metrics, thresholds) → endurance |
+  speed_power | burnout | unclassified` детерминирован по YAML
+  `config/style_thresholds.yaml`; неизвестные стили / правила в YAML —
+  warning, не падение. Если ни одно правило не сработало — `unclassified`
+  + warning `style.no_rule_matched`. Стиль остаётся **описательным
+  расширением**, не основным выводом и не заменой матрицы переходов.
 - [ ] **TASK_SPEC_011** — индивидуальная наблюдаемая 5-state Marков-цепь по
   эпизодам (Уровень 1, основной диагностический выход магистерской).
   Pipeline: `docs/Оценка СД содержание.xlsx` (лист `Общее`, 3-уровневая
@@ -222,9 +236,23 @@ make individual-models
   --athlete "Иванов И. И."
 ```
 
-Ограничения текущего шага: `classify_style` (`endurance | speed_power |
-burnout`) и агрегатные модели по призёрам — отдельные шаги
-(`TASK_SPEC_012`, `TASK_SPEC_013`).
+Если в репозитории есть `config/style_thresholds.yaml`, в HTML
+автоматически добавится блок «Стиль управления эпизодом» (TASK_SPEC_013).
+Чтобы получить ту же классификацию из CLI:
+
+```bash
+.venv/bin/hpc-algo individual-markov "docs/Оценка СД содержание.xlsx" \
+  --state-groups config/state_groups.yaml \
+  --style-thresholds config/style_thresholds.yaml \
+  --output-dir reports/individual
+```
+
+Ограничение: пороги в `config/style_thresholds.yaml` — плейсхолдер;
+конкретные значения должен подобрать эпизод-аналитик. До подбора
+большинство спортсменов получит `unclassified` + warning
+`style.no_rule_matched`, и это нормально (метрики от этого не страдают).
+
+Агрегатные модели по призёрам — отдельный шаг (`TASK_SPEC_012`).
 
 ## End-to-end smoke (проверено)
 

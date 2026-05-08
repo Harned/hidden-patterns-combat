@@ -114,6 +114,31 @@ def test_html_escapes_athlete_name() -> None:
     assert "&lt;script&gt;" in html
 
 
+def test_style_block_renders_when_style_present() -> None:
+    """TS_013: при заданном style в HTML появляется русская подпись стиля."""
+
+    from hpc_algo.schema import StyleLabel
+
+    result, metrics = _synthetic_result_and_metrics()
+    metrics_with_style = metrics.model_copy(update={"style": StyleLabel.SPEED_POWER})
+
+    html = render_individual_report(result, metrics_with_style)
+
+    assert "Стиль управления эпизодом" in html
+    assert "Скоростно-силовой" in html
+    assert "<code>speed_power</code>" in html
+
+
+def test_style_section_falls_back_when_unset() -> None:
+    """Когда style=None — секция всё равно есть, но с пометкой 'не выполнено'."""
+
+    result, metrics = _synthetic_result_and_metrics()
+    html = render_individual_report(result, metrics)
+
+    assert "Стиль управления эпизодом" in html
+    assert "Классификация не выполнена" in html
+
+
 def test_render_index_page_lists_athletes() -> None:
     html = render_index_page(
         [("Иванов И. И.", "ivanov.html"), ("Петров П.", "petrov.html")],

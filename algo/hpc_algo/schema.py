@@ -683,18 +683,48 @@ class DurationStats(BaseModel):
     mean: float | None = None
     median: float | None = None
     std: float | None = None
+    p25: float | None = None
+    p75: float | None = None
     min: float | None = None
     max: float | None = None
     total: float | None = None
 
 
-class EpisodeMetrics(BaseModel):
-    """Поэпизодные метрики управления поединком (TASK_SPEC_013, частичная реализация).
+class StyleLabel(str, Enum):
+    """Описательная классификация управления эпизодом (TASK_SPEC_013).
 
-    Покрывает базовые описательные метрики, которые не требуют YAML-порогов.
-    Стилевая классификация (`classify_style: endurance | speed_power | burnout`)
-    оставлена на отдельный шаг по `TASK_SPEC_013` — её добавление НЕ должно
-    менять поля ниже, только расширять модель.
+    НЕ диагноз и НЕ замена матрицы переходов. Получается строго из
+    YAML-порогов; если ни одно правило не подошло, возвращается
+    ``UNCLASSIFIED`` с warning ``style.no_rule_matched``.
+    """
+
+    ENDURANCE = "endurance"
+    SPEED_POWER = "speed_power"
+    BURNOUT = "burnout"
+    UNCLASSIFIED = "unclassified"
+
+
+class EpisodeMetrics(BaseModel):
+    """Поэпизодные метрики управления поединком (TASK_SPEC_013).
+
+    Семантика полей:
+
+    * ``action_density`` — среднее число активаций (значений ``1``/``2``)
+      на эпизод после ``>2 → log&skip``. Если эпизодов нет — ``None``.
+    * ``action_rate_per_second`` — действий/сек = ``Σ activations / Σ episode_time``.
+      Описательная производная, не вход для ``classify_style``.
+    * ``action_density_first_half`` / ``action_density_second_half`` —
+      ``action_density`` по первой/второй половине эпизодного потока
+      спортсмена (нужно для правила ``burnout``).
+    * ``activity_evenness`` — нормализованная энтропия Шеннона
+      распределения ``per-episode action counts``: ``H / log(N_episodes)``.
+      ``1.0`` — действия равномерно по эпизодам, ``0.0`` — всё в одном.
+      ``None`` при ``N_episodes < 2`` или нулевой суммарной активности.
+    * ``non_technical_share`` — доля эпизодов, в которых state ≠
+      ``technical_action`` (включая ``pause``).
+    * ``style`` — результат :func:`hpc_algo.episode_metrics.classify_style`.
+      ``None`` пока классификатор не вызывался, ``UNCLASSIFIED`` — если
+      ни одно правило не сработало.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -704,30 +734,13 @@ class EpisodeMetrics(BaseModel):
     bout_count: int = 0
     duration_stats: DurationStats = Field(default_factory=DurationStats)
     pause_stats: DurationStats = Field(default_factory=DurationStats)
-    action_density: float | None = Field(
-        default=None,
-        description=(
-            "Сумма ненулевых признаковых индикаторов, делённая на суммарное"
-            " время эпизодов (действий/секунду). None при отсутствии валидных"
-            " длительностей или 0/0."
-        ),
-    )
-    non_technical_share: float | None = Field(
-        default=None,
-        description=(
-            "Доля эпизодов, в которых state ≠ technical_action (включая pause)."
-            " Считается на построенной последовательности EpisodeRecord (single)"
-            " или по первому состоянию подпоследовательности (multi)."
-        ),
-    )
-    activity_evenness: float | None = Field(
-        default=None,
-        description=(
-            "Нормализованная энтропия распределения visit_counts:"
-            " H(visits) / log(N_states). 1.0 — идеально равномерно,"
-            " 0.0 — всё в одном состоянии."
-        ),
-    )
+    action_density: float | None = None
+    action_rate_per_second: float | None = None
+    action_density_first_half: float | None = None
+    action_density_second_half: float | None = None
+    non_technical_share: float | None = None
+    activity_evenness: float | None = None
+    style: StyleLabel | None = None
 
 
 class BuildIndividualSummary(BaseModel):

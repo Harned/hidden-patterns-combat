@@ -129,3 +129,56 @@ def test_slugify_handles_cyrillic_and_punctuation() -> None:
     assert _slugify("Иванов И. И.") == "Иванов_И_И"
     assert _slugify("  ") == "athlete"
     assert _slugify("Petrov, P.") == "Petrov_P"
+
+
+def test_build_individual_models_with_style_thresholds(
+    markov_two_bouts_excel: Path, tmp_path: Path
+) -> None:
+    """С style_thresholds.yaml HTML включает блок стиля.
+
+    Подбираем порог так, чтобы хотя бы один спортсмен попал в
+    `speed_power`. Проверяем, что блок отрисовался и имя стиля попало в
+    HTML; конкретный label не фиксируем, чтобы тест не зависел от
+    точного содержимого фикстуры.
+    """
+
+    yaml_path = tmp_path / "state_groups.yaml"
+    _yaml_for_fixture(markov_two_bouts_excel, yaml_path)
+    out_dir = tmp_path / "reports_styled"
+
+    style_path = tmp_path / "style.yaml"
+    style_path.write_text(
+        """
+thresholds:
+  endurance:
+    min_episode_count: 3
+    min_activity_evenness: 0.0
+  speed_power:
+    max_episode_count: 100
+    min_action_density: 0.0
+  burnout:
+    min_action_density_first_half: 100.0
+    max_action_density_second_half: 0.0
+""",
+        encoding="utf-8",
+    )
+
+    summary = build_individual_models(
+        excel_path=markov_two_bouts_excel,
+        state_groups_path=yaml_path,
+        output_dir=out_dir,
+        sheet="Общее",
+        style_thresholds_path=style_path,
+    )
+    assert summary.athletes_rendered >= 1
+
+    # Проверяем хотя бы один HTML.
+    sample = out_dir / f"{_slugify(summary.rendered_athletes[0])}.html"
+    text = sample.read_text(encoding="utf-8")
+    assert "Стиль управления эпизодом" in text
+    # Один из четырёх известных лейблов (включая unclassified) обязан
+    # присутствовать как код.
+    assert any(
+        f"<code>{label}</code>" in text
+        for label in ("endurance", "speed_power", "burnout", "unclassified")
+    )

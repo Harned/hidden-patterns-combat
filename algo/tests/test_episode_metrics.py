@@ -1,24 +1,32 @@
-"""Тесты модуля :mod:`hpc_algo.episode_metrics`.
+"""Тесты модуля :mod:`hpc_algo.episode_metrics` (TASK_SPEC_013).
 
-Покрытие (минимум, без classify_style — он отложен в TASK_SPEC_013):
+Покрытие:
 
-* пустой вход → все поля по умолчанию;
-* duration / pause stats считают `mean / median / std / total`;
-* action_density = sum(features>0) / total_time, делит правильно при
-  единственном валидном эпизоде;
-* non_technical_share игнорирует `technical_action`, считая всех
-  остальных (в т.ч. ``pause``);
-* activity_evenness в `[0, 1]`, ровно 1.0 на равномерном распределении;
-* фильтр ``athlete`` корректно сужает обе коллекции.
+* семантика TS_013: ``action_density`` = mean activations per episode,
+  ``activity_evenness`` = нормализованная энтропия per-episode actions;
+* ``action_rate_per_second`` — описательная производная;
+* ``action_density_first_half`` / ``_second_half`` — половины потока;
+* фильтр по ``athlete``;
+* классификатор стилей: каждое из правил endurance / speed_power /
+  burnout срабатывает на «своих» порогах; иначе ``unclassified`` +
+  warning;
+* загрузчик YAML: неизвестные стили / правила → warning, не падение.
 """
 
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
-from hpc_algo.episode_metrics import compute_episode_metrics
+import pytest
+
+from hpc_algo.episode_metrics import (
+    classify_style,
+    compute_episode_metrics,
+    load_style_thresholds,
+)
 from hpc_algo.episode_split import RawEpisode
-from hpc_algo.schema import EpisodeRecord, EpisodeState
+from hpc_algo.schema import EpisodeMetrics, EpisodeRecord, EpisodeState, StyleLabel
 
 
 def _raw(
@@ -53,46 +61,105 @@ def _rec(*, athlete: str, bout_id: str, idx: int, state: EpisodeState) -> Episod
     )
 
 
+# ---------------------------------------------------------------------------
+# compute_episode_metrics
+# ---------------------------------------------------------------------------
+
+
 def test_empty_inputs_produce_neutral_metrics() -> None:
     m = compute_episode_metrics([], [])
     assert m.episode_count == 0
     assert m.bout_count == 0
     assert m.duration_stats.count == 0
-    assert m.duration_stats.mean is None
+    assert m.duration_stats.p25 is None
     assert m.action_density is None
+    assert m.action_rate_per_second is None
+    assert m.action_density_first_half is None
+    assert m.action_density_second_half is None
     assert m.non_technical_share is None
     assert m.activity_evenness is None
+    assert m.style is None
 
 
-def test_duration_and_density_basic() -> None:
+def test_action_density_is_mean_per_episode() -> None:
     raw = [
         _raw(athlete="A", bout_id="b1", idx=1, ep_time=10.0, pause_time=2.0,
-             features={"col_x": 1.0, "col_y": 0.0}),
+             features={"x": 1.0, "y": 0.0}),
         _raw(athlete="A", bout_id="b1", idx=2, ep_time=20.0, pause_time=3.0,
-             features={"col_x": 2.0, "col_y": 1.0}),
+             features={"x": 2.0, "y": 1.0}),
     ]
     records = [
         _rec(athlete="A", bout_id="b1", idx=1, state=EpisodeState.MANOEUVRING),
         _rec(athlete="A", bout_id="b1", idx=2, state=EpisodeState.TECHNICAL_ACTION),
     ]
-
     m = compute_episode_metrics(raw, records, athlete="A")
 
-    assert m.episode_count == 2
-    assert m.bout_count == 1
-
-    d = m.duration_stats
-    assert d.count == 2
-    assert d.total == 30.0
-    assert math.isclose(d.mean or 0.0, 15.0)
-
-    p = m.pause_stats
-    assert p.count == 2
-    assert p.total == 5.0
-
-    # Действий: 1 + 0 + 2 + 1 = 4; время: 30; density = 4/30
+    # TS_013: среднее число активаций на эпизод.
+    # ep1: 1 + 0 = 1; ep2: 2 + 1 = 3; mean = 2.0.
     assert m.action_density is not None
-    assert math.isclose(m.action_density, 4.0 / 30.0, rel_tol=1e-6)
+    assert math.isclose(m.action_density, 2.0)
+
+    # action_rate_per_second — производная для отображения.
+    assert m.action_rate_per_second is not None
+    assert math.isclose(m.action_rate_per_second, 4.0 / 30.0, rel_tol=1e-6)
+
+
+def test_duration_stats_include_p25_p75() -> None:
+    raw = [
+        _raw(athlete="A", bout_id="b1", idx=i + 1, ep_time=float(t), pause_time=None)
+        for i, t in enumerate([10.0, 20.0, 30.0, 40.0, 50.0])
+    ]
+    m = compute_episode_metrics(raw, [], athlete="A")
+    d = m.duration_stats
+    assert d.count == 5
+    assert d.min == 10.0
+    assert d.max == 50.0
+    # Линейная интерполяция: p25=20, p75=40.
+    assert d.p25 is not None and math.isclose(d.p25, 20.0)
+    assert d.p75 is not None and math.isclose(d.p75, 40.0)
+
+
+def test_first_half_and_second_half_density() -> None:
+    # 4 эпизода: actions = [3, 3, 1, 0] → first=3, second=0.5.
+    raw = [
+        _raw(athlete="A", bout_id="b1", idx=1, ep_time=10.0, pause_time=None,
+             features={"x": 2.0, "y": 1.0}),  # 3
+        _raw(athlete="A", bout_id="b1", idx=2, ep_time=10.0, pause_time=None,
+             features={"x": 2.0, "y": 1.0}),  # 3
+        _raw(athlete="A", bout_id="b1", idx=3, ep_time=10.0, pause_time=None,
+             features={"x": 1.0}),            # 1
+        _raw(athlete="A", bout_id="b1", idx=4, ep_time=10.0, pause_time=None,
+             features={}),                    # 0
+    ]
+    m = compute_episode_metrics(raw, [], athlete="A")
+    assert m.action_density_first_half is not None
+    assert math.isclose(m.action_density_first_half, 3.0)
+    assert m.action_density_second_half is not None
+    assert math.isclose(m.action_density_second_half, 0.5)
+
+
+def test_evenness_is_entropy_of_per_episode_actions() -> None:
+    # Равномерные действия по эпизодам → 1.0.
+    raw_uniform = [
+        _raw(athlete="A", bout_id="b1", idx=i + 1, ep_time=10.0, pause_time=None,
+             features={"x": 1.0})
+        for i in range(5)
+    ]
+    m_uniform = compute_episode_metrics(raw_uniform, [], athlete="A")
+    assert m_uniform.activity_evenness is not None
+    assert math.isclose(m_uniform.activity_evenness, 1.0, rel_tol=1e-6)
+
+    # Только один эпизод имеет действия → 0.0 (всё в одной точке).
+    raw_single = [
+        _raw(athlete="A", bout_id="b1", idx=1, ep_time=10.0, pause_time=None,
+             features={"x": 1.0}),
+        _raw(athlete="A", bout_id="b1", idx=2, ep_time=10.0, pause_time=None,
+             features={}),
+        _raw(athlete="A", bout_id="b1", idx=3, ep_time=10.0, pause_time=None,
+             features={}),
+    ]
+    m_single = compute_episode_metrics(raw_single, [], athlete="A")
+    assert m_single.activity_evenness == 0.0
 
 
 def test_non_technical_share_includes_pause() -> None:
@@ -102,36 +169,8 @@ def test_non_technical_share_includes_pause() -> None:
         _rec(athlete="A", bout_id="b1", idx=3, state=EpisodeState.TECHNICAL_ACTION),
     ]
     m = compute_episode_metrics([], records)
-    # 2 не-ЗАП из 3 → 2/3
     assert m.non_technical_share is not None
     assert math.isclose(m.non_technical_share, 2 / 3, rel_tol=1e-6)
-
-
-def test_evenness_extremes() -> None:
-    # Равномерное распределение по 5 состояниям → 1.0
-    records_uniform = [
-        _rec(athlete="A", bout_id="b1", idx=i + 1, state=s)
-        for i, s in enumerate(
-            [
-                EpisodeState.MANOEUVRING,
-                EpisodeState.GRIP,
-                EpisodeState.OFF_BALANCE,
-                EpisodeState.TECHNICAL_ACTION,
-                EpisodeState.PAUSE,
-            ]
-        )
-    ]
-    m_uniform = compute_episode_metrics([], records_uniform)
-    assert m_uniform.activity_evenness is not None
-    assert math.isclose(m_uniform.activity_evenness, 1.0, rel_tol=1e-6)
-
-    # Всё в одном состоянии → 0.0
-    records_single = [
-        _rec(athlete="A", bout_id="b1", idx=i + 1, state=EpisodeState.PAUSE)
-        for i in range(5)
-    ]
-    m_single = compute_episode_metrics([], records_single)
-    assert m_single.activity_evenness == 0.0
 
 
 def test_athlete_filter_isolates_subject() -> None:
@@ -157,14 +196,202 @@ def test_invalid_durations_filtered_out() -> None:
         _raw(athlete="A", bout_id="b", idx=2, ep_time=-5.0, pause_time=2.0),
         _raw(athlete="A", bout_id="b", idx=3, ep_time=10.0, pause_time=None),
     ]
-    records = [
-        _rec(athlete="A", bout_id="b", idx=i + 1, state=EpisodeState.MANOEUVRING)
-        for i in range(3)
-    ]
-    m = compute_episode_metrics(raw, records, athlete="A")
-    # Только одно валидное значение длительности эпизода (10.0).
+    m = compute_episode_metrics(raw, [], athlete="A")
     assert m.duration_stats.count == 1
     assert m.duration_stats.total == 10.0
-    # Только одна валидная пауза (2.0).
     assert m.pause_stats.count == 1
     assert m.pause_stats.total == 2.0
+
+
+# ---------------------------------------------------------------------------
+# classify_style
+# ---------------------------------------------------------------------------
+
+
+def _metrics(**overrides) -> EpisodeMetrics:
+    base = {
+        "episode_count": 0,
+        "bout_count": 0,
+        "action_density": None,
+        "action_rate_per_second": None,
+        "action_density_first_half": None,
+        "action_density_second_half": None,
+        "activity_evenness": None,
+        "non_technical_share": None,
+    }
+    base.update(overrides)
+    return EpisodeMetrics(**base)
+
+
+def test_classify_style_returns_unclassified_without_thresholds() -> None:
+    label, w = classify_style(_metrics(episode_count=5), {})
+    assert label == StyleLabel.UNCLASSIFIED
+    assert w is not None and w.code == "style.no_rule_matched"
+
+    label2, w2 = classify_style(_metrics(episode_count=5), None)
+    assert label2 == StyleLabel.UNCLASSIFIED
+    assert w2 is not None
+
+
+def test_classify_style_endurance_rule() -> None:
+    thresholds = {
+        "endurance": {"min_episode_count": 8, "min_activity_evenness": 0.6},
+        "speed_power": {},
+        "burnout": {},
+    }
+    label, w = classify_style(
+        _metrics(episode_count=10, activity_evenness=0.7), thresholds
+    )
+    assert label == StyleLabel.ENDURANCE
+    assert w is None
+
+
+def test_classify_style_speed_power_rule() -> None:
+    thresholds = {
+        "endurance": {},
+        "speed_power": {"max_episode_count": 6, "min_action_density": 1.5},
+        "burnout": {},
+    }
+    label, w = classify_style(
+        _metrics(episode_count=4, action_density=2.0), thresholds
+    )
+    assert label == StyleLabel.SPEED_POWER
+    assert w is None
+
+
+def test_classify_style_burnout_rule() -> None:
+    thresholds = {
+        "endurance": {},
+        "speed_power": {},
+        "burnout": {
+            "min_action_density_first_half": 1.5,
+            "max_action_density_second_half": 0.5,
+        },
+    }
+    label, w = classify_style(
+        _metrics(
+            episode_count=10,
+            action_density_first_half=2.0,
+            action_density_second_half=0.2,
+        ),
+        thresholds,
+    )
+    assert label == StyleLabel.BURNOUT
+    assert w is None
+
+
+def test_classify_style_no_rule_matched_warns() -> None:
+    thresholds = {
+        "endurance": {"min_episode_count": 100},
+        "speed_power": {"max_episode_count": 1, "min_action_density": 100.0},
+        "burnout": {
+            "min_action_density_first_half": 100.0,
+            "max_action_density_second_half": 0.0,
+        },
+    }
+    label, w = classify_style(
+        _metrics(
+            episode_count=10,
+            action_density=1.0,
+            activity_evenness=0.5,
+            action_density_first_half=1.0,
+            action_density_second_half=1.0,
+        ),
+        thresholds,
+    )
+    assert label == StyleLabel.UNCLASSIFIED
+    assert w is not None and w.code == "style.no_rule_matched"
+
+
+def test_classify_style_priority_burnout_before_speed_power() -> None:
+    """При одновременном попадании burnout специфичнее → выбирается первым."""
+
+    thresholds = {
+        "speed_power": {"max_episode_count": 100, "min_action_density": 0.5},
+        "burnout": {
+            "min_action_density_first_half": 1.0,
+            "max_action_density_second_half": 0.5,
+        },
+    }
+    label, _ = classify_style(
+        _metrics(
+            episode_count=10,
+            action_density=1.0,
+            action_density_first_half=2.0,
+            action_density_second_half=0.2,
+        ),
+        thresholds,
+    )
+    assert label == StyleLabel.BURNOUT
+
+
+def test_classify_style_missing_metric_does_not_match() -> None:
+    """Если метрика None — правило не срабатывает (честнее, чем выдумывать)."""
+
+    thresholds = {
+        "endurance": {"min_activity_evenness": 0.1},
+    }
+    label, w = classify_style(_metrics(episode_count=10), thresholds)
+    assert label == StyleLabel.UNCLASSIFIED
+    assert w is not None
+
+
+# ---------------------------------------------------------------------------
+# load_style_thresholds
+# ---------------------------------------------------------------------------
+
+
+def test_load_style_thresholds_reads_nested_form(tmp_path: Path) -> None:
+    p = tmp_path / "style.yaml"
+    p.write_text(
+        """
+version: 1
+thresholds:
+  endurance:
+    min_episode_count: 8
+  speed_power:
+    max_episode_count: 6
+""",
+        encoding="utf-8",
+    )
+    thresholds, warnings = load_style_thresholds(p)
+    assert warnings == []
+    assert thresholds["endurance"] == {"min_episode_count": 8.0}
+    assert thresholds["speed_power"] == {"max_episode_count": 6.0}
+
+
+def test_load_style_thresholds_warns_on_unknowns(tmp_path: Path) -> None:
+    p = tmp_path / "style.yaml"
+    p.write_text(
+        """
+thresholds:
+  hyperdrive:
+    min_episode_count: 5
+  endurance:
+    foo_bar: 10
+""",
+        encoding="utf-8",
+    )
+    thresholds, warnings = load_style_thresholds(p)
+    codes = {w.code for w in warnings}
+    assert "style_thresholds.unknown_style" in codes
+    assert "style_thresholds.unknown_rule" in codes
+    # Endurance остаётся, но без неизвестного правила.
+    assert thresholds["endurance"] == {}
+
+
+def test_load_style_thresholds_handles_empty_file(tmp_path: Path) -> None:
+    p = tmp_path / "style.yaml"
+    p.write_text("", encoding="utf-8")
+    thresholds, warnings = load_style_thresholds(p)
+    assert warnings == []
+    # Все известные стили присутствуют, но без правил.
+    for k in ("endurance", "speed_power", "burnout"):
+        assert thresholds[k] == {}
+
+
+def test_load_style_thresholds_rejects_non_mapping(tmp_path: Path) -> None:
+    p = tmp_path / "style.yaml"
+    p.write_text("- not: a mapping\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_style_thresholds(p)

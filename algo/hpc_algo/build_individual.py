@@ -30,7 +30,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from hpc_algo.episode_metrics import compute_episode_metrics
+from hpc_algo.episode_metrics import (
+    classify_style,
+    compute_episode_metrics,
+    load_style_thresholds,
+)
 from hpc_algo.episode_split import (
     detect_base_columns,
     read_episodes_sheet,
@@ -109,8 +113,16 @@ def build_individual_models(
     *,
     sheet: str | None = None,
     athlete_filter: list[str] | None = None,
+    style_thresholds_path: str | Path | None = None,
 ) -> BuildIndividualSummary:
-    """Собрать индивидуальные HTML-отчёты для всех (или выбранных) спортсменов."""
+    """Собрать индивидуальные HTML-отчёты для всех (или выбранных) спортсменов.
+
+    Если ``style_thresholds_path`` указан, дополнительно классифицируем
+    стиль через :func:`hpc_algo.episode_metrics.classify_style` и
+    встраиваем результат в HTML. Без порогов отчёт строится без блока
+    «Стиль» и без warning'а: классификация — описательное расширение,
+    необязательное.
+    """
 
     excel_path = Path(excel_path)
     state_groups_path = Path(state_groups_path)
@@ -119,6 +131,13 @@ def build_individual_models(
 
     cfg, cfg_warnings = load_state_groups(state_groups_path)
     target_sheet = sheet or cfg.sheet
+
+    style_thresholds: dict[str, dict[str, float]] | None = None
+    style_thresholds_warnings: list[MarkovWarning] = []
+    if style_thresholds_path is not None:
+        style_thresholds, style_thresholds_warnings = load_style_thresholds(
+            style_thresholds_path
+        )
 
     df = read_episodes_sheet(excel_path, sheet=target_sheet)
     available_columns = list(df.columns)
@@ -147,7 +166,20 @@ def build_individual_models(
             skipped.append(athlete)
             continue
         metrics = compute_episode_metrics(raw_episodes, records, athlete=athlete)
-        html_text = render_individual_report(result, metrics)
+        athlete_warnings_extra: list[MarkovWarning] = []
+        if style_thresholds is not None:
+            label, style_warning = classify_style(metrics, style_thresholds)
+            metrics = metrics.model_copy(update={"style": label})
+            if style_warning is not None:
+                athlete_warnings_extra.append(style_warning)
+        html_text = render_individual_report(
+            result.model_copy(
+                update={
+                    "warnings": list(result.warnings) + athlete_warnings_extra,
+                }
+            ),
+            metrics,
+        )
         slug = _slugify(athlete)
         html_path = output_dir / f"{slug}.html"
         html_path.write_text(html_text, encoding="utf-8")
@@ -156,7 +188,7 @@ def build_individual_models(
                 athlete=athlete,
                 slug=slug,
                 html_path=html_path,
-                warnings_count=len(result.warnings),
+                warnings_count=len(result.warnings) + len(athlete_warnings_extra),
             )
         )
 
@@ -182,7 +214,7 @@ def build_individual_models(
         athletes_rendered=len(rendered),
         skipped_athletes=skipped,
         rendered_athletes=[o.athlete for o in rendered],
-        config_warnings=cfg_warnings,
+        config_warnings=cfg_warnings + style_thresholds_warnings,
         split_warnings=_dedupe_warnings(split_warnings),
         column_validation_warnings=column_validation_warnings,
         per_athlete_warning_counts={o.athlete: o.warnings_count for o in rendered},

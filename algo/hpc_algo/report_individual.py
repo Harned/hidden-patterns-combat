@@ -20,7 +20,15 @@ from hpc_algo.schema import (
     EpisodeMetrics,
     EpisodeState,
     MarkovIndividualResult,
+    StyleLabel,
 )
+
+_STYLE_LABELS_RU: dict[str, str] = {
+    StyleLabel.ENDURANCE.value: "Выносливый стиль (endurance)",
+    StyleLabel.SPEED_POWER.value: "Скоростно-силовой (speed_power)",
+    StyleLabel.BURNOUT.value: "Провал по дистанции (burnout)",
+    StyleLabel.UNCLASSIFIED.value: "Не классифицирован",
+}
 
 _STATE_LABELS_RU: dict[str, str] = {
     EpisodeState.MANOEUVRING.value: "Маневрирование",
@@ -164,6 +172,10 @@ def _render_metrics(metrics: EpisodeMetrics) -> str:
             f"{_fmt_float(d.mean, 2)} / {_fmt_float(d.median, 2)} / {_fmt_float(d.std, 2)} с",
         ),
         _row(
+            "Длительность эпизода (p25 / p75)",
+            f"{_fmt_float(d.p25, 2)} / {_fmt_float(d.p75, 2)} с",
+        ),
+        _row(
             "Длительность эпизода (min / max / total)",
             f"{_fmt_float(d.min, 2)} / {_fmt_float(d.max, 2)} / {_fmt_float(d.total, 2)} с",
         ),
@@ -171,14 +183,45 @@ def _render_metrics(metrics: EpisodeMetrics) -> str:
             "Длительность паузы (среднее / медиана)",
             f"{_fmt_float(p.mean, 2)} / {_fmt_float(p.median, 2)} с",
         ),
-        _row("Действий в секунду (action_density)", _fmt_float(metrics.action_density)),
+        _row("Активаций на эпизод (action_density)", _fmt_float(metrics.action_density)),
+        _row(
+            "Активаций по половинам (1-я / 2-я)",
+            f"{_fmt_float(metrics.action_density_first_half)}"
+            f" / {_fmt_float(metrics.action_density_second_half)}",
+        ),
+        _row(
+            "Действий в секунду (action_rate_per_second)",
+            _fmt_float(metrics.action_rate_per_second),
+        ),
         _row("Доля не-ЗАП эпизодов", _fmt_float(metrics.non_technical_share)),
-        _row("Равномерность активности (entropy)", _fmt_float(metrics.activity_evenness)),
+        _row(
+            "Равномерность активности по эпизодам",
+            _fmt_float(metrics.activity_evenness),
+        ),
     ]
     return (
         '<table class="kv-table"><tbody>'
         + "".join(rows)
         + "</tbody></table>"
+    )
+
+
+def _render_style_block(metrics: EpisodeMetrics) -> str:
+    """Описательная классификация (TASK_SPEC_013), без основного вывода."""
+
+    if metrics.style is None:
+        return ""
+    label = _STYLE_LABELS_RU.get(metrics.style.value, metrics.style.value)
+    note = (
+        " <span class='muted'>"
+        "(описательное расширение по эпизод-метрикам, не диагноз)"
+        "</span>"
+    )
+    return (
+        '<table class="kv-table"><tbody>'
+        f"<tr><th>Классификация стиля</th><td>{_esc(label)}{note}</td></tr>"
+        f"<tr><th>Код</th><td><code>{_esc(metrics.style.value)}</code></td></tr>"
+        "</tbody></table>"
     )
 
 
@@ -241,7 +284,19 @@ def _build_interpretation(
     ]
     if metrics.action_density is not None:
         parts.append(
-            f"<p>Плотность действий: {_fmt_float(metrics.action_density)} действий/с.</p>"
+            f"<p>Плотность действий: {_fmt_float(metrics.action_density)} активаций/эпизод"
+            + (
+                f" ({_fmt_float(metrics.action_rate_per_second)} активаций/с)"
+                if metrics.action_rate_per_second is not None
+                else ""
+            )
+            + ".</p>"
+        )
+    if metrics.style is not None:
+        style_ru = _STYLE_LABELS_RU.get(metrics.style.value, metrics.style.value)
+        parts.append(
+            f"<p>Описательная классификация стиля: <b>{_esc(style_ru)}</b> "
+            "(только как расширение, без основного вывода).</p>"
         )
     parts.append(
         '<p class="muted">Текст сгенерирован шаблонно из числовых '
@@ -355,6 +410,10 @@ def render_individual_report(
         "</section>",
         "<section><h2>Эпизодные метрики</h2>",
         _render_metrics(metrics),
+        "</section>",
+        "<section><h2>Стиль управления эпизодом</h2>",
+        _render_style_block(metrics) or '<p class="muted">Классификация не выполнена '
+        "(пороги не подключены).</p>",
         "</section>",
         "<section><h2>Интерпретация</h2>",
         _build_interpretation(result, metrics, labels),

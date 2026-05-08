@@ -159,6 +159,15 @@ def individual_markov_cmd(
             " Без флага — модели для всех найденных спортсменов."
         ),
     ),
+    style_thresholds: Path | None = typer.Option(
+        None,
+        "--style-thresholds",
+        help=(
+            "YAML-файл порогов TASK_SPEC_013. Если задан — в HTML добавится"
+            " блок «Стиль управления эпизодом» (endurance / speed_power /"
+            " burnout / unclassified)."
+        ),
+    ),
 ) -> None:
     """Построить ~30 индивидуальных Marков-моделей по эпизодам (Уровень 1)."""
 
@@ -170,6 +179,7 @@ def individual_markov_cmd(
         output_dir=output_dir,
         sheet=sheet,
         athlete_filter=athlete or None,
+        style_thresholds_path=style_thresholds,
     )
     typer.echo(
         f"OK: построено {summary.athletes_rendered} моделей "
