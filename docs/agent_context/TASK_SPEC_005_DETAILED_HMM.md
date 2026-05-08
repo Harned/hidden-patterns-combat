@@ -1,5 +1,11 @@
 # TASK_SPEC_005_DETAILED_HMM
 
+> **Status: under review — depends on resolution of Conflict C1**
+>
+> 7-state детализированная HMM наследует статус `TASK_SPEC_004`:
+> отложена до решения по Уровню 1 (5-state observable MC, `TASK_SPEC_011`).
+> До этого решения работу по 7-state HMM не начинать.
+
 ## Текущая задача
 
 Добавить **детализированную 7-state HMM** (вложенные подгруппы КФВ) как

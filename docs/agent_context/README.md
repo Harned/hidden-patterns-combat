@@ -27,12 +27,17 @@ Read additionally when relevant:
 
 ## Core Meaning
 
-- Observations are `ЗАП`.
-- Hidden-state logic follows `маневрирование -> КФВ -> ВУП -> ЗАП`.
+- The master-thesis primary model is a 5-state observable Markov chain
+  per fighter (states `manoeuvring / grip / off_balance / technical_action / pause`).
+- HMM (`observations = ЗАП`, hidden = `маневрирование / КФВ / ВУП`) is
+  the historical Level 2 model — deferred until after Level 1 ships.
+- Hidden-state logic of the canonical chain (`маневрирование -> КФВ -> ВУП -> ЗАП`)
+  remains the conceptual background and is preserved in `DOMAIN_SPEC.md`.
 - The algorithm must remain an independent module.
 - Backend and frontend must not contain research logic.
 - If data or mapping is insufficient, return honest `baseline` / `audit` / `warnings`.
 - Do not fabricate HMM outputs or scientific conclusions.
+- No Russian strings inside state-logic code; Russian only in YAML mapping and templates.
 
 ## How To Select The Active Task
 
@@ -50,6 +55,9 @@ Use the user request and current repository stage to choose the relevant `TASK_S
 - Use `TASK_SPEC_008_EMISSIONS_CV.md` for richer observation emissions (multivariate Bernoulli over ZAP channels as an alternative to Categorical) and a cross-validation helper (k-fold over sheets / weight categories) to compare model variants honestly. Domain invariants unchanged; no UI-level changes required.
 - Use `TASK_SPEC_009_PROD_RELIABILITY.md` for pre-pilot production hardening: pluggable rate-limit backend (in-memory / Redis), email verification scaffolding (column + endpoint + Alembic migration, SMTP stubbed), short-lived access tokens with a refresh endpoint. Domain algorithm unchanged.
 - Use `TASK_SPEC_010_CLOSED_STAND_LEGAL_UX.md` for the local/research-stand UX and compliance: self-service registration (email + password) with **email confirmation code** and **resend**; **login** and blocked workspace until email is confirmed; **password reset** via email code (request, neutral message, code entry, resend, new password); TOS/PD consents on **register**; first-workspace **test-mode disclaimer** (no duplicate legal checkboxes there); three policy documents; Excel upload gate; profile (email status, resend, logout, delete, documents); source ⋯ menu and delete; compact disclaimer. **Local MVP** in scope: no mandatory production email infra in the spec. Domain algorithm unchanged.
+- Use `TASK_SPEC_011_INDIVIDUAL_MARKOV.md` for the **primary** master-thesis deliverable: individual 5-state observable Markov chain per finalist of ChR-2025 (states `manoeuvring/grip/off_balance/technical_action/pause`), per-individual transition matrix `A`, stationary distribution `π`, episode metrics, deterministic textual interpretation, HTML report. This task **supersedes** `TASK_SPEC_004/005` for the master-thesis baseline; HMM is deferred (see `DOMAIN_SPEC.md` § "Уровни моделирования").
+- Use `TASK_SPEC_012_AGGREGATE_DIVERGENCE.md` for the **second** priority: aggregate Markov model built **only** over places 1–3 in each of the 10 weight categories, plus `divergence(individual, aggregate)` (KL on `A`, L1 on `π`) and ranking of finalists inside the category. Working hypothesis "average winning formula among medalists" — not rejected, second priority.
+- Use `TASK_SPEC_013_EPISODE_METRICS.md` for the **third** priority: episode-management metrics (`episode_count`, `episode_duration_stats`, `action_density`, `non_technical_share`, `activity_evenness`) and descriptive style classification `endurance | speed_power | burnout` driven by thresholds in YAML config. This is descriptive, not a substitute for the transition matrix.
 
 If more than one task spec appears relevant, stop and clarify before implementation.
 

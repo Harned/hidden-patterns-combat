@@ -1,5 +1,13 @@
 # TASK_SPEC_008_EMISSIONS_CV
 
+> **Status: under review — depends on resolution of Conflict C1**
+>
+> Multivariate Bernoulli-эмиссии и k-fold CV имеют смысл только
+> внутри HMM-ветки (`TASK_SPEC_004/005`). Поскольку HMM отложена
+> до окончания Уровня 1 (`TASK_SPEC_011/012/013`), этот файл
+> также отложен. До решения по C1 новые работы по эмиссиям и CV
+> не начинать.
+
 ## Текущая задача
 
 1. Дать пользователю **альтернативу Categorical-эмиссиям**: multivariate

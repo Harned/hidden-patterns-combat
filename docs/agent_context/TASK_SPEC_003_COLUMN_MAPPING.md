@@ -23,6 +23,25 @@
   возвращать честный `audit_only` / `needs_column_mapping`, а не
   «додумывать» структуру.
 
+## Сосуществование с YAML state-groups (Уровень 1)
+
+`ColumnMappingConfig` остаётся пользовательским артефактом UI и
+описывает роли flatten-колонок (`zap` / `manoeuvring` / `kfv` / `vup` / …).
+Он не отменяется.
+
+Параллельно для Уровня 1 (5-state Marков-цепь, см. `DOMAIN_SPEC.md`)
+вводится **внешний YAML-конфиг** `config/state_groups.yaml`,
+описывающий маппинг «группа состояния → список flatten-имён колонок»
+для пяти групп (`manoeuvring / grip / off_balance / technical_action`;
+`pause` определяется по отсутствию активности).
+
+`ColumnMappingConfig` и `state_groups.yaml` могут заполняться независимо.
+Если оба источника определяют одну и ту же роль для одной колонки,
+конфликт фиксируется в warning'е, приоритет — у `state_groups.yaml`
+для алгоритма Уровня 1 (он отвечает за состояние эпизода) и у
+`ColumnMappingConfig` для существующего baseline (он отвечает за
+аудит и UI).
+
 ## Что должно появиться
 
 1. **algo**:
