@@ -433,3 +433,106 @@ def sheet_preview(
         "columns": flat_names,
         "preview": preview,
     }
+
+
+# ---------------------------------------------------------------------------
+# Markov-пайплайн (TASK_SPEC_011 / 012 / 013)
+# ---------------------------------------------------------------------------
+
+
+def run_markov_individual(
+    source: Source,
+    storage_resolve,
+    settings,
+) -> dict[str, Any]:
+    """Запустить 5-state Observable Markov Chain по источнику.
+
+    Возвращает ``BuildIndividualSummary`` + per-athlete детали (матрица
+    переходов, стационарка, episode-метрики) как сериализуемый dict.
+    Никакой исследовательской логики здесь нет — только вызов
+    независимого processing module.
+    """
+
+    import json as _json
+
+    from hpc_algo.build_individual import build_individual_models
+    from hpc_algo.episode_metrics import classify_style, load_style_thresholds
+    from hpc_algo.episode_split import (
+        detect_base_columns,
+        read_episodes_sheet,
+        split_into_bouts_and_episodes,
+    )
+    from hpc_algo.markov_individual import build_episode_sequence, fit_individual_markov
+    from hpc_algo.state_groups import load_state_groups
+
+    excel_path = storage_resolve(source.stored_path)
+    state_groups_path = settings.markov_state_groups_path
+    style_thresholds_path = settings.markov_style_thresholds_path
+    output_dir = settings.markov_reports_dir / str(source.id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Summary + HTML reports via standard orchestrator.
+    summary = build_individual_models(
+        excel_path=excel_path,
+        state_groups_path=state_groups_path,
+        output_dir=output_dir,
+        style_thresholds_path=style_thresholds_path if style_thresholds_path.exists() else None,
+    )
+
+    # 2. Per-athlete structured data for the API JSON response.
+    cfg, _ = load_state_groups(state_groups_path)
+    style_thresholds = None
+    if style_thresholds_path.exists():
+        style_thresholds, _ = load_style_thresholds(style_thresholds_path)
+
+    df = read_episodes_sheet(excel_path, sheet=cfg.sheet, header_rows=None)
+    base = detect_base_columns(df.columns)
+    feature_cols = [c for cols in cfg.states.values() for c in cols]
+    raw_episodes, _ = split_into_bouts_and_episodes(df, base, feature_cols)
+    records = build_episode_sequence(raw_episodes, cfg)
+
+    from collections import defaultdict
+
+    from hpc_algo.episode_metrics import compute_episode_metrics
+
+    rendered_set = set(summary.rendered_athletes)
+    per_ath_raw: dict = defaultdict(list)
+    per_ath_rec: dict = defaultdict(list)
+    for r in raw_episodes:
+        if r.athlete in rendered_set:
+            per_ath_raw[r.athlete].append(r)
+    for r in records:
+        if r.athlete in rendered_set:
+            per_ath_rec[r.athlete].append(r)
+
+    athletes_data = []
+    for athlete in summary.rendered_athletes:
+        markov_result = fit_individual_markov(athlete, records, mode=cfg.mode)
+        metrics = compute_episode_metrics(
+            per_ath_raw.get(athlete, []),
+            per_ath_rec.get(athlete, []),
+        )
+        style_label = None
+        if style_thresholds is not None:
+            label, _ = classify_style(metrics, style_thresholds)
+            style_label = label.value if hasattr(label, "value") else str(label)
+
+        athletes_data.append({
+            "athlete": athlete,
+            "episode_count": markov_result.episode_count,
+            "bout_count": markov_result.bout_count,
+            "transition_matrix": markov_result.transition_matrix,
+            "stationary": markov_result.stationary_distribution,
+            "visit_counts": markov_result.visit_counts,
+            "state_labels": markov_result.state_labels,
+            "style": style_label,
+            "episode_metrics": _json.loads(metrics.model_dump_json()),
+            "warnings_count": summary.per_athlete_warning_counts.get(athlete, 0),
+        })
+
+    return {
+        "summary": _json.loads(summary.model_dump_json()),
+        "athletes": athletes_data,
+        "state_labels": list(cfg.states.keys()) + ["pause"],
+        "reports_dir": str(output_dir),
+    }

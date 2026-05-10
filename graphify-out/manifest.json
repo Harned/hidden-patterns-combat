@@ -1,0 +1,618 @@
+{
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/tailwind.config.js": {
+    "mtime": 1777040486.749186,
+    "hash": "fd81731caef77cdd7a1bcdef66c0b14c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/vite.config.d.ts": {
+    "mtime": 1777041210.70399,
+    "hash": "9fcf75521f4c43fd8b75300e0f63b867"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/vite.config.js": {
+    "mtime": 1777041210.6801128,
+    "hash": "ce675d6e6de8029accd6503c78367f6f"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/vite.config.ts": {
+    "mtime": 1777040486.72451,
+    "hash": "6653d05b3ea6f99cdfe0f8a4be071c55"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/vitest.config.ts": {
+    "mtime": 1777043053.4853268,
+    "hash": "eca2d5ddb063ef5e5c3ff8d225e07f71"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/postcss.config.js": {
+    "mtime": 1777040486.7719386,
+    "hash": "c735540bb63936a123bc867d950c9f69"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/main.tsx": {
+    "mtime": 1777040486.808028,
+    "hash": "51e7d21031d48985430ad0274a83a164"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/app/App.tsx": {
+    "mtime": 1777184058.7267044,
+    "hash": "88af00b6883ee3664cce040d200865d9"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/test/setup.ts": {
+    "mtime": 1777043058.367771,
+    "hash": "3709e3aa95abf0544678f0f2d9b46702"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/auth/AuthContext.tsx": {
+    "mtime": 1777116209.925279,
+    "hash": "1eb87c939076c0fe777b4d7e23c1efd3"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/TrainerSummary.tsx": {
+    "mtime": 1777209708.7116091,
+    "hash": "3756f39fc216908780c16f26382e20b7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/HMMView.tsx": {
+    "mtime": 1777214385.7079113,
+    "hash": "43a336893d5f82e6ee7a79af8e088bd9"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/AnalysisView.tsx": {
+    "mtime": 1777214417.2530534,
+    "hash": "8acd1058383c202f69d4b2f0b460a855"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/AuditTable.tsx": {
+    "mtime": 1777040487.0754476,
+    "hash": "5d1d5b079adfd725d6a07ccfd8d3199c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/ChartsGrid.tsx": {
+    "mtime": 1777214282.9320588,
+    "hash": "d9693fa9f1cee1b7986ff472279e29cc"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/RunsHistory.tsx": {
+    "mtime": 1777043306.1159968,
+    "hash": "75264b60f3ba9b7374a2a4923e9d1bdf"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/StatusBadge.tsx": {
+    "mtime": 1777214399.5500045,
+    "hash": "7265fed9d294e768a37c32ac816dccef"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/StatusBadge.test.tsx": {
+    "mtime": 1777043088.3690488,
+    "hash": "94b7a8ac4b451fff1a60b918c19f0861"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/MappingEditor.tsx": {
+    "mtime": 1778263005.2783809,
+    "hash": "50094aa3ba923d29e4152a06cda97167"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/ViterbiTimeline.tsx": {
+    "mtime": 1777214336.0104299,
+    "hash": "31150f78ae9c452f71210cacf17b16ec"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/DetectedColumns.tsx": {
+    "mtime": 1777040487.1004207,
+    "hash": "95fb07f4e41edd736ce0e9417b709047"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/ChartsGrid.test.tsx": {
+    "mtime": 1777214680.6686504,
+    "hash": "d2e904e4a6548142952f263eefb558b8"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/WarningsList.tsx": {
+    "mtime": 1777043220.341042,
+    "hash": "39d939b1a29d168449e7450855f40490"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/analysis/ZapChannelsCard.tsx": {
+    "mtime": 1777040487.3543644,
+    "hash": "c3fdf4f54d73268cd881a61f72c9034b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/sources/SourcePrepWizard.tsx": {
+    "mtime": 1777206191.9743416,
+    "hash": "ea327a80fe3b323f1eac4f725674a03e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/sources/UploadGateModal.tsx": {
+    "mtime": 1777178405.8982017,
+    "hash": "9042f24898df6e6748424235711a1fca"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/sources/SheetGrid.tsx": {
+    "mtime": 1777205939.3704548,
+    "hash": "f52daa85c55b9162d41b457a4307f057"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/sources/Sidebar.tsx": {
+    "mtime": 1777184105.4746792,
+    "hash": "fd624f23e4ef841b9a4901033119a57a"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/onboarding/DisclaimerBanner.tsx": {
+    "mtime": 1777178405.898212,
+    "hash": "5d01f452e81fc2f1b06a93fc06faa20c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/features/onboarding/OnboardingModal.tsx": {
+    "mtime": 1777116360.5634995,
+    "hash": "3d97ffc1badda4ca78ae4c051e73f8ce"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/components/ui.tsx": {
+    "mtime": 1777040486.9199297,
+    "hash": "e3f36e359de6bbaff707b6e2237977d7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/api/types.ts": {
+    "mtime": 1777214304.88272,
+    "hash": "b9386f406faaf23cff9e9db3f78f0a1c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/api/client.ts": {
+    "mtime": 1777206129.7374794,
+    "hash": "ed875683d214347aead49c601062feee"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/copy/legal.ts": {
+    "mtime": 1777116242.881904,
+    "hash": "85e63773bd26454a3edf5b9446b7b321"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/i18n/warnings.test.ts": {
+    "mtime": 1777043096.2329235,
+    "hash": "3dc337ff85140509c401a4b84c994dc8"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/i18n/warnings.ts": {
+    "mtime": 1777043078.0574124,
+    "hash": "73932113a6af5eb162fbe4ad7a751ba7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/RegisterPage.tsx": {
+    "mtime": 1777185291.164291,
+    "hash": "eede9dfd9905fef203004c9d7c53ca55"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/LoginPage.tsx": {
+    "mtime": 1777116277.401934,
+    "hash": "51991b6d6efc1d1e60ca1f32a68b4cd2"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/ForgotPasswordPage.tsx": {
+    "mtime": 1777116329.062521,
+    "hash": "da8dc95312a6ed8602bfe250c589b2fd"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/VerifyEmailPage.tsx": {
+    "mtime": 1777187857.7282596,
+    "hash": "83eaf39ec8e0e0f9e53e43b9e6749697"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/ResetPasswordPage.tsx": {
+    "mtime": 1777187847.8119426,
+    "hash": "e511da1b6e96d1e8a7c4728243df293c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/ProfilePage.tsx": {
+    "mtime": 1777116449.1420624,
+    "hash": "a3347e17f89e3c5773cb82c177599768"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/LegalPage.tsx": {
+    "mtime": 1777116257.9225805,
+    "hash": "bd5e027d844ca90db658cc43057522d2"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/SourcePrepPage.tsx": {
+    "mtime": 1777184049.9776454,
+    "hash": "4f3f5489f57bff1e5d3da69a494513b6"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/src/pages/DashboardPage.tsx": {
+    "mtime": 1777040487.1633713,
+    "hash": "a253d8f5b2db17ba8bf1d8fd8381f6af"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/detection.py": {
+    "mtime": 1777217017.912401,
+    "hash": "048a19059bc55776e7b456a20429762e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/loading.py": {
+    "mtime": 1777040485.9651072,
+    "hash": "9c53f49eebf46fa0ef791c3a09aeb6e5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/suggestions.py": {
+    "mtime": 1777205995.6575603,
+    "hash": "dbde52816a82ff8c42ef1d072e298327"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/audit.py": {
+    "mtime": 1778263005.2924728,
+    "hash": "cc4353d3f43392c8efd8d74b2c807831"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/text_utils.py": {
+    "mtime": 1777040485.946168,
+    "hash": "f3090d9d6e781f7b7f4386225720f5a1"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/baseline.py": {
+    "mtime": 1777210868.930497,
+    "hash": "e2b4ab9a60b012c62028ff31c6171afa"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/__init__.py": {
+    "mtime": 1777183363.5138845,
+    "hash": "b88681ea1961df7dcfcf0ac636eabc3b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/workbook_editor.py": {
+    "mtime": 1777204388.3789492,
+    "hash": "0c9e7cd4143e8d1ea155a74dd46bae04"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/api.py": {
+    "mtime": 1778263005.277445,
+    "hash": "dcc75b0b9337b36a8e28242ab53492e4"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/cli.py": {
+    "mtime": 1777040486.0550773,
+    "hash": "adbb5d43b885f2b3333a1052dbc3eef5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/hmm_bernoulli.py": {
+    "mtime": 1777043791.6349187,
+    "hash": "c5d9fb8d1db9fa5cdb8fc8b594d5413e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/cv.py": {
+    "mtime": 1777043700.8630815,
+    "hash": "38adba25979d074ba146f6e244a87e5b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/trainer.py": {
+    "mtime": 1777209558.2643437,
+    "hash": "d9cabcb6bf72dc583fc1f6f8dfe3b559"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/mapping.py": {
+    "mtime": 1778263005.2784064,
+    "hash": "398afc193c8b1d4b9fcaddd1d7e7f541"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/schema.py": {
+    "mtime": 1778263005.2896438,
+    "hash": "e74d8b156b30355fec2a5f22e86407f5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/hpc_algo/hmm.py": {
+    "mtime": 1777214600.439714,
+    "hash": "e69b890ce2ab2c533b26e2ea63cd1969"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/conftest.py": {
+    "mtime": 1778263005.2897565,
+    "hash": "6bf42d72078755c4da3c377ad668b3a8"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_hmm_detailed.py": {
+    "mtime": 1777041036.3511133,
+    "hash": "bdc13f9e3e8af2fedadaa4957881ff47"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_detection_balls.py": {
+    "mtime": 1778263005.2924516,
+    "hash": "a483874c93a53b7da887e2a2192697ed"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_loading.py": {
+    "mtime": 1777040486.1164813,
+    "hash": "a398367130cba4b3ffa87c944f40682d"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_hmm_honesty.py": {
+    "mtime": 1777214774.078415,
+    "hash": "9b6167815a778ac25512bd0a43c36a13"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_emissions_cv.py": {
+    "mtime": 1777043775.7365794,
+    "hash": "02182c01f2ebc5b9a85cdb26839ef38b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_suggestions.py": {
+    "mtime": 1777206025.884781,
+    "hash": "9190bc05fd5a796975c06710d638da00"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/__init__.py": {
+    "mtime": 1777096501.771834,
+    "hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_virtual_bout.py": {
+    "mtime": 1778263005.2785187,
+    "hash": "49e4fdf3a3b4eb9a9770c59b5c659b72"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_zap_encoding.py": {
+    "mtime": 1777040487.3389308,
+    "hash": "e6dd44c14e2b6bdcf200f70f5ba8a6b8"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_detection.py": {
+    "mtime": 1777040486.1534383,
+    "hash": "1cb6d61b23e0429e19f7195677f3a974"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_audit.py": {
+    "mtime": 1777209491.7733707,
+    "hash": "5b8bbb24c5dfeb066e8651c0dcee6795"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_totals_row.py": {
+    "mtime": 1778263005.2844326,
+    "hash": "591a4eae149f977b4f026c263cbeceeb"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_hmm.py": {
+    "mtime": 1777040487.4230347,
+    "hash": "fe754e1830a1d992fdcd197b70671cfe"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_workbook_editor.py": {
+    "mtime": 1777194976.5826612,
+    "hash": "6ef48ca7226313509b9e5e7a41efeea7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_mapping_warnings.py": {
+    "mtime": 1778263005.2936795,
+    "hash": "d1547f636f96cbb9f35360a071fca389"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_trainer.py": {
+    "mtime": 1777209592.4494152,
+    "hash": "a7e278ee5bbcafc5aed936f0ff9571d7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_analyze_source.py": {
+    "mtime": 1777040486.1683648,
+    "hash": "a93ff1962195cfa57675bb76eb3ad42e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_episode_grouping.py": {
+    "mtime": 1777212052.8061476,
+    "hash": "043c4b3132d1fa287fad58bc7a9f3b81"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/tests/test_mapping.py": {
+    "mtime": 1777217420.8575232,
+    "hash": "dc0f1f659682c12627df47c1563d4dd9"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/mail.py": {
+    "mtime": 1777185983.6840494,
+    "hash": "213d68f64200a98f81b6f8df6395e0a4"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/config.py": {
+    "mtime": 1777184897.6762993,
+    "hash": "bb2792c36f9e931d44200780e0209004"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/security.py": {
+    "mtime": 1777044016.3054562,
+    "hash": "fb080d6494b199f8e2a83efc96c7e744"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/__init__.py": {
+    "mtime": 1777040486.2372944,
+    "hash": "5bbccf6b9ecf1b449b16be884237e0d3"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/rate_limit.py": {
+    "mtime": 1777044030.0073838,
+    "hash": "f8a64237bd8fff72ad9922d149df4943"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/main.py": {
+    "mtime": 1777185237.3087018,
+    "hash": "0c637cbfc2739e262b0d48ef34aa0fbe"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/analysis/service.py": {
+    "mtime": 1777206045.4992142,
+    "hash": "af4d555731a97a788c9e0c50df0dc571"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/analysis/__init__.py": {
+    "mtime": 1777096501.7716734,
+    "hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/analysis/router.py": {
+    "mtime": 1777206059.49626,
+    "hash": "59d287a2cc41319d00bb729979dd61b5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/service.py": {
+    "mtime": 1777116080.8698494,
+    "hash": "4f86c271e717d5bc979876fa3d09627b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/deps.py": {
+    "mtime": 1777115539.512669,
+    "hash": "ff81bd179d2207d7c6399a6b1350089e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/codes.py": {
+    "mtime": 1777115368.0692356,
+    "hash": "48fe2754498c8aac1ad79a083f62cdb0"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/security.py": {
+    "mtime": 1777043999.302084,
+    "hash": "e77b3f46a6863f3f1bf323ad5f9ba839"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/__init__.py": {
+    "mtime": 1777096501.7712696,
+    "hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/schemas.py": {
+    "mtime": 1777115505.3868816,
+    "hash": "2356f17d6b0fa7286a74bb02c2db278f"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/auth/router.py": {
+    "mtime": 1777185987.0282512,
+    "hash": "35119f5b50df3ce6c5efb31df16c7cb5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/db/alembic_runner.py": {
+    "mtime": 1777184656.7460623,
+    "hash": "43f324c4a2a540061abf19c95f535396"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/db/models.py": {
+    "mtime": 1777183292.0799184,
+    "hash": "27d58f7c90a998efcbd33a77e226ed36"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/db/session.py": {
+    "mtime": 1777040486.285179,
+    "hash": "ad44d1b35113f1ed179228c53332350f"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/db/__init__.py": {
+    "mtime": 1777096501.7718415,
+    "hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/sources/service.py": {
+    "mtime": 1777183330.2782073,
+    "hash": "2a35033c509516330418edddeeed8c19"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/sources/__init__.py": {
+    "mtime": 1777096501.771809,
+    "hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/sources/schemas.py": {
+    "mtime": 1777183297.6502287,
+    "hash": "ddf1e6aad49af54127aa374f24a31e1a"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/sources/storage.py": {
+    "mtime": 1777040486.435435,
+    "hash": "95bb327c34c9fe133c7e154e6062b15e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/app/sources/router.py": {
+    "mtime": 1777183342.8028133,
+    "hash": "ec32ace1bd525f375407ce14a950e41d"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/conftest.py": {
+    "mtime": 1777184500.946551,
+    "hash": "9a49fd6dea190bfc9d95f80d7838bb79"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_auth.py": {
+    "mtime": 1777115707.4425554,
+    "hash": "0c7b2b478fea57118cb420910904d095"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_infra.py": {
+    "mtime": 1777185245.1477733,
+    "hash": "7c430cee37622f4aabc3ff5d0307aa19"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_analysis.py": {
+    "mtime": 1777183850.7779453,
+    "hash": "ae62029feb1695c05432da259d460a8c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/__init__.py": {
+    "mtime": 1777096501.7717175,
+    "hash": "68b329da9893e34099c7d8ad5cb9c940"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_hmm_e2e.py": {
+    "mtime": 1777183488.6067972,
+    "hash": "eda5bdbd64a3e97fc3f8cf983498ab7a"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_prep_wizard.py": {
+    "mtime": 1777206092.2901618,
+    "hash": "81ecf7adf80e702bf92f0b7ad1414b0b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_sources.py": {
+    "mtime": 1777115729.13554,
+    "hash": "836cf36d5c0d60cb3af1dab9988a54cf"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_ux.py": {
+    "mtime": 1777183463.7174644,
+    "hash": "8b25a9ba67222d6eda6da2ddd4d6f91f"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_auth_hardening.py": {
+    "mtime": 1777116123.6753101,
+    "hash": "238e64ca6fc25bea30a1cce950819648"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/tests/test_mapping.py": {
+    "mtime": 1777183435.74052,
+    "hash": "ba869b945422c6b9297515f16d163085"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/alembic/env.py": {
+    "mtime": 1777042392.9724636,
+    "hash": "5c5f89b1c0861aafadafc395fc1a97c5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/alembic/versions/0004_source_preparation_state.py": {
+    "mtime": 1777183286.547822,
+    "hash": "44754e96567cf4a5370798d4610073eb"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/alembic/versions/0003_user_consents_and_codes.py": {
+    "mtime": 1777116123.675065,
+    "hash": "50c45b16f35e1f9b176c29707ae1246a"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/alembic/versions/0001_initial.py": {
+    "mtime": 1777042392.9726279,
+    "hash": "a205e47fdd1e511e1a34c286e43e7b3e"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/alembic/versions/0002_email_verified_at.py": {
+    "mtime": 1777044165.2819412,
+    "hash": "f40c51c292ffd5fa4523fbbd5dfef1db"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/README.md": {
+    "mtime": 1777116511.6134892,
+    "hash": "0fd3eeb3ce0e332ee64cc5d74ed886dd"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docker-compose.yml": {
+    "mtime": 1777044210.9796627,
+    "hash": "16002974f9b2a7f222dfdd08c1160341"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/index.html": {
+    "mtime": 1777040486.7916152,
+    "hash": "98146d71d443c22325a0d8e158b5a3cf"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/frontend/README.md": {
+    "mtime": 1777116536.9572847,
+    "hash": "7649f4b4e974fd406be940c6bf968d75"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/algo/README.md": {
+    "mtime": 1777040486.1848762,
+    "hash": "4d0fff0aa7981ad9356ab35ca503782c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/backend/README.md": {
+    "mtime": 1777116522.8024948,
+    "hash": "a96e26ddb73f84dd7c71a112bbabd0cb"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/HMMSport+test.docx.md": {
+    "mtime": 1777032275.333098,
+    "hash": "d86b92d6e22c10aabc1db985ebb26325"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/AGENTS.md": {
+    "mtime": 1777033051.4531662,
+    "hash": "b466abe6de8595ee7ea7178c42cb405c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/PROJECT_CONTEXT.md": {
+    "mtime": 1777031922.3643227,
+    "hash": "1a71b0a3fba67ef1fc788e9f2fc83be5"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_010_CLOSED_STAND_LEGAL_UX.md": {
+    "mtime": 1777106163.6024039,
+    "hash": "cb6dee219bd7128387a7bb58f09e76e9"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/ALGORITHM_SPEC.md": {
+    "mtime": 1777033349.5349896,
+    "hash": "fba3f4bdef7e8b2dd77c4a7e20df07d3"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_007_UX.md": {
+    "mtime": 1777042791.968706,
+    "hash": "a54a9689a960114cb69edd0bddd2529c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/REPOSITORY_NOTES.md": {
+    "mtime": 1777217075.410947,
+    "hash": "8cdcdbb4c3453511573d606f32a9b7ca"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_002_MVP_SCAFFOLD.md": {
+    "mtime": 1777033336.8821902,
+    "hash": "f5aaf809ecc27aa68d2be56af9c811b6"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/AGENT_RULES.md": {
+    "mtime": 1777031982.7516375,
+    "hash": "d3dbcdbedbf9d613c387199403c9328c"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_009_PROD_RELIABILITY.md": {
+    "mtime": 1777043904.5807703,
+    "hash": "1a2890ce75b4b04037d488b1ec89768f"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_003_1_ZAP_ENCODING.md": {
+    "mtime": 1777040487.322655,
+    "hash": "3c982f20635ae1cf70377a15530a59b0"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/PRODUCT_SPEC.md": {
+    "mtime": 1777033334.389778,
+    "hash": "3906f76cf7dc66fd182beb8ce4c15d1b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/CLAUDE_START_PROMPT.md": {
+    "mtime": 1777033322.5979621,
+    "hash": "fa202d800f35d99c49fef9d51ed13ca7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/ARCHITECTURE_REQUEST.md": {
+    "mtime": 1777033346.7315974,
+    "hash": "053d9c4eedfecb312ad79a3b3ac7c7c1"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/README.md": {
+    "mtime": 1777106159.1968207,
+    "hash": "2b1ca28c9e18083f087d197018a0a2b6"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_008_EMISSIONS_CV.md": {
+    "mtime": 1777043480.7918527,
+    "hash": "e1d8eeee4d6d56997b387391e8c4b4fb"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/DEFINITION_OF_DONE.md": {
+    "mtime": 1777033326.772586,
+    "hash": "5d413a1511ec44b36f4a68eeaf86b561"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_001_ARCHITECTURE.md": {
+    "mtime": 1777033343.8861434,
+    "hash": "92a0bed976a7f94ab4853cb09365d26b"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/DATA_SPEC.md": {
+    "mtime": 1777033351.8262572,
+    "hash": "a84f6fff20884987f90ab9a9521d666a"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/DOMAIN_SPEC.md": {
+    "mtime": 1777217088.199933,
+    "hash": "57c04da3cbd3f373a59f2dd2d3542970"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_005_DETAILED_HMM.md": {
+    "mtime": 1777040696.4488251,
+    "hash": "d83dfd3b4cb0a6e45a14dbcabc594eda"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_003_2_SHEET_COLUMNS.md": {
+    "mtime": 1777040487.3709388,
+    "hash": "315870895a9691399fd75031729dc106"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_006_INFRA.md": {
+    "mtime": 1777041599.0997312,
+    "hash": "b7d0bdd75ea04728b01c9d120ea3d2d7"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_003_COLUMN_MAPPING.md": {
+    "mtime": 1777040487.2398496,
+    "hash": "fa724adc0de776b28567c5cb89a463c9"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/agent_context/TASK_SPEC_004_HMM.md": {
+    "mtime": 1777040487.3877473,
+    "hash": "dc31e9aa3cdf531b6e8f51bc233839ab"
+  },
+  "/Users/dmitryaleshkin/Documents/hidden-patterns-combat/docs/\u0424\u0438\u043b\u043e\u0441\u043e\u0444\u0441\u043a\u0430\u044f \u043e\u0441\u043d\u043e\u0432\u0430 \u043f\u043e\u0434\u0445\u043e\u0434\u0430_\u0435\u0434\u0438\u043d\u043e\u0431\u043e\u0440\u0441\u0442\u0432\u0430_new.pdf": {
+    "mtime": 1777122477.3253114,
+    "hash": "fbdaa0253b931d6e4d2b0f9bd25494b5"
+  }
+}

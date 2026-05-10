@@ -15,9 +15,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from hpc_algo import hmm as hmm_mod
 from hpc_algo import mapping as mapping_mod
-from hpc_algo.audit import build_audit, filter_audit_to_sheets
+from hpc_algo.audit import (
+    build_audit,
+    detect_totals_row_indices,
+    drop_totals_rows,
+    filter_audit_to_sheets,
+)
 from hpc_algo.baseline import (
     build_baseline,
     build_baseline_with_mapping,
@@ -36,11 +43,19 @@ from hpc_algo.schema import (
     ColumnMappingConfig,
     HiddenGroup,
     HMMResult,
+    SheetMapping,
     SourceMetadata,
     WarningItem,
     WarningSeverity,
 )
 from hpc_algo.trainer import build_athlete_episode_rollup
+
+# Имя синтетической колонки, которая хранит виртуальную схватку,
+# восстановленную по сбросам нумерации эпизодов (см.
+# :func:`hpc_algo.mapping.virtual_bout_series`). Имя начинается с
+# подчёркивания, чтобы исключить случайное совпадение с реальной
+# колонкой пользователя.
+_VIRTUAL_BOUT_COLUMN = "_virtual_bout_"
 
 
 @dataclass
@@ -568,6 +583,248 @@ def _build_hmm_charts(hmm: HMMResult) -> list[ChartData]:
     return charts
 
 
+def _zap_candidate_unmapped_warnings(
+    config: ColumnMappingConfig,
+    detection: ColumnDetectionReport,
+) -> list[WarningItem]:
+    """Warning, если эвристика нашла ZAP-кандидата, а в mapping он не разметлен.
+
+    Применяется ко всем кандидатам выше weak-порога (``score >= 0.5``):
+    эвристика считает их потенциальной ZAP-наблюдаемой по DOMAIN_SPEC,
+    но финальное решение остаётся за оператором. Если кандидат не вошёл
+    в роль ZAP (включая случаи, когда оператор отменил preflight или
+    собрал mapping вручную), оператор должен это увидеть — иначе
+    плотность ZAP-сигнала может рухнуть незаметно.
+    """
+
+    out: list[WarningItem] = []
+    for cand in detection.candidates:
+        if cand.group != HiddenGroup.ZAP:
+            continue
+        if cand.score < 0.5:
+            continue
+        sm = config.sheets.get(cand.sheet)
+        zap_cols = sm.roles.get(HiddenGroup.ZAP, []) if sm is not None else []
+        if cand.column in zap_cols:
+            continue
+        out.append(
+            WarningItem(
+                code="mapping.zap_candidate_unmapped",
+                message=(
+                    f"На листе '{cand.sheet}' колонка '{cand.column}' "
+                    "похожа на ZAP-наблюдение (по DOMAIN_SPEC), но в mapping "
+                    "не размечена в роль ЗАП. Если это судейская оценка / "
+                    "балл / удержание / болевой — добавьте её в роль ЗАП "
+                    "через сопоставление колонок; иначе проигнорируйте."
+                ),
+                severity=WarningSeverity.WARNING,
+                context={
+                    "sheet": cand.sheet,
+                    "column": cand.column,
+                    "score": cand.score,
+                    "rationale": cand.rationale,
+                },
+            )
+        )
+    return out
+
+
+def _drop_totals_rows_from_frames(
+    frames: dict[str, pd.DataFrame],
+) -> tuple[dict[str, pd.DataFrame], list[dict[str, Any]]]:
+    """Удалить строки-итоги из mapped frames до baseline/HMM.
+
+    Аудит детектит итоги по сырому df (header_rows=[0]); здесь
+    повторяем детектор уже на mapped frame, потому что после
+    применения header_rows позиции строк смещены (заголовок съедает
+    первые ``len(header_rows)`` строк) и могут различаться по числу
+    данных. Возвращаем новый словарь frames и список словарей-контекстов
+    для warning ``audit.totals_row_detected``.
+    """
+
+    new_frames: dict[str, pd.DataFrame] = {}
+    info: list[dict[str, Any]] = []
+    for sheet_name, df in frames.items():
+        positions = detect_totals_row_indices(df)
+        if not positions:
+            new_frames[sheet_name] = df
+            continue
+        cleaned = drop_totals_rows(df, positions)
+        new_frames[sheet_name] = cleaned
+        info.append(
+            {
+                "sheet": sheet_name,
+                "n_rows_dropped": len(positions),
+                "rows_before": int(len(df)),
+                "rows_after": int(len(cleaned)),
+            }
+        )
+    return new_frames, info
+
+
+def _try_apply_virtual_bout(
+    config: ColumnMappingConfig,
+    frames: dict[str, pd.DataFrame],
+) -> tuple[
+    ColumnMappingConfig,
+    dict[str, pd.DataFrame],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """Попытаться добавить виртуальный bout по сбросам нумерации эпизодов.
+
+    Не меняет переданные ``config``/``frames``: возвращает их новые
+    in-memory копии. Виртуальный bout применяется к листу только
+    если:
+
+    * на листе нет роли ``bout`` (или она ссылается только на
+      отсутствующие колонки);
+    * присутствуют роли ``athlete`` и ``episode`` с реальными
+      колонками в df;
+    * :func:`hpc_algo.mapping.virtual_bout_series` вернула non-None;
+    * медианная длина последовательности после группировки
+      ``athlete + virtual_bout`` ≥ 2 (sanity-guard, чтобы виртуальный
+      bout не вырождал HMM в траектории длины 1).
+
+    Возвращает ``(new_config, new_frames, applied, missing)``:
+
+    * ``applied`` — список словарей с контекстом для warning
+      ``hmm.bout_inferred_from_episode_resets``.
+    * ``missing`` — список словарей для warning ``mapping.bout_missing``
+      (включая случаи отказа по sanity-guard).
+    """
+
+    new_config = config.model_copy(deep=True)
+    new_frames: dict[str, pd.DataFrame] = {k: v.copy() for k, v in frames.items()}
+    applied: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+
+    for sheet_name, sm in list(new_config.sheets.items()):
+        df = new_frames.get(sheet_name)
+        if df is None or df.empty:
+            continue
+
+        bout_cols = [
+            c for c in (sm.roles.get(HiddenGroup.BOUT) or []) if c in df.columns
+        ]
+        if bout_cols:
+            continue  # пользователь уже разметил bout — не вмешиваемся
+
+        athlete_cols = [
+            c for c in (sm.roles.get(HiddenGroup.ATHLETE) or []) if c in df.columns
+        ]
+        episode_cols = [
+            c for c in (sm.roles.get(HiddenGroup.EPISODE) or []) if c in df.columns
+        ]
+        if not athlete_cols or not episode_cols:
+            missing.append(
+                {
+                    "sheet": sheet_name,
+                    "reason": "no_athlete_or_episode",
+                    "has_athlete": bool(athlete_cols),
+                    "has_episode": bool(episode_cols),
+                }
+            )
+            continue
+
+        athlete_col = athlete_cols[0]
+        episode_col = episode_cols[0]
+        vb = mapping_mod.virtual_bout_series(df, athlete_col, episode_col)
+        if vb is None:
+            missing.append(
+                {
+                    "sheet": sheet_name,
+                    "reason": "episode_not_numeric",
+                    "athlete_col": athlete_col,
+                    "episode_col": episode_col,
+                }
+            )
+            continue
+
+        # Sanity-guard: считаем провизорные ключи и медиану длины серии
+        # ДО фактического применения. Если меньше 2 — откат и mapping.bout_missing.
+        # ФИО в merged-cell файлах заполнено только на первой строке блока — ffill.
+        ath_filled = df[athlete_col].ffill()
+        provisional_keys: list[str] = []
+        for idx in df.index:
+            ath_val = ath_filled.at[idx]
+            ath_str = "" if pd.isna(ath_val) else str(ath_val).strip()
+            if not ath_str:
+                provisional_keys.append("")
+                continue
+            provisional_keys.append(f"{ath_str}|vb{int(vb.at[idx])}")
+        counts: dict[str, int] = {}
+        for key in provisional_keys:
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            missing.append(
+                {
+                    "sheet": sheet_name,
+                    "reason": "no_valid_keys",
+                    "athlete_col": athlete_col,
+                    "episode_col": episode_col,
+                }
+            )
+            continue
+        lengths = sorted(counts.values())
+        n = len(lengths)
+        median_len = (
+            lengths[n // 2]
+            if n % 2 == 1
+            else (lengths[n // 2 - 1] + lengths[n // 2]) // 2
+        )
+        if median_len < 2:
+            missing.append(
+                {
+                    "sheet": sheet_name,
+                    "reason": "median_too_short",
+                    "athlete_col": athlete_col,
+                    "episode_col": episode_col,
+                    "median_sequence_length": int(median_len),
+                    "n_sequences": int(n),
+                }
+            )
+            continue
+
+        col_name = _VIRTUAL_BOUT_COLUMN
+        suffix = 1
+        while col_name in df.columns:
+            suffix += 1
+            col_name = f"{_VIRTUAL_BOUT_COLUMN}{suffix}"
+        df[col_name] = vb.values
+        # ФИО хранится в merged-cells: forward-fill восстанавливает
+        # принадлежность всех строк конкретному спортсмену, иначе HMM
+        # собирает ключи group по неполным данным.
+        df[athlete_col] = df[athlete_col].ffill()
+        new_frames[sheet_name] = df
+        new_roles: dict[HiddenGroup, list[str]] = {
+            role: list(cols) for role, cols in sm.roles.items()
+        }
+        new_roles[HiddenGroup.BOUT] = [col_name]
+        new_config.sheets[sheet_name] = SheetMapping(
+            header_rows=list(sm.header_rows),
+            data_start_row=sm.data_start_row,
+            roles=new_roles,
+        )
+        applied.append(
+            {
+                "sheet": sheet_name,
+                "athlete_col": athlete_col,
+                "episode_col": episode_col,
+                "virtual_bout_column": col_name,
+                "n_virtual_bouts": int(
+                    len({int(v) for v in vb.dropna().tolist()})
+                ),
+                "median_sequence_length": int(median_len),
+                "n_sequences": int(n),
+            }
+        )
+
+    return new_config, new_frames, applied, missing
+
+
 def _analyze_with_mapping(
     loaded: LoadedExcel,
     audit: AuditReport,
@@ -576,6 +833,10 @@ def _analyze_with_mapping(
     analyze_config: AnalyzeConfig,
 ) -> AnalysisResult:
     frames = mapping_mod.load_mapped_sheets(loaded.path, config)
+    frames, totals_filtered = _drop_totals_rows_from_frames(frames)
+    config, frames, virtual_bout_applied, virtual_bout_missing = (
+        _try_apply_virtual_bout(config, frames)
+    )
     # Сужаем audit к листам, фактически вошедшим в анализ. Сам baseline
     # внутри уже фильтрует пропуски по mapping, но data_audit/отчёт/метаданные
     # должны быть согласованы с этим срезом.
@@ -589,6 +850,62 @@ def _analyze_with_mapping(
     # с header_rows" дублирует уже сделанный шаг.
     warnings: list[WarningItem] = []
     warnings.extend(_mapping_warnings(config, baseline, unknown, status))
+
+    for info in virtual_bout_applied:
+        warnings.append(
+            WarningItem(
+                code="hmm.bout_inferred_from_episode_resets",
+                message=(
+                    f"На листе '{info['sheet']}' колонка «Схватка» не размечена; "
+                    "виртуальный bout восстановлен по сбросам нумерации эпизодов "
+                    f"внутри одного борца ({info['n_virtual_bouts']} виртуальных "
+                    f"схваток, медианная длина серии "
+                    f"{info['median_sequence_length']}). Если разметка "
+                    "«Схватка» доступна в исходных данных, добавьте её через "
+                    "сопоставление колонок — это надёжнее."
+                ),
+                severity=WarningSeverity.INFO,
+                context=info,
+            )
+        )
+
+    for info in virtual_bout_missing:
+        warnings.append(
+            WarningItem(
+                code="mapping.bout_missing",
+                message=(
+                    f"На листе '{info['sheet']}' нет роли «Схватка» (bout), и "
+                    "виртуальный bout по сбросам нумерации эпизодов не "
+                    "применён. Без bout HMM считает все эпизоды одного борца "
+                    "одной серией, что может искажать структуру переходов. "
+                    "Если в файле есть колонка «Схватка» — разметьте её через "
+                    "сопоставление колонок; иначе проверьте, что нумерация "
+                    "эпизодов перезапускается в каждой схватке."
+                ),
+                severity=WarningSeverity.INFO,
+                context=info,
+            )
+        )
+
+    for info in totals_filtered:
+        warnings.append(
+            WarningItem(
+                code="audit.totals_row_detected",
+                message=(
+                    f"На листе '{info['sheet']}' распознано "
+                    f"{info['n_rows_dropped']} строк-итогов "
+                    "(маркеры «Итого/Всего/Сумма/Среднее/Total»). Они "
+                    "исключены из baseline/HMM, чтобы суммы не "
+                    "интерпретировались как отдельные эпизоды. "
+                    "Если это нормальные данные — переименуйте такие "
+                    "строки в исходном файле."
+                ),
+                severity=WarningSeverity.INFO,
+                context=info,
+            )
+        )
+
+    warnings.extend(_zap_candidate_unmapped_warnings(config, detection))
 
     # --- HMM-ветка (TASK_SPEC_004 / TASK_SPEC_005 / TASK_SPEC_008) ---
     hmm_result: HMMResult | None = None
@@ -788,8 +1105,6 @@ def preflight_mapping(
 
 def list_workbook_sheets(source_path: str | Path) -> list[str]:
     """Вернуть список листов Excel-файла без полного парсинга содержимого."""
-
-    import pandas as pd
 
     path = Path(source_path)
     xl = pd.ExcelFile(path, engine="openpyxl")

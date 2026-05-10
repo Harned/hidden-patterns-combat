@@ -19,6 +19,77 @@ from hpc_algo.schema import AuditReport, ColumnInfo, SheetAudit
 _PREVIEW_ROWS = 5
 _SAMPLE_VALUES = 5
 
+# Маркеры строк-итогов в листах судейской фиксации. Реальные файлы
+# вида ``docs/Оценка СД содержание.xlsx`` иногда содержат хвостовые
+# строки с агрегатами ("Итого", "Всего", "Сумма", "Среднее"), которые
+# структурно неотличимы от обычной строки эпизода: те же числовые
+# колонки заполнены, но это сумма, а не отдельное наблюдение. Если
+# такие строки попадают в HMM, они кажутся аномально длинными
+# эпизодами с экстремальными значениями ZAP.
+_TOTALS_ROW_MARKERS: tuple[str, ...] = (
+    "итого",
+    "итог",
+    "всего",
+    "сумма",
+    "среднее",
+    "ср.",
+    "total",
+    "subtotal",
+)
+
+
+def _is_totals_row(row: pd.Series) -> bool:
+    """True, если хотя бы одна строковая ячейка строки совпадает с маркером итогов.
+
+    Сравнение нечувствительно к регистру и пробелам по краям. Только
+    точное совпадение/префикс с маркером — иначе ложно сработали бы
+    фамилии вроде «Итогов» или комментарии «итого получилось».
+    """
+
+    for value in row:
+        if not isinstance(value, str):
+            continue
+        norm = value.strip().lower()
+        if not norm:
+            continue
+        # Точное совпадение — самый надёжный сигнал.
+        if norm in _TOTALS_ROW_MARKERS:
+            return True
+        # Префиксное совпадение со словом-маркером и разделителем (":" / " ").
+        for marker in _TOTALS_ROW_MARKERS:
+            if norm.startswith(marker + ":") or norm.startswith(marker + " "):
+                return True
+    return False
+
+
+def detect_totals_row_indices(df: pd.DataFrame) -> list[int]:
+    """Найти позиционные индексы (0..len-1) строк-итогов в df.
+
+    Возвращает позиции строк, а не значения ``df.index`` — это нужно
+    чтобы downstream-код (drop_totals_rows) был устойчив к
+    переиндексациям, делаемым предыдущими шагами пайплайна.
+    """
+
+    if df.empty:
+        return []
+    return [pos for pos, (_, row) in enumerate(df.iterrows()) if _is_totals_row(row)]
+
+
+def drop_totals_rows(df: pd.DataFrame, positions: list[int]) -> pd.DataFrame:
+    """Вернуть копию df без строк по указанным позициям (0..len-1).
+
+    Если ``positions`` пусто — df возвращается as-is (без копии).
+    """
+
+    if not positions:
+        return df
+    keep_mask = np.ones(len(df), dtype=bool)
+    valid = [p for p in positions if 0 <= p < len(df)]
+    if not valid:
+        return df
+    keep_mask[valid] = False
+    return df.iloc[keep_mask].reset_index(drop=True)
+
 
 def _stringify(value: Any) -> Any:
     """JSON-совместимая сериализация значения ячейки."""
@@ -141,13 +212,23 @@ def _audit_sheet(name: str, df: pd.DataFrame) -> SheetAudit:
     for _, row in df.head(_PREVIEW_ROWS).iterrows():
         preview_rows.append({str(k): _stringify(v) for k, v in row.items()})
 
+    totals_positions = detect_totals_row_indices(df)
+    suspicious = _suspicious_observations(df)
+    if totals_positions:
+        suspicious.append(
+            f"Распознаны строки-итоги (n={len(totals_positions)}). "
+            "Они будут исключены из baseline/HMM, чтобы суммы не "
+            "интерпретировались как отдельные эпизоды."
+        )
+
     return SheetAudit(
         name=name,
         n_rows=int(n_rows),
         n_cols=int(n_cols),
         columns=columns,
         preview=preview_rows,
-        suspicious=_suspicious_observations(df),
+        suspicious=suspicious,
+        totals_row_indices=totals_positions,
     )
 
 

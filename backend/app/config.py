@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     storage_root: Path = PROJECT_ROOT / "storage" / "uploads"
     max_upload_size_bytes: int = 50 * 1024 * 1024  # 50 MiB
 
+    # Пути к конфигам Markov-пайплайна (TASK_SPEC_011/012/013).
+    # По умолчанию — файлы в корне проекта. Можно переопределить через env.
+    markov_state_groups_path: Path = PROJECT_ROOT / "config" / "state_groups.yaml"
+    markov_style_thresholds_path: Path = PROJECT_ROOT / "config" / "style_thresholds.yaml"
+    # Куда складывать HTML-отчёты по индивидуальным моделям.
+    markov_reports_dir: Path = PROJECT_ROOT / "storage" / "markov"
+
     allowed_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

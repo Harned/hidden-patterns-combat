@@ -6,6 +6,7 @@ import type {
   ColumnMappingConfig,
   HeaderMergeFillResponse,
   HeaderRowsSuggestionResponse,
+  MarkovResult,
   SheetColumnsResponse,
   SheetGridFragment,
   SheetPreview,
@@ -188,6 +189,9 @@ export const api = {
   },
   latestResult(sourceId: number) {
     return request<AnalysisRunFull>(`/sources/${sourceId}/result`);
+  },
+  runMarkov(sourceId: number) {
+    return request<MarkovResult>(`/sources/${sourceId}/markov`, { method: "POST" });
   },
   preflight(sourceId: number, sheetNames?: string[]) {
     const body =

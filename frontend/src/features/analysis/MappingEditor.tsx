@@ -518,13 +518,29 @@ export const MappingEditor: React.FC<Props> = ({
                     {allColumns.map((col) => {
                       const currentRole =
                         columnToRole[col.name] ?? "__none__";
+                      const isUnmapped = !columnToRole[col.name];
+                      const showZapHintBadge =
+                        col.role_hint === "ЗАП" && isUnmapped;
                       return (
                         <tr
                           key={col.name}
                           className="border-t border-brand-100 align-top"
                         >
                           <td className="py-2 px-3 font-mono text-xs">
-                            <div>{col.name}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>{col.name}</span>
+                              {showZapHintBadge && (
+                                <span
+                                  title={
+                                    "Эвристика по DOMAIN_SPEC видит признаки ЗАП-наблюдения " +
+                                    "(балл/оценка/удержание/болевой), но колонка пока не " +
+                                    "размечена. Если это судейская фиксация — добавьте её в роль ЗАП."
+                                  }
+                                >
+                                  <Badge tone="warning">возможно ЗАП</Badge>
+                                </span>
+                              )}
+                            </div>
                             <div className="mt-0.5 text-[10px] text-brand-700/60">
                               {col.dtype} · заполнено {col.non_null_count}
                               {col.role_hint && (

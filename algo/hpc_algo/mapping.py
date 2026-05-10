@@ -103,8 +103,14 @@ _SERVICE_RULES: tuple[_Rule, ...] = (
 
 # Предметные роли: проверяются по всем уровням заголовка. Порядок перечисления
 # задаёт приоритет (сильнее — раньше).
+#
+# Маркеры ``балл``/``оценк`` для роли ZAP отражают DOMAIN_SPEC: общая
+# судейская оценка эпизода (например, числовая колонка «Баллы») является
+# фактом ZAP-наблюдения. Без этих маркеров preflight для реальных файлов
+# вида ``docs/Оценка СД содержание.xlsx`` не клал «Баллы» в роль ЗАП и
+# плотность ZAP-сигнала падала ниже порога ``hmm.low_zap_density``.
 _DOMAIN_RULES: tuple[_Rule, ...] = (
-    _Rule(HiddenGroup.ZAP, ("зап", "удержание", "болев")),
+    _Rule(HiddenGroup.ZAP, ("зап", "удержание", "болев", "балл", "оценк")),
     _Rule(HiddenGroup.VUP, ("вуп", "выведение")),
     _Rule(HiddenGroup.KFV, ("кфв", "захват", "обхват", "прихват", "упор", " хват")),
     _Rule(HiddenGroup.MANEUVERING, ("маневр", "стойк")),
@@ -495,6 +501,65 @@ def bout_grouping_columns(
                 cols.append(col)
                 seen.add(col)
     return cols
+
+
+def virtual_bout_series(
+    df: pd.DataFrame,
+    athlete_col: str,
+    episode_col: str,
+) -> pd.Series | None:
+    """Восстановить виртуальный номер схватки по сбросам нумерации эпизодов.
+
+    Внутри строк одного борца, если ``episode[i] < episode[i-1]``,
+    счётчик "схватки" инкрементируется. Используется как fallback,
+    когда лист не размечен ролью ``bout``: нумерация эпизодов в
+    реальных файлах вида ``docs/Оценка СД содержание.xlsx`` обычно
+    перезапускается от 1 в каждой новой схватке.
+
+    Возвращает ``pd.Series`` (целочисленный, по индексу ``df``) или
+    ``None``, если:
+
+    * нужных колонок нет в ``df``;
+    * ``episode_col`` не парсится как число хотя бы в половине
+      непустых строк (надёжно вычислить сбросы нельзя).
+
+    Функция намеренно нейтральна по семантике: она не утверждает,
+    что найденные виртуальные схватки совпадают с реальными — это
+    эвристика, и вызывающая сторона обязана прогнать её через
+    sanity-guard (например, медианная длина серии ≥ 2).
+    """
+
+    if athlete_col not in df.columns or episode_col not in df.columns:
+        return None
+
+    eps_numeric = pd.to_numeric(df[episode_col], errors="coerce")
+    non_null = int(eps_numeric.notna().sum())
+    if non_null < max(2, len(df) // 2):
+        return None
+
+    # ФИО в реальных файлах хранится в merged-cells: заполнено только на
+    # первой строке блока спортсмена, остальные строки блока — NaN.
+    # Forward-fill восстанавливает принадлежность каждой строки спортсмену
+    # до следующего явного изменения имени (или конца группы).
+    ath_series = df[athlete_col].ffill()
+
+    bout_ids = pd.Series(0, index=df.index, dtype="int64")
+    counters: dict[str, int] = {}
+    prev_ep: dict[str, float] = {}
+    for idx in df.index:
+        ath_val = ath_series.at[idx]
+        ath_key = "" if pd.isna(ath_val) else str(ath_val).strip()
+        ep = eps_numeric.at[idx]
+        if ath_key not in counters:
+            counters[ath_key] = 1
+        elif pd.notna(ep):
+            prev = prev_ep.get(ath_key)
+            if prev is not None and ep < prev:
+                counters[ath_key] += 1
+        bout_ids.at[idx] = counters[ath_key]
+        if pd.notna(ep):
+            prev_ep[ath_key] = float(ep)
+    return bout_ids
 
 
 def episode_key(row: pd.Series, columns: list[str]) -> str:

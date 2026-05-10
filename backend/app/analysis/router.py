@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.analysis import service as analysis_service
 from app.auth.deps import current_verified_user as current_user
+from app.config import get_settings
 from app.db.models import AnalysisRun, User
 from app.db.session import get_db
 from app.sources import service as sources_service
@@ -674,8 +675,7 @@ def get_header_merge_fill_suggestions(
 
 
 @router.post("/sheets/{sheet_name}/remove-empty-rows")
-def remove_empty_rows(
-    source_id: int,
+def remove_empty_rows(    source_id: int,
     sheet_name: str,
     payload: RemoveEmptyRowsRequest | None = None,
     db: Session = Depends(get_db),
@@ -706,3 +706,47 @@ def remove_empty_rows(
 
     sources_service.refresh_storage_metadata(db, storage, source)
     return {"deleted": deleted}
+
+
+# ---------------------------------------------------------------------------
+# Markov-пайплайн (TASK_SPEC_011)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/markov")
+def run_markov(
+    source_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Запустить 5-state Observable Markov Chain (TASK_SPEC_011).
+
+    Синхронный эндпоинт: читает Excel, строит индивидуальные Markov-модели
+    для всех спортсменов, возвращает structured JSON с матрицами переходов,
+    стационарными распределениями и episode-метриками.
+    """
+
+    source = _get_owned_source_or_404(db, user, source_id)
+    settings = get_settings()
+
+    if not settings.markov_state_groups_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Конфиг state_groups.yaml не найден. Убедитесь, что "
+                f"{settings.markov_state_groups_path} существует."
+            ),
+        )
+
+    try:
+        result = analysis_service.run_markov_individual(
+            source, storage.resolve, settings
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось построить Markov-модели: {exc}",
+        ) from exc
+
+    return result

@@ -23,6 +23,25 @@ from hpc_algo.mapping import read_sheet_with_header_rows
 from hpc_algo.schema import HiddenGroup, SheetMapping
 
 
+def test_preflight_assigns_balls_to_zap_role(balls_zap_excel: Path) -> None:
+    """preflight_mapping кладёт колонку «Баллы» в роль ЗАП.
+
+    После добавления маркеров ``балл``/``оценк`` в ``_DOMAIN_RULES``
+    эвристика preflight сама помечает супер-заголовок «Баллы» как ЗАП,
+    и на реальных файлах вида ``docs/Оценка СД содержание.xlsx`` ZAP
+    плотность набирается без ручного вмешательства оператора.
+    """
+
+    cfg = preflight_mapping(balls_zap_excel)
+    sheet_name = next(iter(cfg.sheets))
+    sheet_cfg = cfg.sheets[sheet_name]
+    zap_cols = sheet_cfg.roles.get(HiddenGroup.ZAP, [])
+    assert any("Балл" in col for col in zap_cols), (
+        "Ожидаем «Баллы» в роли ЗАП после preflight, получили: "
+        f"{zap_cols}"
+    )
+
+
 def test_balls_supercol_detected_as_zap_candidate(balls_zap_excel: Path) -> None:
     """``detect_columns`` подсвечивает «Баллы» как ZAP-кандидата.
 

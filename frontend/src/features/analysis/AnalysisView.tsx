@@ -21,12 +21,15 @@ const MappingEditor = React.lazy(() =>
 const HMMView = React.lazy(() =>
   import("./HMMView").then((m) => ({ default: m.HMMView }))
 );
+const MarkovView = React.lazy(() =>
+  import("./MarkovView").then((m) => ({ default: m.MarkovView }))
+);
 
 const SectionFallback: React.FC<{ label: string }> = ({ label }) => (
   <Card className="px-6 py-8 text-center text-brand-700/70">{label}</Card>
 );
 
-type Tab = "result" | "trainer" | "mapping" | "history";
+type Tab = "result" | "markov" | "trainer" | "mapping" | "history";
 
 export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const qc = useQueryClient();
@@ -152,6 +155,7 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         {(
           [
             ["result", "Результат"],
+            ["markov", "Марков-профили"],
             ...(hasTrainerRoles
               ? ([["trainer", "Тренер"]] as const)
               : ([] as const)),
@@ -188,6 +192,12 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
             ? runAnalyze.error.message
             : "ошибка"}
         </div>
+      )}
+
+      {tab === "markov" && !isDraft && (
+        <Suspense fallback={<SectionFallback label="Загрузка Марков-модулей..." />}>
+          <MarkovView sourceId={sourceId} />
+        </Suspense>
       )}
 
       {tab === "trainer" && (

@@ -351,3 +351,51 @@ export interface HeaderMergeFillResponse {
 export interface ApiError {
   detail: string;
 }
+
+// ---------------------------------------------------------------------------
+// Markov-пайплайн (TASK_SPEC_011)
+// ---------------------------------------------------------------------------
+
+export interface EpisodeMetrics {
+  athlete: string | null;
+  episode_count: number;
+  bout_count: number;
+  action_density: number | null;
+  action_rate_per_second: number | null;
+  action_density_first_half: number | null;
+  action_density_second_half: number | null;
+  non_technical_share: number | null;
+  activity_evenness: number | null;
+  style: string | null;
+}
+
+export interface MarkovAthleteResult {
+  athlete: string;
+  episode_count: number;
+  bout_count: number;
+  transition_matrix: number[][];
+  stationary: Record<string, number>;
+  visit_counts: Record<string, number>;
+  state_labels: string[];
+  style: string | null;
+  episode_metrics: EpisodeMetrics;
+  warnings_count: number;
+}
+
+export interface MarkovSummary {
+  athletes_total: number;
+  athletes_rendered: number;
+  skipped_athletes: string[];
+  rendered_athletes: string[];
+  config_warnings: { code: string; message: string }[];
+  split_warnings: { code: string; message: string }[];
+  column_validation_warnings: { code: string; message: string }[];
+  per_athlete_warning_counts: Record<string, number>;
+}
+
+export interface MarkovResult {
+  summary: MarkovSummary;
+  athletes: MarkovAthleteResult[];
+  state_labels: string[];
+  reports_dir: string;
+}
