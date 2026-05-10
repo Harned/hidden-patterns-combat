@@ -436,6 +436,57 @@ def sheet_preview(
 
 
 # ---------------------------------------------------------------------------
+# Markov cache helpers
+# ---------------------------------------------------------------------------
+
+
+def _compute_markov_inputs_hash(
+    excel_path: Path,
+    state_groups_path: Path,
+    style_thresholds_path: Path,
+) -> str:
+    """SHA-256 of Excel + state_groups + style_thresholds contents."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for p in [excel_path, state_groups_path, style_thresholds_path]:
+        try:
+            h.update(p.read_bytes())
+        except FileNotFoundError:
+            h.update(b"")
+    return h.hexdigest()
+
+
+def _read_markov_cache(
+    cache_path: Path,
+    expected_hash: str,
+) -> dict[str, Any] | None:
+    import json as _json
+
+    if not cache_path.exists():
+        return None
+    try:
+        envelope = _json.loads(cache_path.read_text(encoding="utf-8"))
+        if envelope.get("inputs_hash") == expected_hash:
+            return envelope["data"]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _write_markov_cache(
+    cache_path: Path,
+    inputs_hash: str,
+    data: dict[str, Any],
+) -> None:
+    import json as _json
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    envelope = {"inputs_hash": inputs_hash, "data": data}
+    cache_path.write_text(_json.dumps(envelope, ensure_ascii=False), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Markov-пайплайн (TASK_SPEC_011 / 012 / 013)
 # ---------------------------------------------------------------------------
 
@@ -444,13 +495,13 @@ def run_markov_individual(
     source: Source,
     storage_resolve,
     settings,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Запустить 5-state Observable Markov Chain по источнику.
 
-    Возвращает ``BuildIndividualSummary`` + per-athlete детали (матрица
-    переходов, стационарка, episode-метрики) как сериализуемый dict.
-    Никакой исследовательской логики здесь нет — только вызов
-    независимого processing module.
+    При `force=False` (по умолчанию) проверяет кеш по SHA-256 входных файлов;
+    если хеш совпадает — возвращает кеш без повторного расчёта.
+    При `force=True` всегда пересчитывает и перезаписывает кеш.
     """
 
     import json as _json
@@ -470,6 +521,20 @@ def run_markov_individual(
     style_thresholds_path = settings.markov_style_thresholds_path
     output_dir = settings.markov_reports_dir / str(source.id)
     output_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = output_dir / "api_cache.json"
+
+    # Cache check
+    if not force:
+        inputs_hash = _compute_markov_inputs_hash(
+            excel_path, state_groups_path, style_thresholds_path
+        )
+        cached = _read_markov_cache(cache_path, inputs_hash)
+        if cached is not None:
+            return cached
+    else:
+        inputs_hash = _compute_markov_inputs_hash(
+            excel_path, state_groups_path, style_thresholds_path
+        )
 
     # 1. Summary + HTML reports via standard orchestrator.
     summary = build_individual_models(
@@ -530,9 +595,30 @@ def run_markov_individual(
             "warnings_count": summary.per_athlete_warning_counts.get(athlete, 0),
         })
 
-    return {
+    result = {
         "summary": _json.loads(summary.model_dump_json()),
         "athletes": athletes_data,
         "state_labels": list(cfg.states.keys()) + ["pause"],
         "reports_dir": str(output_dir),
     }
+    _write_markov_cache(cache_path, inputs_hash, result)
+    return result
+
+
+def get_markov_cached(
+    source: Source,
+    storage_resolve,
+    settings,
+) -> dict[str, Any] | None:
+    """Return cached Markov result if inputs haven't changed, else None."""
+    excel_path = storage_resolve(source.stored_path)
+    state_groups_path = settings.markov_state_groups_path
+    style_thresholds_path = settings.markov_style_thresholds_path
+    output_dir = settings.markov_reports_dir / str(source.id)
+    cache_path = output_dir / "api_cache.json"
+    if not cache_path.exists():
+        return None
+    inputs_hash = _compute_markov_inputs_hash(
+        excel_path, state_groups_path, style_thresholds_path
+    )
+    return _read_markov_cache(cache_path, inputs_hash)

@@ -2,7 +2,7 @@ import React, { Suspense, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
-import type { AnalysisRunFull, HMMMode, SourceSummary } from "@/api/types";
+import type { AnalysisRunFull, AnalysisRunSummary, HMMMode, MarkovAthleteResult, SourceSummary } from "@/api/types";
 import { Button, Card, Section } from "@/components/ui";
 import { StatusBadge } from "./StatusBadge";
 import { WarningsList } from "./WarningsList";
@@ -73,16 +73,64 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const result = run?.result;
   const isDraft = source?.preparation_state === "draft";
 
+  const markovQuery = useQuery<{ athletes: MarkovAthleteResult[] }, ApiError>({
+    queryKey: ["markov", sourceId],
+    queryFn: () => api.getMarkov(sourceId),
+    enabled: !isDraft,
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const mappingQuery = useQuery({
+    queryKey: ["mapping", sourceId],
+    queryFn: () => api.getMapping(sourceId),
+    enabled: !isDraft,
+    staleTime: 60_000,
+  });
+
   const hasTrainerRoles = (() => {
-    const sheets = result?.applied_mapping?.sheets;
-    if (!sheets) return false;
-    return Object.values(sheets).some((sm) => {
-      const roles = sm.roles ?? {};
-      const hasAthlete = Array.isArray(roles.athlete) && roles.athlete.length > 0;
-      const hasEpisode = Array.isArray(roles.episode) && roles.episode.length > 0;
-      return hasAthlete && hasEpisode;
-    });
+    const checkSheets = (sheets: Record<string, { roles?: Record<string, string[]> }> | undefined) => {
+      if (!sheets) return false;
+      return Object.values(sheets).some((sm) => {
+        const roles = sm.roles ?? {};
+        const hasAthlete = Array.isArray(roles.athlete) && roles.athlete.length > 0;
+        const hasEpisode = Array.isArray(roles.episode) && roles.episode.length > 0;
+        return hasAthlete && hasEpisode;
+      });
+    };
+    return (
+      checkSheets(mappingQuery.data?.mapping?.sheets) ||
+      checkSheets(result?.applied_mapping?.sheets)
+    );
   })();
+
+  const runsQuery = useQuery<AnalysisRunSummary[]>({
+    queryKey: ["runs", sourceId],
+    queryFn: () => api.listRuns(sourceId, 5),
+    enabled: !isDraft,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data || data.length === 0) return false;
+      const active = data[0].state === "pending" || data[0].state === "running";
+      return active ? 1500 : false;
+    },
+  });
+
+  const activeRun = runsQuery.data?.find(
+    (r) => r.state === "pending" || r.state === "running"
+  ) ?? null;
+
+  const prevActiveRef = React.useRef<boolean>(false);
+  React.useEffect(() => {
+    const wasActive = prevActiveRef.current;
+    const isActive = activeRun !== null;
+    prevActiveRef.current = isActive;
+    if (wasActive && !isActive) {
+      void qc.invalidateQueries({ queryKey: ["result", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["source", sourceId] });
+      void qc.invalidateQueries({ queryKey: ["sources"] });
+    }
+  }, [activeRun, sourceId, qc]);
 
   return (
     <div className="max-w-6xl w-full mx-auto px-6 py-6 space-y-6">
@@ -100,7 +148,16 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
               запустить анализ.
             </div>
           )}
-          {run && !isDraft && (
+          {activeRun && !isDraft && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-brand-700">
+              <span className="inline-flex h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>
+                Анализ выполняется
+                {activeRun.state === "running" ? "…" : " (в очереди…)"}
+              </span>
+            </div>
+          )}
+          {run && !isDraft && !activeRun && (
             <div className="mt-2 flex items-center gap-2 flex-wrap">
               <StatusBadge status={run.status} />
               <span className="text-xs text-brand-700/60">
@@ -138,10 +195,12 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
               </select>
               <Button
                 onClick={() => runAnalyze.mutate()}
-                disabled={runAnalyze.isPending}
+                disabled={runAnalyze.isPending || activeRun !== null}
               >
                 {runAnalyze.isPending
                   ? "Анализируем..."
+                  : activeRun !== null
+                  ? "Выполняется..."
                   : run
                   ? "Перезапустить анализ"
                   : "Запустить анализ"}
@@ -203,6 +262,8 @@ export const AnalysisView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
       {tab === "trainer" && (
         <TrainerSummary
           summary={result?.trainer_athlete_summary ?? null}
+          markovAthletes={markovQuery.data?.athletes ?? null}
+          onOpenMarkov={() => setTab("markov")}
         />
       )}
 

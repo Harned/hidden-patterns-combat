@@ -1,13 +1,28 @@
 import React, { useMemo, useState } from "react";
-import type { TrainerAthleteSummary } from "@/api/types";
-import { Card, Section } from "@/components/ui";
+import type { MarkovAthleteResult, TrainerAthleteSummary } from "@/api/types";
+import { Button, Card, Section } from "@/components/ui";
 
 type SortDir = "desc" | "asc";
 
+function dominantState(stationary: Record<string, number>): string | null {
+  const entries = Object.entries(stationary);
+  if (entries.length === 0) return null;
+  return entries.reduce((best, cur) => (cur[1] > best[1] ? cur : best))[0];
+}
+
 export const TrainerSummary: React.FC<{
   summary: TrainerAthleteSummary | null;
-}> = ({ summary }) => {
+  markovAthletes?: MarkovAthleteResult[] | null;
+  onOpenMarkov?: () => void;
+}> = ({ summary, markovAthletes, onOpenMarkov }) => {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const markovMap = useMemo(() => {
+    if (!markovAthletes) return null;
+    const m = new Map<string, MarkovAthleteResult>();
+    for (const a of markovAthletes) m.set(a.athlete, a);
+    return m;
+  }, [markovAthletes]);
 
   const rows = useMemo(() => {
     if (!summary) return [];
@@ -32,6 +47,7 @@ export const TrainerSummary: React.FC<{
   }
 
   const hasData = rows.length > 0;
+  const showMarkov = markovMap !== null && markovMap.size > 0;
 
   return (
     <Section
@@ -45,6 +61,11 @@ export const TrainerSummary: React.FC<{
         <span className="rounded-md bg-brand-50 border border-brand-200 px-2.5 py-1">
           Эпизодов суммарно: <b>{summary.total_episodes}</b>
         </span>
+        {showMarkov && onOpenMarkov && (
+          <Button size="sm" variant="ghost" onClick={onOpenMarkov}>
+            Марков-профили →
+          </Button>
+        )}
       </div>
 
       {summary.notes.length > 0 && (
@@ -71,21 +92,51 @@ export const TrainerSummary: React.FC<{
                 >
                   Эпизоды {sortDir === "desc" ? "↓" : "↑"}
                 </th>
+                {showMarkov && (
+                  <>
+                    <th className="px-3 py-2 text-left font-semibold" title="Стиль ведения схватки по марковской модели">
+                      Стиль
+                    </th>
+                    <th className="px-3 py-2 text-left font-semibold" title="Доминирующее состояние (argmax стационарного распределения π)">
+                      π-лидер
+                    </th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, idx) => (
-                <tr
-                  key={row.athlete}
-                  className={idx % 2 === 0 ? "bg-white" : "bg-brand-50/40"}
-                >
-                  <td className="px-3 py-2 text-brand-700/70">{idx + 1}</td>
-                  <td className="px-3 py-2 text-brand-900">{row.athlete}</td>
-                  <td className="px-3 py-2 text-right font-medium text-brand-900">
-                    {row.episode_count}
-                  </td>
-                </tr>
-              ))}
+              {rows.map((row, idx) => {
+                const mk = markovMap?.get(row.athlete);
+                const dom = mk ? dominantState(mk.stationary) : null;
+                return (
+                  <tr
+                    key={row.athlete}
+                    className={idx % 2 === 0 ? "bg-white" : "bg-brand-50/40"}
+                  >
+                    <td className="px-3 py-2 text-brand-700/70">{idx + 1}</td>
+                    <td className="px-3 py-2 text-brand-900">{row.athlete}</td>
+                    <td className="px-3 py-2 text-right font-medium text-brand-900">
+                      {row.episode_count}
+                    </td>
+                    {showMarkov && (
+                      <>
+                        <td className="px-3 py-2">
+                          {mk?.style ? (
+                            <span className="inline-flex items-center rounded-full bg-brand-100 text-brand-800 text-xs px-2 py-0.5">
+                              {mk.style}
+                            </span>
+                          ) : (
+                            <span className="text-brand-300 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-brand-700">
+                          {dom ?? <span className="text-brand-300">—</span>}
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

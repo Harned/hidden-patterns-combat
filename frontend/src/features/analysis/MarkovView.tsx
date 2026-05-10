@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiError } from "@/api/client";
 import type { MarkovAthleteResult, MarkovResult } from "@/api/types";
 import { Button, Card } from "@/components/ui";
 
@@ -188,13 +188,21 @@ const AthleteCard: React.FC<{ result: MarkovAthleteResult }> = ({ result }) => {
 
 export const MarkovView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
   const qc = useQueryClient();
-  const [data, setData] = useState<MarkovResult | null>(null);
   const [filter, setFilter] = useState("");
 
-  const mutation = useMutation({
-    mutationFn: () => api.runMarkov(sourceId),
+  const cacheQuery = useQuery<MarkovResult, ApiError>({
+    queryKey: ["markov", sourceId],
+    queryFn: () => api.getMarkov(sourceId),
+    retry: false,
+    staleTime: Infinity,
+  });
+
+  const data = cacheQuery.data ?? null;
+
+  const buildMutation = useMutation({
+    mutationFn: (force: boolean) => api.runMarkov(sourceId, force),
     onSuccess: (result) => {
-      setData(result);
+      qc.setQueryData(["markov", sourceId], result);
       void qc.invalidateQueries({ queryKey: ["source", sourceId] });
     },
   });
@@ -204,6 +212,9 @@ export const MarkovView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         a.athlete.toLowerCase().includes(filter.toLowerCase())
       )
     : [];
+
+  const isCached = cacheQuery.isSuccess && !cacheQuery.isFetching;
+  const isLoading = cacheQuery.isLoading || buildMutation.isPending;
 
   return (
     <div className="space-y-4">
@@ -233,23 +244,44 @@ export const MarkovView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
                 )}
               </div>
             )}
+            {isCached && (
+              <div className="text-xs text-emerald-700">
+                Результат из кеша — входные файлы не изменились.
+              </div>
+            )}
           </div>
-          <Button
-            onClick={() => mutation.mutate()}
-            disabled={mutation.isPending}
-          >
-            {mutation.isPending
-              ? "Строим модели..."
-              : data
-              ? "Пересчитать"
-              : "Построить модели"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {data ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => buildMutation.mutate(true)}
+                disabled={isLoading}
+                title="Принудительный пересчёт (игнорирует кеш)"
+              >
+                {buildMutation.isPending ? "Считаем…" : "Пересчитать"}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => buildMutation.mutate(false)}
+                disabled={isLoading}
+              >
+                {isLoading ? "Строим модели..." : "Построить модели"}
+              </Button>
+            )}
+          </div>
         </div>
 
-        {mutation.isError && (
+        {cacheQuery.isLoading && (
+          <div className="mt-3 text-xs text-brand-700/60">
+            Проверяем кеш…
+          </div>
+        )}
+
+        {buildMutation.isError && (
           <div className="mt-3 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-800">
-            {mutation.error instanceof Error
-              ? mutation.error.message
+            {buildMutation.error instanceof Error
+              ? buildMutation.error.message
               : "Ошибка при построении моделей"}
           </div>
         )}
@@ -297,6 +329,12 @@ export const MarkovView: React.FC<{ sourceId: number }> = ({ sourceId }) => {
         <Card className="px-6 py-8 text-center text-brand-700/60 text-sm">
           Нет данных по спортсменам. Проверьте state_groups.yaml и column
           mapping.
+        </Card>
+      )}
+
+      {!data && !isLoading && cacheQuery.isError && (
+        <Card className="px-6 py-8 text-center text-brand-700/60 text-sm">
+          Марков-профили ещё не рассчитаны. Нажмите «Построить модели» выше.
         </Card>
       )}
     </div>

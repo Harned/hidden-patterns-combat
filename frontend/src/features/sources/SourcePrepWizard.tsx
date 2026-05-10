@@ -2,11 +2,13 @@ import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { api, ApiError } from "@/api/client";
 import type {
+  CellEdit,
   ColumnMappingConfig,
   HeaderMergeFillResponse,
   HeaderRowsSuggestionResponse,
@@ -613,6 +615,13 @@ const PrepareStep: React.FC<{
 
   return (
     <div className="space-y-6">
+      <BatchSuggestionsPanel
+        sourceId={sourceId}
+        mapping={mapping}
+        activeSheet={activeSheet}
+        setActiveSheet={setActiveSheet}
+      />
+
       <Section
         title="Подготовка листа"
         description="Сверху — данные листа (правки сохраняются в исходный файл). Снизу — назначение ролей колонкам этого же листа. Заголовочные строки выделены и недоступны для редактирования."
@@ -788,6 +797,445 @@ const PrepareStep: React.FC<{
         </Suspense>
       </Section>
     </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// BatchSuggestionsPanel
+// ---------------------------------------------------------------------------
+
+type BatchSheetStatus = {
+  sheet: string;
+  headerRows: number[];
+  emptyCount: number | null;
+  athleteCount: number | null;
+  hasAthleteRole: boolean;
+  headerRowsMismatch: boolean;
+  suggestedHeaderRows: number[];
+  mergeFillCount: number | null;
+  athleteEdits: CellEdit[];
+  mergeEdits: CellEdit[];
+  loading: boolean;
+};
+
+const BatchSuggestionsPanel: React.FC<{
+  sourceId: number;
+  mapping: ColumnMappingConfig | null;
+  activeSheet: string | null;
+  setActiveSheet: (s: string) => void;
+}> = ({ sourceId, mapping, activeSheet, setActiveSheet }) => {
+  const qc = useQueryClient();
+  const sheets = useMemo(
+    () => (mapping ? Object.keys(mapping.sheets) : []),
+    [mapping]
+  );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [applying, setApplying] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Parallel queries: one slot = [emptyRows, athleteFwd, headerSuggestion, mergeFill]
+  const emptyRowsQueries = useQueries({
+    queries: sheets.map((sheet) => {
+      const hrs = mapping?.sheets[sheet]?.header_rows ?? [0];
+      return {
+        queryKey: ["emptyRows", sourceId, sheet, hrs.join(",")],
+        queryFn: () => api.countEmptyRows(sourceId, sheet, hrs),
+        enabled: Boolean(mapping),
+        staleTime: 0,
+        retry: 0,
+      };
+    }),
+  });
+
+  const athleteQueries = useQueries({
+    queries: sheets.map((sheet) => {
+      const sm = mapping?.sheets[sheet];
+      const hrs = sm?.header_rows ?? [0];
+      const hasAthlete = (sm?.roles?.athlete?.length ?? 0) > 0;
+      return {
+        queryKey: [
+          "athleteFwdFill",
+          sourceId,
+          sheet,
+          hrs.join(","),
+          (sm?.roles?.athlete ?? []).join("|"),
+        ],
+        queryFn: () => api.athleteForwardFillSuggestions(sourceId, sheet, hrs),
+        enabled: Boolean(mapping && hasAthlete),
+        staleTime: 0,
+        retry: 0,
+      };
+    }),
+  });
+
+  const headerSuggestionQueries = useQueries({
+    queries: sheets.map((sheet) => {
+      const hrs = mapping?.sheets[sheet]?.header_rows ?? [0];
+      return {
+        queryKey: ["headerSuggestion", sourceId, sheet, hrs.join(",")],
+        queryFn: () => api.headerRowsSuggestion(sourceId, sheet, hrs),
+        enabled: Boolean(mapping),
+        staleTime: 30_000,
+        retry: 0,
+      };
+    }),
+  });
+
+  const mergeFillQueries = useQueries({
+    queries: sheets.map((sheet) => {
+      const hrs = mapping?.sheets[sheet]?.header_rows ?? [0];
+      return {
+        queryKey: ["headerMergeFill", sourceId, sheet, hrs.join(",")],
+        queryFn: () => api.headerMergeFillSuggestions(sourceId, sheet, hrs),
+        enabled: Boolean(mapping),
+        staleTime: 0,
+        retry: 0,
+      };
+    }),
+  });
+
+  const statuses: BatchSheetStatus[] = sheets.map((sheet, i) => {
+    const sm = mapping?.sheets[sheet];
+    const hrs = sm?.header_rows ?? [0];
+    const hasAthlete = (sm?.roles?.athlete?.length ?? 0) > 0;
+    const emptyQ = emptyRowsQueries[i];
+    const athleteQ = athleteQueries[i];
+    const headerQ = headerSuggestionQueries[i];
+    const mergeQ = mergeFillQueries[i];
+    const loading =
+      emptyQ.isLoading || athleteQ.isLoading || headerQ.isLoading || mergeQ.isLoading;
+    const athleteSuggestions = athleteQ.data?.suggestions ?? [];
+    const mergeSuggestions = mergeQ.data?.suggestions ?? [];
+    return {
+      sheet,
+      headerRows: hrs,
+      emptyCount: emptyQ.isSuccess ? (emptyQ.data?.count ?? 0) : null,
+      athleteCount: athleteQ.isSuccess ? athleteSuggestions.length : null,
+      hasAthleteRole: hasAthlete,
+      headerRowsMismatch: headerQ.isSuccess
+        ? !(headerQ.data?.matches_current ?? true)
+        : false,
+      suggestedHeaderRows: headerQ.data?.suggested_header_rows ?? [],
+      mergeFillCount: mergeQ.isSuccess ? mergeSuggestions.length : null,
+      athleteEdits: athleteSuggestions.map((s) => ({
+        row: s.row,
+        col: s.col,
+        value: s.proposed as CellEdit["value"],
+      })),
+      mergeEdits: mergeSuggestions.map((s) => ({
+        row: s.row,
+        col: s.col,
+        value: s.proposed as CellEdit["value"],
+      })),
+      loading,
+    };
+  });
+
+  const hasAnyIssue = statuses.some(
+    (s) =>
+      (s.emptyCount ?? 0) > 0 ||
+      (s.athleteCount ?? 0) > 0 ||
+      s.headerRowsMismatch ||
+      (s.mergeFillCount ?? 0) > 0
+  );
+
+  const allLoading = statuses.some((s) => s.loading);
+
+  const toggleSheet = (sheet: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sheet)) next.delete(sheet);
+      else next.add(sheet);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selected.size === sheets.length) setSelected(new Set());
+    else setSelected(new Set(sheets));
+  };
+
+  const invalidateAll = () => {
+    void qc.invalidateQueries({ queryKey: ["emptyRows", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["athleteFwdFill", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["headerMergeFill", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["headerSuggestion", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["grid", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["mapping", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["sheetColumns", sourceId] });
+    void qc.invalidateQueries({ queryKey: ["source", sourceId] });
+  };
+
+  const applyEmptyRows = async () => {
+    const targets = statuses.filter(
+      (s) => selected.has(s.sheet) && (s.emptyCount ?? 0) > 0
+    );
+    if (!targets.length) return;
+    setApplying("empty");
+    const errs: Record<string, string> = {};
+    for (const s of targets) {
+      try {
+        await api.removeEmptyRows(sourceId, s.sheet, s.headerRows);
+      } catch (e) {
+        errs[s.sheet] = e instanceof Error ? e.message : "ошибка";
+      }
+    }
+    setErrors(errs);
+    setApplying(null);
+    invalidateAll();
+  };
+
+  const applyAthlete = async () => {
+    const targets = statuses.filter(
+      (s) =>
+        selected.has(s.sheet) && s.hasAthleteRole && (s.athleteCount ?? 0) > 0
+    );
+    if (!targets.length) return;
+    setApplying("athlete");
+    const errs: Record<string, string> = {};
+    for (const s of targets) {
+      try {
+        if (s.athleteEdits.length > 0) {
+          await api.applySheetGridEdits(sourceId, s.sheet, s.athleteEdits);
+        }
+      } catch (e) {
+        errs[s.sheet] = e instanceof Error ? e.message : "ошибка";
+      }
+    }
+    setErrors(errs);
+    setApplying(null);
+    invalidateAll();
+  };
+
+  const applyMergeFill = async () => {
+    const targets = statuses.filter(
+      (s) => selected.has(s.sheet) && (s.mergeFillCount ?? 0) > 0
+    );
+    if (!targets.length) return;
+    setApplying("merge");
+    const errs: Record<string, string> = {};
+    for (const s of targets) {
+      try {
+        if (s.mergeEdits.length > 0) {
+          await api.applySheetGridEdits(sourceId, s.sheet, s.mergeEdits);
+        }
+      } catch (e) {
+        errs[s.sheet] = e instanceof Error ? e.message : "ошибка";
+      }
+    }
+    setErrors(errs);
+    setApplying(null);
+    invalidateAll();
+  };
+
+  const applyHeaderRows = async () => {
+    const targets = statuses.filter(
+      (s) => selected.has(s.sheet) && s.headerRowsMismatch && s.suggestedHeaderRows.length > 0
+    );
+    if (!targets.length || !mapping) return;
+    setApplying("headerRows");
+    const next: ColumnMappingConfig = JSON.parse(JSON.stringify(mapping));
+    const errs: Record<string, string> = {};
+    for (const s of targets) {
+      try {
+        next.sheets[s.sheet] = {
+          ...next.sheets[s.sheet],
+          header_rows: [...s.suggestedHeaderRows],
+        };
+      } catch (e) {
+        errs[s.sheet] = e instanceof Error ? e.message : "ошибка";
+      }
+    }
+    try {
+      await api.putMapping(sourceId, next);
+    } catch (e) {
+      for (const s of targets) {
+        errs[s.sheet] = e instanceof Error ? e.message : "ошибка";
+      }
+    }
+    setErrors(errs);
+    setApplying(null);
+    invalidateAll();
+  };
+
+  const selectedStatuses = statuses.filter((s) => selected.has(s.sheet));
+  const canApplyEmpty = selectedStatuses.some((s) => (s.emptyCount ?? 0) > 0);
+  const canApplyAthlete = selectedStatuses.some(
+    (s) => s.hasAthleteRole && (s.athleteCount ?? 0) > 0
+  );
+  const canApplyMerge = selectedStatuses.some((s) => (s.mergeFillCount ?? 0) > 0);
+  const canApplyHeaderRows = selectedStatuses.some((s) => s.headerRowsMismatch);
+
+  if (sheets.length <= 1) return null;
+
+  return (
+    <Section
+      title="Сводка по всем листам"
+      description="Рекомендации для каждого листа. Выберите листы и применяйте действия сразу к нескольким."
+    >
+      {Object.entries(errors).length > 0 && (
+        <div className="mb-3 space-y-1">
+          {Object.entries(errors).map(([sheet, msg]) => (
+            <div
+              key={sheet}
+              className="rounded bg-red-50 border border-red-200 px-3 py-1 text-xs text-red-800"
+            >
+              {sheet}: {msg}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-md border border-brand-100 bg-white">
+        <table className="min-w-full text-sm">
+          <thead className="bg-brand-50 text-xs text-brand-700 uppercase">
+            <tr>
+              <th className="px-3 py-2 text-left w-8">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={selected.size === sheets.length && sheets.length > 0}
+                  onChange={toggleAll}
+                  title="Выбрать все"
+                />
+              </th>
+              <th className="px-3 py-2 text-left">Лист</th>
+              <th className="px-3 py-2 text-center" title="Пустые строки">Пустые стр.</th>
+              <th className="px-3 py-2 text-center" title="Пропущенные ФИО">ФИО</th>
+              <th className="px-3 py-2 text-center" title="Строки заголовка">Шапка</th>
+              <th className="px-3 py-2 text-center" title="Merged-ячейки в шапке">Merged</th>
+            </tr>
+          </thead>
+          <tbody>
+            {statuses.map((s, idx) => (
+              <tr
+                key={s.sheet}
+                className={`cursor-pointer ${
+                  idx % 2 === 0 ? "bg-white" : "bg-brand-50/40"
+                } ${s.sheet === activeSheet ? "ring-1 ring-inset ring-brand-400" : ""}`}
+              >
+                <td className="px-3 py-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={selected.has(s.sheet)}
+                    onChange={() => toggleSheet(s.sheet)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </td>
+                <td
+                  className="px-3 py-2 font-medium text-brand-900 hover:text-brand-600"
+                  onClick={() => setActiveSheet(s.sheet)}
+                >
+                  {s.sheet}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  {s.loading ? (
+                    <span className="text-brand-300">…</span>
+                  ) : s.emptyCount === null ? (
+                    <span className="text-brand-300">—</span>
+                  ) : s.emptyCount > 0 ? (
+                    <span className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5 font-medium">
+                      {s.emptyCount}
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 text-xs">✓</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  {!s.hasAthleteRole ? (
+                    <span className="text-brand-300 text-xs">нет роли</span>
+                  ) : s.loading ? (
+                    <span className="text-brand-300">…</span>
+                  ) : s.athleteCount === null ? (
+                    <span className="text-brand-300">—</span>
+                  ) : s.athleteCount > 0 ? (
+                    <span className="inline-flex items-center justify-center rounded-full bg-violet-100 text-violet-800 text-xs px-2 py-0.5 font-medium">
+                      {s.athleteCount}
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 text-xs">✓</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  {s.loading ? (
+                    <span className="text-brand-300">…</span>
+                  ) : s.headerRowsMismatch ? (
+                    <span
+                      className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5 font-medium"
+                      title={`Рекомендованы: [${s.suggestedHeaderRows.join(", ")}]`}
+                    >
+                      !
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 text-xs">✓</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  {s.loading ? (
+                    <span className="text-brand-300">…</span>
+                  ) : s.mergeFillCount === null ? (
+                    <span className="text-brand-300">—</span>
+                  ) : s.mergeFillCount > 0 ? (
+                    <span className="inline-flex items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs px-2 py-0.5 font-medium">
+                      {s.mergeFillCount}
+                    </span>
+                  ) : (
+                    <span className="text-emerald-600 text-xs">✓</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {(selected.size > 0 || hasAnyIssue) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {selected.size > 0 && (
+            <span className="text-xs text-brand-700/70">
+              Выбрано листов: {selected.size}
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void applyEmptyRows()}
+            disabled={!canApplyEmpty || applying !== null || allLoading}
+            title="Удалить пустые строки на выбранных листах"
+          >
+            {applying === "empty" ? "Удаляем…" : "Удалить пустые строки"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void applyAthlete()}
+            disabled={!canApplyAthlete || applying !== null || allLoading}
+            title="Заполнить пропущенные ФИО вниз на выбранных листах"
+          >
+            {applying === "athlete" ? "Применяем…" : "Заполнить ФИО"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void applyMergeFill()}
+            disabled={!canApplyMerge || applying !== null || allLoading}
+            title="Материализовать merged-ячейки в шапке на выбранных листах"
+          >
+            {applying === "merge" ? "Применяем…" : "Merged-шапка"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void applyHeaderRows()}
+            disabled={!canApplyHeaderRows || applying !== null || allLoading}
+            title="Применить рекомендованные строки заголовка на выбранных листах"
+          >
+            {applying === "headerRows" ? "Сохраняем…" : "Применить строки шапки"}
+          </Button>
+        </div>
+      )}
+    </Section>
   );
 };
 

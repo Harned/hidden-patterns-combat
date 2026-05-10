@@ -713,18 +713,41 @@ def remove_empty_rows(    source_id: int,
 # ---------------------------------------------------------------------------
 
 
+@router.get("/markov")
+def get_markov_cache(
+    source_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    storage: LocalStorage = Depends(get_storage),
+) -> dict[str, Any]:
+    """Вернуть кешированный Markov-результат если входные данные не изменились.
+
+    404 если кеш не существует или устарел — фронт должен запустить POST.
+    """
+    source = _get_owned_source_or_404(db, user, source_id)
+    settings = get_settings()
+
+    cached = analysis_service.get_markov_cached(source, storage.resolve, settings)
+    if cached is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Кеш Markov-расчёта не найден или устарел. Используйте POST для расчёта.",
+        )
+    return cached
+
+
 @router.post("/markov")
 def run_markov(
     source_id: int,
+    force: bool = Query(default=False, description="Принудительный пересчёт даже при валидном кеше."),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     storage: LocalStorage = Depends(get_storage),
 ) -> dict[str, Any]:
     """Запустить 5-state Observable Markov Chain (TASK_SPEC_011).
 
-    Синхронный эндпоинт: читает Excel, строит индивидуальные Markov-модели
-    для всех спортсменов, возвращает structured JSON с матрицами переходов,
-    стационарными распределениями и episode-метриками.
+    Без `force=true` возвращает кеш если входные файлы не изменились.
+    С `force=true` всегда пересчитывает и обновляет кеш.
     """
 
     source = _get_owned_source_or_404(db, user, source_id)
@@ -741,7 +764,7 @@ def run_markov(
 
     try:
         result = analysis_service.run_markov_individual(
-            source, storage.resolve, settings
+            source, storage.resolve, settings, force=force
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(

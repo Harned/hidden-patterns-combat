@@ -190,8 +190,14 @@ export const api = {
   latestResult(sourceId: number) {
     return request<AnalysisRunFull>(`/sources/${sourceId}/result`);
   },
-  runMarkov(sourceId: number) {
-    return request<MarkovResult>(`/sources/${sourceId}/markov`, { method: "POST" });
+  runMarkov(sourceId: number, force = false) {
+    const url = force
+      ? `/sources/${sourceId}/markov?force=true`
+      : `/sources/${sourceId}/markov`;
+    return request<MarkovResult>(url, { method: "POST" });
+  },
+  getMarkov(sourceId: number) {
+    return request<MarkovResult>(`/sources/${sourceId}/markov`);
   },
   preflight(sourceId: number, sheetNames?: string[]) {
     const body =
